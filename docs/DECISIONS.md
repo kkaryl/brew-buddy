@@ -133,3 +133,18 @@ This document records significant architectural and technical decisions for **Br
   - *Positive:* Unapproved proposals are structurally unreachable by `GET /api/v1/memories` or brief grounding; full HTTP contract and OpenAPI 3.1 specification (`docs/openapi.json`) are deterministically verified using injected in-memory fakes before cloud adapter integration.
   - *Trade-off:* Clients mutating briefs, proposals, or memories must supply `expected_version` to prevent lost updates.
 
+---
+
+## ADR-011: Per-User Async Firestore Hierarchy, Bounded Provenance Retrieval, and Isolated ADK `FirestoreSessionService`
+
+- **Date:** 2026-11-22
+- **Status:** Accepted
+- **Context:** Brew requires durable multi-tenant storage for preferences, contacts, meetings, briefs, approved memories, and pending proposals alongside persistent ADK conversational session events, without blocking the Python `asyncio` event loop or mixing raw ADK session transcripts into curated domain memory collections.
+- **Decision:**
+  1. Partition all domain entities under `users/{uid}/{preferences/default | contacts | meetings | briefs | memories | memoryProposals}` via async `firestore.AsyncClient` repositories (`app/infrastructure/firestore_repositories.py`) with `@firestore.async_transactional` optimistic locking, OpenTelemetry spans, and explicit timeouts.
+  2. Persist ADK session events via the official `google.adk.integrations.firestore.firestore_session_service.FirestoreSessionService` instantiated through `SessionServiceFactory` (`app/infrastructure/session_service_factory.py`) under an isolated root collection (`adk-session`), validating at startup that session collections never overlap `users/{uid}/...`.
+  3. Centralize pre-brief recall in `MemoryRetrievalService` (`app/application/memory_retrieval_service.py`) executing a strict 5-step user-scoped pipeline (preferences, contact profile, recent relevant meetings, approved contact memories, and bounded `BriefPreparationContext` with provenance) paired with `MemoryPersistenceService` (`app/application/memory_persistence_service.py`).
+- **Consequences:**
+  - *Positive:* End-to-end non-blocking async I/O; physical per-user document isolation verified against the Cloud Firestore Emulator (`tests/integration/test_firestore_persistence.py`); bounded prompt context with full `MemorySource` provenance.
+  - *Trade-off:* Integration tests exercising real Firestore transactions and session events require a running Cloud Firestore Emulator.
+

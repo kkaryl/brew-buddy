@@ -189,14 +189,15 @@ Every ADK tool exposed to an `LlmAgent`:
 
 ## 5. Domain & Persistence Data Model (Firestore)
 
-All Firestore documents are scoped per authenticated user (`users/{user_id}/...`) and mapped to pure domain models inside `brew/infrastructure/persistence/firestore/`:
+All domain Firestore documents are strictly partitioned per authenticated user (`users/{uid}/...`) and mapped to pure Pydantic v2 domain models inside `app/infrastructure/firestore_repositories.py` using non-blocking `firestore.AsyncClient` and `@firestore.async_transactional`:
 
-- **`meetings/{meeting_id}`**: Counterpart metadata (`name`, `title`, `role`, `organization`), meeting config (`purpose`, `duration_minutes`, `tone`), current `brief_version`, lifecycle status (`PREPARING`, `NOTES_ADDED`, `MEMORIES_REVIEWED`).
-- **`meetings/{meeting_id}/brief_versions/{version_id}`**: Immutable versioned snapshots of `PreparationBrief` (objective, openers, time-boxed agenda items, questions, memory citations).
-- **`meetings/{meeting_id}/sessions/{session_id}`**: Persistent ADK conversational state, turn events, and compacted history summary.
-- **`meetings/{meeting_id}/notes/{note_id}`**: PII-scrubbed post-meeting notes and extraction job status (`PENDING`, `PROCESSING`, `READY_FOR_REVIEW`, `FAILED`).
-- **`memory_candidates/{candidate_id}`**: Proposed memories awaiting HITL action (`PENDING_REVIEW`, `APPROVED`, `REJECTED`), source `meeting_id`, category (`COUNTERPART_FACT`, `USER_PREFERENCE`, `FOLLOW_UP`), scrubbed text, and reviewer timestamp.
-- **`approved_memories/{memory_id}`**: Durable, user-approved memories indexed by `user_id`, normalized `counterpart_key`, `category`, and `created_at` for fast cross-session lookup.
+- **`users/{uid}/preferences/default`**: User coaching defaults (`default_tone`, `default_duration_minutes`, `preferred_question_count`, `communication_style_notes`, `focus_areas`, `version`).
+- **`users/{uid}/contacts/{contactId}`**: Counterpart metadata (`name`, `title`, `role`, `organization`, `context_notes`, `version`).
+- **`users/{uid}/meetings/{meetingId}`**: Meeting configuration (`contact_id`, `purpose`, `tone`, `objective`, `duration_minutes`, `scheduled_at`, `notes`, `status`, `latest_brief_id`, `version`).
+- **`users/{uid}/briefs/{briefId}`**: Versioned `PreparationBrief` entities (`meeting_id`, `contact_id`, `contact_context`, `meeting_objective`, `conversation_openers`, `time_boxed_agenda`, `suggested_questions`, `suggested_follow_up_topics`, `referenced_memory_ids`, `version`).
+- **`users/{uid}/memories/{memoryId}`**: Consented, durable `Memory` entities (`scope`, `contact_id`, `memory_type`, `text`, `source` provenance, `consent_status`, `version`).
+- **`users/{uid}/memoryProposals/{proposalId}`**: Separate pending/reviewed `MemoryProposal` entities (`status`, `approved_memory_id`, `source`, `version`) isolated from `memories`.
+- **Isolated ADK Session Storage (`adk-session`, `app_states`, `user_states`)**: Managed via the official `google.adk.integrations.firestore.firestore_session_service.FirestoreSessionService` constructed by `SessionServiceFactory` (`app/infrastructure/session_service_factory.py`), strictly separated from `users/{uid}/...` domain collections.
 
 ---
 

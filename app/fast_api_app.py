@@ -22,8 +22,10 @@ from app.api.v1 import router as v1_router
 from app.app_utils import services
 from app.app_utils.a2a import attach_a2a_routes
 from app.config import AppSettings, get_settings
-from app.infrastructure.fakes import FakeServiceContainer
+from app.infrastructure.container import build_service_container
+from app.infrastructure.fakes import ServiceContainer
 from app.infrastructure.observability import configure_structured_logging
+from app.infrastructure.session_service_factory import SessionServiceFactory
 
 load_dotenv()
 
@@ -79,7 +81,7 @@ def _attach_spa_routes(fastapi_app: FastAPI, dist_dir: Path) -> None:
 def create_app(
     settings: AppSettings | None = None,
     *,
-    service_container: FakeServiceContainer | None = None,
+    service_container: ServiceContainer | None = None,
 ) -> FastAPI:
     """Build the Brew FastAPI application with ADK, A2A, health, v1 API, and SPA routes."""
     resolved_settings = settings or get_settings()
@@ -93,13 +95,19 @@ def create_app(
         from app.agent import app as adk_app
         from app.agent import root_agent
 
+        session_service = (
+            SessionServiceFactory(settings=resolved_settings, base_dir=AGENT_DIR).create()
+            if settings is not None
+            else services.get_session_service()
+        )
         runner = Runner(
             app=adk_app,
-            session_service=services.get_session_service(),
+            session_service=session_service,
             artifact_service=services.get_artifact_service(),
             auto_create_session=True,
         )
         fastapi_app.state.runner = runner
+        fastapi_app.state.session_service = session_service
         fastapi_app.state.agent_app_name = adk_app.name
 
         if not getattr(fastapi_app.state, "a2a_routes_attached", False):
@@ -137,7 +145,9 @@ def create_app(
     )
     fastapi_app.state.settings = resolved_settings
     fastapi_app.state.service_container = (
-        service_container if service_container is not None else FakeServiceContainer()
+        service_container
+        if service_container is not None
+        else build_service_container(resolved_settings)
     )
     fastapi_app.title = resolved_settings.app_name
     fastapi_app.version = resolved_settings.app_version

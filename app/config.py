@@ -14,6 +14,20 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 EnvironmentName = Literal["local", "development", "staging", "production", "test"]
 LogLevelName = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+PersistenceBackendName = Literal["in_memory", "firestore"]
+SessionBackendName = Literal["auto", "in_memory", "firestore", "vertex_ai"]
+
+_RESERVED_DOMAIN_COLLECTIONS = frozenset(
+    {
+        "users",
+        "preferences",
+        "contacts",
+        "meetings",
+        "briefs",
+        "memories",
+        "memoryProposals",
+    }
+)
 
 
 class AppSettings(BaseSettings):
@@ -72,6 +86,31 @@ class AppSettings(BaseSettings):
         validation_alias="HTTP_RETRY_ATTEMPTS",
     )
 
+    persistence_backend: PersistenceBackendName = Field(
+        default="in_memory",
+        validation_alias="BREW_PERSISTENCE_BACKEND",
+    )
+    firestore_database: str = Field(
+        default="(default)",
+        min_length=1,
+        validation_alias="FIRESTORE_DATABASE",
+    )
+    firestore_timeout_seconds: float = Field(
+        default=10.0,
+        gt=0.0,
+        le=60.0,
+        validation_alias="FIRESTORE_TIMEOUT_SECONDS",
+    )
+    session_backend: SessionBackendName = Field(
+        default="auto",
+        validation_alias="BREW_SESSION_BACKEND",
+    )
+    adk_firestore_root_collection: str = Field(
+        default="adk-session",
+        min_length=1,
+        validation_alias="ADK_FIRESTORE_ROOT_COLLECTION",
+    )
+
     web_dist_dir: Path = Field(
         default=REPO_ROOT / "web" / "dist",
         validation_alias="WEB_DIST_DIR",
@@ -83,6 +122,21 @@ class AppSettings(BaseSettings):
         cleaned = value.strip()
         if not cleaned:
             msg = "GEMINI_MODEL must not be blank."
+            raise ValueError(msg)
+        return cleaned
+
+    @field_validator("adk_firestore_root_collection")
+    @classmethod
+    def _validate_adk_session_collection(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned or "/" in cleaned:
+            msg = "ADK_FIRESTORE_ROOT_COLLECTION must be a single non-empty collection name."
+            raise ValueError(msg)
+        if cleaned in _RESERVED_DOMAIN_COLLECTIONS:
+            msg = (
+                f"ADK_FIRESTORE_ROOT_COLLECTION '{cleaned}' conflicts with Brew's "
+                "domain collections; keep ADK session storage separate."
+            )
             raise ValueError(msg)
         return cleaned
 

@@ -13,8 +13,13 @@ from typing import Any
 
 from google.adk.artifacts import BaseArtifactService, GcsArtifactService, InMemoryArtifactService
 from google.adk.cli.service_registry import get_service_registry
-from google.adk.cli.utils.service_factory import create_session_service_from_options
 from google.adk.sessions import BaseSessionService
+
+from app.config import get_settings
+from app.infrastructure.session_service_factory import (
+    SessionServiceFactory,
+    register_firestore_session_scheme,
+)
 
 SESSION_SERVICE_URI = "shared://session"
 ARTIFACT_SERVICE_URI = "shared://artifact"
@@ -24,24 +29,16 @@ _AGENT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__f
 
 @functools.cache
 def get_session_service() -> BaseSessionService:
-    """Process-wide session service shared across every serving surface."""
-    if uri := os.environ.get("SESSION_SERVICE_URI"):
-        service: BaseSessionService = create_session_service_from_options(
-            base_dir=_AGENT_DIR, session_service_uri=uri
-        )
-        return service
-    if agent_engine_id := os.environ.get("GOOGLE_CLOUD_AGENT_ENGINE_ID"):
-        from google.adk.sessions.vertex_ai_session_service import VertexAiSessionService
+    """Process-wide session service built via ``SessionServiceFactory``."""
+    return SessionServiceFactory(
+        settings=get_settings(),
+        base_dir=_AGENT_DIR,
+    ).create()
 
-        return VertexAiSessionService(
-            project=os.environ.get("GOOGLE_CLOUD_PROJECT"),
-            location=os.environ.get("GOOGLE_CLOUD_AGENT_ENGINE_LOCATION")
-            or os.environ.get("GOOGLE_CLOUD_LOCATION"),
-            agent_engine_id=agent_engine_id,
-        )
-    from google.adk.sessions.in_memory_session_service import InMemorySessionService
 
-    return InMemorySessionService()
+def clear_session_service_cache() -> None:
+    """Reset cached session service instance (primarily for isolated tests)."""
+    get_session_service.cache_clear()
 
 
 @functools.cache
@@ -62,6 +59,7 @@ def _resolve_shared_artifact(uri: str, **kwargs: Any) -> BaseArtifactService:
     return get_artifact_service()
 
 
+register_firestore_session_scheme()
 _registry = get_service_registry()
 _registry.register_session_service("shared", _resolve_shared_session)
 _registry.register_artifact_service("shared", _resolve_shared_artifact)

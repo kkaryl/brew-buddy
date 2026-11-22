@@ -19,6 +19,7 @@ from app.domain.errors import (
     ConflictError,
     DomainValidationError,
     EntityNotFoundError,
+    PersistenceOperationError,
     VersionConflictError,
 )
 
@@ -34,6 +35,7 @@ _HTTP_STATUS_CODES: dict[int, str] = {
     422: "VALIDATION_ERROR",
     429: "RATE_LIMITED",
     500: "INTERNAL_SERVER_ERROR",
+    503: "PERSISTENCE_UNAVAILABLE",
 }
 
 
@@ -72,6 +74,8 @@ def _domain_error_status_and_headers(
         return 409, None
     if isinstance(exc, DomainValidationError):
         return 422, None
+    if isinstance(exc, PersistenceOperationError):
+        return 503, None
     return (400 if exc.recoverable else 500), None
 
 

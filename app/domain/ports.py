@@ -1,4 +1,4 @@
-"""Domain-specific repository, authentication, ID, and agent ports (no generic repository base)."""
+"""Async domain-specific repository, auth, ID, and agent ports (no generic repository base)."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.domain.models import (
     AuthenticatedPrincipal,
+    BriefPreparationContext,
     Contact,
     ConversationQuestion,
     Meeting,
@@ -51,12 +52,12 @@ class AuthenticatorPort(Protocol):
 
 
 class UserPreferencesRepository(Protocol):
-    """Persistence port for ``UserPreferences`` records."""
+    """Async persistence port for ``users/{uid}/preferences/default``."""
 
-    def get_by_owner(self, owner_user_id: str) -> UserPreferences | None:
+    async def get_by_owner(self, owner_user_id: str) -> UserPreferences | None:
         """Return preferences for ``owner_user_id``, or ``None`` if not configured."""
 
-    def save(
+    async def save(
         self,
         preferences: UserPreferences,
         *,
@@ -66,25 +67,31 @@ class UserPreferencesRepository(Protocol):
 
 
 class ContactRepository(Protocol):
-    """Persistence port for ``Contact`` entities."""
+    """Async persistence port for ``users/{uid}/contacts/{contactId}``."""
 
-    def get_by_id(self, contact_id: str) -> Contact | None:
-        """Fetch a contact by ID across storage (caller enforces ownership)."""
+    async def get_for_owner(self, owner_user_id: str, contact_id: str) -> Contact | None:
+        """Fetch ``contact_id`` strictly under ``owner_user_id``."""
 
-    def list_by_owner(self, owner_user_id: str) -> list[Contact]:
+    async def exists_for_any_owner(self, contact_id: str) -> bool:
+        """Return ``True`` if ``contact_id`` exists under any user partition."""
+
+    async def list_by_owner(self, owner_user_id: str) -> list[Contact]:
         """List contacts belonging to ``owner_user_id`` ordered deterministically."""
 
-    def save(self, contact: Contact, *, expected_version: int | None = None) -> Contact:
+    async def save(self, contact: Contact, *, expected_version: int | None = None) -> Contact:
         """Persist a new or updated contact enforcing optimistic version checks."""
 
 
 class MeetingRepository(Protocol):
-    """Persistence port for ``Meeting`` entities."""
+    """Async persistence port for ``users/{uid}/meetings/{meetingId}``."""
 
-    def get_by_id(self, meeting_id: str) -> Meeting | None:
-        """Fetch a meeting by ID across storage (caller enforces ownership)."""
+    async def get_for_owner(self, owner_user_id: str, meeting_id: str) -> Meeting | None:
+        """Fetch ``meeting_id`` strictly under ``owner_user_id``."""
 
-    def list_by_owner(
+    async def exists_for_any_owner(self, meeting_id: str) -> bool:
+        """Return ``True`` if ``meeting_id`` exists under any user partition."""
+
+    async def list_by_owner(
         self,
         owner_user_id: str,
         *,
@@ -92,20 +99,31 @@ class MeetingRepository(Protocol):
     ) -> list[Meeting]:
         """List meetings belonging to ``owner_user_id``, optionally filtered by ``contact_id``."""
 
-    def save(self, meeting: Meeting, *, expected_version: int | None = None) -> Meeting:
+    async def save(self, meeting: Meeting, *, expected_version: int | None = None) -> Meeting:
         """Persist a new or updated meeting enforcing optimistic version checks."""
 
 
 class BriefRepository(Protocol):
-    """Persistence port for ``PreparationBrief`` entities."""
+    """Async persistence port for ``users/{uid}/briefs/{briefId}``."""
 
-    def get_by_id(self, brief_id: str) -> PreparationBrief | None:
-        """Fetch a preparation brief by ID (caller enforces ownership)."""
+    async def get_for_owner(
+        self,
+        owner_user_id: str,
+        brief_id: str,
+    ) -> PreparationBrief | None:
+        """Fetch ``brief_id`` strictly under ``owner_user_id``."""
 
-    def list_by_meeting(self, meeting_id: str) -> list[PreparationBrief]:
-        """List preparation briefs associated with ``meeting_id``."""
+    async def exists_for_any_owner(self, brief_id: str) -> bool:
+        """Return ``True`` if ``brief_id`` exists under any user partition."""
 
-    def save(
+    async def list_by_meeting(
+        self,
+        owner_user_id: str,
+        meeting_id: str,
+    ) -> list[PreparationBrief]:
+        """List preparation briefs owned by ``owner_user_id`` for ``meeting_id``."""
+
+    async def save(
         self,
         brief: PreparationBrief,
         *,
@@ -115,12 +133,19 @@ class BriefRepository(Protocol):
 
 
 class MemoryProposalRepository(Protocol):
-    """Dedicated persistence port for unapproved/reviewed ``MemoryProposal`` entities."""
+    """Dedicated async persistence port for ``users/{uid}/memoryProposals/{proposalId}``."""
 
-    def get_by_id(self, proposal_id: str) -> MemoryProposal | None:
-        """Fetch a memory proposal by ID (caller enforces ownership)."""
+    async def get_for_owner(
+        self,
+        owner_user_id: str,
+        proposal_id: str,
+    ) -> MemoryProposal | None:
+        """Fetch ``proposal_id`` strictly under ``owner_user_id``."""
 
-    def list_by_owner(
+    async def exists_for_any_owner(self, proposal_id: str) -> bool:
+        """Return ``True`` if ``proposal_id`` exists under any user partition."""
+
+    async def list_by_owner(
         self,
         owner_user_id: str,
         *,
@@ -128,7 +153,7 @@ class MemoryProposalRepository(Protocol):
     ) -> list[MemoryProposal]:
         """List memory proposals belonging to ``owner_user_id``."""
 
-    def save(
+    async def save(
         self,
         proposal: MemoryProposal,
         *,
@@ -138,12 +163,15 @@ class MemoryProposalRepository(Protocol):
 
 
 class MemoryRepository(Protocol):
-    """Dedicated persistence port for user-approved ``Memory`` entities."""
+    """Dedicated async persistence port for ``users/{uid}/memories/{memoryId}``."""
 
-    def get_by_id(self, memory_id: str) -> Memory | None:
-        """Fetch an approved memory by ID (caller enforces ownership)."""
+    async def get_for_owner(self, owner_user_id: str, memory_id: str) -> Memory | None:
+        """Fetch ``memory_id`` strictly under ``owner_user_id``."""
 
-    def list_by_owner(
+    async def exists_for_any_owner(self, memory_id: str) -> bool:
+        """Return ``True`` if ``memory_id`` exists under any user partition."""
+
+    async def list_by_owner(
         self,
         owner_user_id: str,
         *,
@@ -154,11 +182,17 @@ class MemoryRepository(Protocol):
     ) -> list[Memory]:
         """List approved memories belonging to ``owner_user_id`` matching optional filters."""
 
-    def save(self, memory: Memory, *, expected_version: int | None = None) -> Memory:
+    async def save(self, memory: Memory, *, expected_version: int | None = None) -> Memory:
         """Persist an approved memory enforcing optimistic version checks."""
 
-    def delete(self, memory_id: str, *, expected_version: int | None = None) -> None:
-        """Delete an approved memory enforcing optional optimistic version checks."""
+    async def delete(
+        self,
+        owner_user_id: str,
+        memory_id: str,
+        *,
+        expected_version: int | None = None,
+    ) -> None:
+        """Delete an approved memory under ``owner_user_id`` enforcing version checks."""
 
 
 class GeneratedBriefContent(BaseModel):
@@ -195,37 +229,33 @@ class ProposedMemoryCandidate(BaseModel):
 
 
 class BriefCoachAgentPort(Protocol):
-    """Agent interface synthesizing and revising structured meeting preparation briefs."""
+    """Async agent interface synthesizing and revising structured preparation briefs."""
 
-    def generate_brief(
+    async def generate_brief(
         self,
         *,
         meeting: Meeting,
-        contact: Contact,
-        user_preferences: UserPreferences | None,
-        approved_memories: Sequence[Memory],
+        context: BriefPreparationContext,
     ) -> GeneratedBriefContent:
-        """Synthesize an initial time-boxed preparation brief grounded in inputs and memories."""
+        """Synthesize an initial time-boxed brief grounded in ``BriefPreparationContext``."""
 
-    def revise_brief(
+    async def revise_brief(
         self,
         *,
         current_brief: PreparationBrief,
         meeting: Meeting,
-        contact: Contact,
+        context: BriefPreparationContext,
         instructions: str,
         target_duration_minutes: MeetingDurationMinutes,
         target_tone: MeetingTone,
-        user_preferences: UserPreferences | None,
-        approved_memories: Sequence[Memory],
     ) -> GeneratedBriefContent:
-        """Revise an existing preparation brief according to natural-language instructions."""
+        """Revise an existing preparation brief grounded in ``BriefPreparationContext``."""
 
 
 class MemoryProposalAgentPort(Protocol):
-    """Agent interface extracting candidate memory proposals from raw session notes."""
+    """Async agent interface extracting candidate memory proposals from raw session notes."""
 
-    def propose_memories(
+    async def propose_memories(
         self,
         *,
         notes: str,

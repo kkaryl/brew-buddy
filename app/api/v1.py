@@ -1,4 +1,4 @@
-"""FastAPI v1 routes implementing Brew's preparation brief, contact, meeting, and memory APIs."""
+"""Async FastAPI v1 routes for Brew's preparation brief, contact, meeting, and memory APIs."""
 
 from __future__ import annotations
 
@@ -76,14 +76,14 @@ router = APIRouter(
     tags=["briefs"],
     summary="Generate a time-boxed preparation brief",
 )
-def generate_brief(
+async def generate_brief(
     payload: GenerateBriefRequest,
     principal: Annotated[AuthenticatedPrincipal, Depends(get_current_principal)],
     brief_service: Annotated[BriefService, Depends(get_brief_service)],
 ) -> PreparationBriefResponse:
     """Create a meeting for an owned contact and synthesize a personalized preparation brief."""
     prefs = payload.preferences
-    brief = brief_service.generate_brief(
+    brief = await brief_service.generate_brief(
         principal=principal,
         contact_id=payload.contact_id,
         purpose=payload.purpose,
@@ -106,14 +106,14 @@ def generate_brief(
     tags=["briefs"],
     summary="Revise an existing preparation brief",
 )
-def revise_brief(
+async def revise_brief(
     id: Annotated[EntityId, Path(description="Preparation brief identifier.")],
     payload: ReviseBriefRequest,
     principal: Annotated[AuthenticatedPrincipal, Depends(get_current_principal)],
     brief_service: Annotated[BriefService, Depends(get_brief_service)],
 ) -> PreparationBriefResponse:
     """Apply natural-language revision instructions with optimistic version checking."""
-    revised = brief_service.revise_brief(
+    revised = await brief_service.revise_brief(
         principal=principal,
         brief_id=id,
         instructions=payload.instructions,
@@ -131,13 +131,13 @@ def revise_brief(
     tags=["briefs"],
     summary="Retrieve a preparation brief by ID",
 )
-def get_brief(
+async def get_brief(
     id: Annotated[EntityId, Path(description="Preparation brief identifier.")],
     principal: Annotated[AuthenticatedPrincipal, Depends(get_current_principal)],
     brief_service: Annotated[BriefService, Depends(get_brief_service)],
 ) -> PreparationBriefResponse:
     """Return a preparation brief owned by the authenticated caller."""
-    brief = brief_service.get_brief(principal=principal, brief_id=id)
+    brief = await brief_service.get_brief(principal=principal, brief_id=id)
     return PreparationBriefResponse.from_domain(brief)
 
 
@@ -148,12 +148,12 @@ def get_brief(
     tags=["contacts"],
     summary="List contacts owned by the authenticated user",
 )
-def list_contacts(
+async def list_contacts(
     principal: Annotated[AuthenticatedPrincipal, Depends(get_current_principal)],
     contact_service: Annotated[ContactService, Depends(get_contact_service)],
 ) -> ContactListResponse:
     """List counterpart profiles created by the authenticated user."""
-    contacts = contact_service.list_contacts(principal=principal)
+    contacts = await contact_service.list_contacts(principal=principal)
     items = [ContactResponse.from_domain(contact) for contact in contacts]
     return ContactListResponse(items=items, total=len(items))
 
@@ -165,13 +165,13 @@ def list_contacts(
     tags=["contacts"],
     summary="Create a new contact",
 )
-def create_contact(
+async def create_contact(
     payload: CreateContactRequest,
     principal: Annotated[AuthenticatedPrincipal, Depends(get_current_principal)],
     contact_service: Annotated[ContactService, Depends(get_contact_service)],
 ) -> ContactResponse:
     """Create a counterpart profile owned by the authenticated user."""
-    contact = contact_service.create_contact(
+    contact = await contact_service.create_contact(
         principal=principal,
         name=payload.name,
         title=payload.title,
@@ -189,7 +189,7 @@ def create_contact(
     tags=["meetings"],
     summary="List meetings owned by the authenticated user",
 )
-def list_meetings(
+async def list_meetings(
     principal: Annotated[AuthenticatedPrincipal, Depends(get_current_principal)],
     meeting_service: Annotated[MeetingService, Depends(get_meeting_service)],
     contact_id: Annotated[
@@ -198,7 +198,7 @@ def list_meetings(
     ] = None,
 ) -> MeetingListResponse:
     """List meetings belonging to the authenticated caller."""
-    meetings = meeting_service.list_meetings(
+    meetings = await meeting_service.list_meetings(
         principal=principal,
         contact_id=contact_id,
     )
@@ -213,13 +213,13 @@ def list_meetings(
     tags=["memories"],
     summary="Propose candidate memories from session notes",
 )
-def propose_memories(
+async def propose_memories(
     payload: ProposeMemoriesRequest,
     principal: Annotated[AuthenticatedPrincipal, Depends(get_current_principal)],
     memory_service: Annotated[MemoryService, Depends(get_memory_service)],
 ) -> MemoryProposalBatchResponse:
     """Extract candidate memories and stage them separately from approved memories."""
-    proposals = memory_service.propose_memories(
+    proposals = await memory_service.propose_memories(
         principal=principal,
         notes=payload.notes,
         source_type=payload.source_type,
@@ -238,7 +238,7 @@ def propose_memories(
     tags=["memories"],
     summary="Approve a staged memory proposal",
 )
-def approve_memory_proposal(
+async def approve_memory_proposal(
     id: Annotated[EntityId, Path(description="Memory proposal identifier to approve.")],
     principal: Annotated[AuthenticatedPrincipal, Depends(get_current_principal)],
     memory_service: Annotated[MemoryService, Depends(get_memory_service)],
@@ -249,7 +249,7 @@ def approve_memory_proposal(
 ) -> MemoryResponse:
     """Promote a pending memory proposal into durable approved memory storage."""
     resolved_payload = payload or ApproveMemoryProposalRequest()
-    approved = memory_service.approve_proposal(
+    approved = await memory_service.approve_proposal(
         principal=principal,
         proposal_id=id,
         expected_version=resolved_payload.expected_version,
@@ -266,7 +266,7 @@ def approve_memory_proposal(
     tags=["memories"],
     summary="List approved memories",
 )
-def list_memories(
+async def list_memories(
     principal: Annotated[AuthenticatedPrincipal, Depends(get_current_principal)],
     memory_service: Annotated[MemoryService, Depends(get_memory_service)],
     scope: Annotated[
@@ -287,7 +287,7 @@ def list_memories(
     ] = False,
 ) -> MemoryListResponse:
     """List approved memories owned by the authenticated caller."""
-    memories = memory_service.list_memories(
+    memories = await memory_service.list_memories(
         principal=principal,
         scope=scope,
         contact_id=contact_id,
@@ -305,14 +305,14 @@ def list_memories(
     tags=["memories"],
     summary="Update an approved memory",
 )
-def update_memory(
+async def update_memory(
     id: Annotated[EntityId, Path(description="Approved memory identifier.")],
     payload: UpdateMemoryRequest,
     principal: Annotated[AuthenticatedPrincipal, Depends(get_current_principal)],
     memory_service: Annotated[MemoryService, Depends(get_memory_service)],
 ) -> MemoryResponse:
     """Modify an approved memory's text, type, or consent status with version checking."""
-    updated = memory_service.update_memory(
+    updated = await memory_service.update_memory(
         principal=principal,
         memory_id=id,
         expected_version=payload.expected_version,
@@ -329,7 +329,7 @@ def update_memory(
     tags=["memories"],
     summary="Delete an approved memory",
 )
-def delete_memory(
+async def delete_memory(
     id: Annotated[EntityId, Path(description="Approved memory identifier.")],
     principal: Annotated[AuthenticatedPrincipal, Depends(get_current_principal)],
     memory_service: Annotated[MemoryService, Depends(get_memory_service)],
@@ -339,7 +339,7 @@ def delete_memory(
     ] = None,
 ) -> Response:
     """Permanently delete an approved memory owned by the authenticated caller."""
-    memory_service.delete_memory(
+    await memory_service.delete_memory(
         principal=principal,
         memory_id=id,
         expected_version=expected_version,

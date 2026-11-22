@@ -87,3 +87,13 @@ class ConflictError(BrewDomainError):
 
     def __init__(self, message: str, *, code: str = "STATE_CONFLICT") -> None:
         super().__init__(code=code, message=message, recoverable=True)
+
+
+class PersistenceOperationError(BrewDomainError):
+    """Raised when an external persistence operation times out or fails."""
+
+    def __init__(
+        self,
+        message: str = "Persistence backend failed to complete the operation.",
+    ) -> None:
+        super().__init__(code="PERSISTENCE_UNAVAILABLE", message=message, recoverable=False)

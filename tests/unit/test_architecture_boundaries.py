@@ -70,7 +70,11 @@ def test_domain_and_application_inward_dependency_direction() -> None:
 
 
 def test_ports_and_fakes_do_not_introduce_generic_repository_framework() -> None:
-    for rel_path in ("app/domain/ports.py", "app/infrastructure/fakes.py"):
+    for rel_path in (
+        "app/domain/ports.py",
+        "app/infrastructure/fakes.py",
+        "app/infrastructure/firestore_repositories.py",
+    ):
         py_file = REPO_ROOT / rel_path
         tree = ast.parse(py_file.read_text(encoding="utf-8"), filename=str(py_file))
         for node in ast.walk(tree):

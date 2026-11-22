@@ -1,7 +1,8 @@
-"""In-memory fake repositories, authenticator, and deterministic agent adapters for Brew."""
+"""Async local fake repositories, authenticator, and deterministic agent adapters for Brew."""
 
 from __future__ import annotations
 
+import asyncio
 import re
 import threading
 import uuid
@@ -16,6 +17,7 @@ from app.domain.errors import (
 from app.domain.health import ClockPort
 from app.domain.models import (
     AuthenticatedPrincipal,
+    BriefPreparationContext,
     Contact,
     ConversationQuestion,
     Meeting,
@@ -25,7 +27,20 @@ from app.domain.models import (
     TimeBoxedAgendaItem,
     UserPreferences,
 )
-from app.domain.ports import GeneratedBriefContent, ProposedMemoryCandidate
+from app.domain.ports import (
+    AuthenticatorPort,
+    BriefCoachAgentPort,
+    BriefRepository,
+    ContactRepository,
+    GeneratedBriefContent,
+    IdGeneratorPort,
+    MeetingRepository,
+    MemoryProposalAgentPort,
+    MemoryProposalRepository,
+    MemoryRepository,
+    ProposedMemoryCandidate,
+    UserPreferencesRepository,
+)
 from app.domain.types import (
     ConsentStatus,
     MeetingDurationMinutes,
@@ -115,23 +130,23 @@ class FakeAuthenticator:
 
 
 class InMemoryUserPreferencesRepository:
-    """Dedicated in-memory repository for ``UserPreferences``."""
+    """Async fake repository mirroring ``users/{uid}/preferences/default``."""
 
     def __init__(self) -> None:
-        self._lock = threading.RLock()
+        self._lock = asyncio.Lock()
         self._by_owner: dict[str, UserPreferences] = {}
 
-    def get_by_owner(self, owner_user_id: str) -> UserPreferences | None:
-        with self._lock:
+    async def get_by_owner(self, owner_user_id: str) -> UserPreferences | None:
+        async with self._lock:
             return self._by_owner.get(owner_user_id)
 
-    def save(
+    async def save(
         self,
         preferences: UserPreferences,
         *,
         expected_version: int | None = None,
     ) -> UserPreferences:
-        with self._lock:
+        async with self._lock:
             existing = self._by_owner.get(preferences.owner_user_id)
             if expected_version is None:
                 if existing is not None:
@@ -157,28 +172,29 @@ class InMemoryUserPreferencesRepository:
 
 
 class InMemoryContactRepository:
-    """Dedicated in-memory repository for ``Contact`` entities."""
+    """Async fake repository mirroring ``users/{uid}/contacts/{contactId}``."""
 
     def __init__(self) -> None:
-        self._lock = threading.RLock()
-        self._by_id: dict[str, Contact] = {}
+        self._lock = asyncio.Lock()
+        self._by_owner: dict[str, dict[str, Contact]] = {}
 
-    def get_by_id(self, contact_id: str) -> Contact | None:
-        with self._lock:
-            return self._by_id.get(contact_id)
+    async def get_for_owner(self, owner_user_id: str, contact_id: str) -> Contact | None:
+        async with self._lock:
+            return self._by_owner.get(owner_user_id, {}).get(contact_id)
 
-    def list_by_owner(self, owner_user_id: str) -> list[Contact]:
-        with self._lock:
-            items = [
-                contact
-                for contact in self._by_id.values()
-                if contact.owner_user_id == owner_user_id
-            ]
+    async def exists_for_any_owner(self, contact_id: str) -> bool:
+        async with self._lock:
+            return any(contact_id in user_contacts for user_contacts in self._by_owner.values())
+
+    async def list_by_owner(self, owner_user_id: str) -> list[Contact]:
+        async with self._lock:
+            items = list(self._by_owner.get(owner_user_id, {}).values())
         return sorted(items, key=lambda item: (item.created_at, item.id))
 
-    def save(self, contact: Contact, *, expected_version: int | None = None) -> Contact:
-        with self._lock:
-            existing = self._by_id.get(contact.id)
+    async def save(self, contact: Contact, *, expected_version: int | None = None) -> Contact:
+        async with self._lock:
+            user_bucket = self._by_owner.setdefault(contact.owner_user_id, {})
+            existing = user_bucket.get(contact.id)
             if expected_version is None:
                 if existing is not None:
                     raise ConflictError(
@@ -195,39 +211,43 @@ class InMemoryContactRepository:
                         expected_version=expected_version,
                         actual_version=existing.version,
                     )
-            self._by_id[contact.id] = contact
+            user_bucket[contact.id] = contact
             return contact
 
 
 class InMemoryMeetingRepository:
-    """Dedicated in-memory repository for ``Meeting`` entities."""
+    """Async fake repository mirroring ``users/{uid}/meetings/{meetingId}``."""
 
     def __init__(self) -> None:
-        self._lock = threading.RLock()
-        self._by_id: dict[str, Meeting] = {}
+        self._lock = asyncio.Lock()
+        self._by_owner: dict[str, dict[str, Meeting]] = {}
 
-    def get_by_id(self, meeting_id: str) -> Meeting | None:
-        with self._lock:
-            return self._by_id.get(meeting_id)
+    async def get_for_owner(self, owner_user_id: str, meeting_id: str) -> Meeting | None:
+        async with self._lock:
+            return self._by_owner.get(owner_user_id, {}).get(meeting_id)
 
-    def list_by_owner(
+    async def exists_for_any_owner(self, meeting_id: str) -> bool:
+        async with self._lock:
+            return any(meeting_id in user_meetings for user_meetings in self._by_owner.values())
+
+    async def list_by_owner(
         self,
         owner_user_id: str,
         *,
         contact_id: str | None = None,
     ) -> list[Meeting]:
-        with self._lock:
+        async with self._lock:
             items = [
                 meeting
-                for meeting in self._by_id.values()
-                if meeting.owner_user_id == owner_user_id
-                and (contact_id is None or meeting.contact_id == contact_id)
+                for meeting in self._by_owner.get(owner_user_id, {}).values()
+                if contact_id is None or meeting.contact_id == contact_id
             ]
         return sorted(items, key=lambda item: (item.created_at, item.id))
 
-    def save(self, meeting: Meeting, *, expected_version: int | None = None) -> Meeting:
-        with self._lock:
-            existing = self._by_id.get(meeting.id)
+    async def save(self, meeting: Meeting, *, expected_version: int | None = None) -> Meeting:
+        async with self._lock:
+            user_bucket = self._by_owner.setdefault(meeting.owner_user_id, {})
+            existing = user_bucket.get(meeting.id)
             if expected_version is None:
                 if existing is not None:
                     raise ConflictError(
@@ -244,34 +264,51 @@ class InMemoryMeetingRepository:
                         expected_version=expected_version,
                         actual_version=existing.version,
                     )
-            self._by_id[meeting.id] = meeting
+            user_bucket[meeting.id] = meeting
             return meeting
 
 
 class InMemoryBriefRepository:
-    """Dedicated in-memory repository for ``PreparationBrief`` entities."""
+    """Async fake repository mirroring ``users/{uid}/briefs/{briefId}``."""
 
     def __init__(self) -> None:
-        self._lock = threading.RLock()
-        self._by_id: dict[str, PreparationBrief] = {}
+        self._lock = asyncio.Lock()
+        self._by_owner: dict[str, dict[str, PreparationBrief]] = {}
 
-    def get_by_id(self, brief_id: str) -> PreparationBrief | None:
-        with self._lock:
-            return self._by_id.get(brief_id)
+    async def get_for_owner(
+        self,
+        owner_user_id: str,
+        brief_id: str,
+    ) -> PreparationBrief | None:
+        async with self._lock:
+            return self._by_owner.get(owner_user_id, {}).get(brief_id)
 
-    def list_by_meeting(self, meeting_id: str) -> list[PreparationBrief]:
-        with self._lock:
-            items = [brief for brief in self._by_id.values() if brief.meeting_id == meeting_id]
+    async def exists_for_any_owner(self, brief_id: str) -> bool:
+        async with self._lock:
+            return any(brief_id in user_briefs for user_briefs in self._by_owner.values())
+
+    async def list_by_meeting(
+        self,
+        owner_user_id: str,
+        meeting_id: str,
+    ) -> list[PreparationBrief]:
+        async with self._lock:
+            items = [
+                brief
+                for brief in self._by_owner.get(owner_user_id, {}).values()
+                if brief.meeting_id == meeting_id
+            ]
         return sorted(items, key=lambda item: (item.version, item.id))
 
-    def save(
+    async def save(
         self,
         brief: PreparationBrief,
         *,
         expected_version: int | None = None,
     ) -> PreparationBrief:
-        with self._lock:
-            existing = self._by_id.get(brief.id)
+        async with self._lock:
+            user_bucket = self._by_owner.setdefault(brief.owner_user_id, {})
+            existing = user_bucket.get(brief.id)
             if expected_version is None:
                 if existing is not None:
                     raise ConflictError(
@@ -291,44 +328,52 @@ class InMemoryBriefRepository:
                         expected_version=expected_version,
                         actual_version=existing.version,
                     )
-            self._by_id[brief.id] = brief
+            user_bucket[brief.id] = brief
             return brief
 
 
 class InMemoryMemoryProposalRepository:
-    """Isolated in-memory repository storing ``MemoryProposal`` records separately."""
+    """Async fake repository mirroring ``users/{uid}/memoryProposals/{proposalId}``."""
 
     def __init__(self) -> None:
-        self._lock = threading.RLock()
-        self._by_id: dict[str, MemoryProposal] = {}
+        self._lock = asyncio.Lock()
+        self._by_owner: dict[str, dict[str, MemoryProposal]] = {}
 
-    def get_by_id(self, proposal_id: str) -> MemoryProposal | None:
-        with self._lock:
-            return self._by_id.get(proposal_id)
+    async def get_for_owner(
+        self,
+        owner_user_id: str,
+        proposal_id: str,
+    ) -> MemoryProposal | None:
+        async with self._lock:
+            return self._by_owner.get(owner_user_id, {}).get(proposal_id)
 
-    def list_by_owner(
+    async def exists_for_any_owner(self, proposal_id: str) -> bool:
+        async with self._lock:
+            return any(proposal_id in user_proposals for user_proposals in self._by_owner.values())
+
+    async def list_by_owner(
         self,
         owner_user_id: str,
         *,
         status: ProposalStatus | None = None,
     ) -> list[MemoryProposal]:
-        with self._lock:
+        async with self._lock:
             items = [
                 proposal
-                for proposal in self._by_id.values()
-                if proposal.owner_user_id == owner_user_id
-                and (status is None or proposal.status is status)
+                for proposal in self._by_owner.get(owner_user_id, {}).values()
+                if status is None or proposal.status is status
             ]
         return sorted(items, key=lambda item: (item.created_at, item.id))
 
-    def save(
+    async def save(
         self,
         proposal: MemoryProposal,
         *,
         expected_version: int | None = None,
     ) -> MemoryProposal:
-        with self._lock:
-            existing = self._by_id.get(proposal.id)
+        async with self._lock:
+            user_bucket = self._by_owner.setdefault(proposal.owner_user_id, {})
+            existing = user_bucket.get(proposal.id)
             if expected_version is None:
                 if existing is not None:
                     raise ConflictError(
@@ -348,22 +393,26 @@ class InMemoryMemoryProposalRepository:
                         expected_version=expected_version,
                         actual_version=existing.version,
                     )
-            self._by_id[proposal.id] = proposal
+            user_bucket[proposal.id] = proposal
             return proposal
 
 
 class InMemoryMemoryRepository:
-    """Isolated in-memory repository storing approved ``Memory`` entities only."""
+    """Async fake repository mirroring ``users/{uid}/memories/{memoryId}``."""
 
     def __init__(self) -> None:
-        self._lock = threading.RLock()
-        self._by_id: dict[str, Memory] = {}
+        self._lock = asyncio.Lock()
+        self._by_owner: dict[str, dict[str, Memory]] = {}
 
-    def get_by_id(self, memory_id: str) -> Memory | None:
-        with self._lock:
-            return self._by_id.get(memory_id)
+    async def get_for_owner(self, owner_user_id: str, memory_id: str) -> Memory | None:
+        async with self._lock:
+            return self._by_owner.get(owner_user_id, {}).get(memory_id)
 
-    def list_by_owner(
+    async def exists_for_any_owner(self, memory_id: str) -> bool:
+        async with self._lock:
+            return any(memory_id in user_memories for user_memories in self._by_owner.values())
+
+    async def list_by_owner(
         self,
         owner_user_id: str,
         *,
@@ -372,21 +421,21 @@ class InMemoryMemoryRepository:
         memory_type: MemoryType | None = None,
         include_revoked: bool = False,
     ) -> list[Memory]:
-        with self._lock:
+        async with self._lock:
             items = [
                 memory
-                for memory in self._by_id.values()
-                if memory.owner_user_id == owner_user_id
-                and (include_revoked or memory.consent_status is ConsentStatus.APPROVED)
+                for memory in self._by_owner.get(owner_user_id, {}).values()
+                if (include_revoked or memory.consent_status is ConsentStatus.APPROVED)
                 and (scope is None or memory.scope is scope)
                 and (contact_id is None or memory.contact_id == contact_id)
                 and (memory_type is None or memory.memory_type is memory_type)
             ]
         return sorted(items, key=lambda item: (item.created_at, item.id))
 
-    def save(self, memory: Memory, *, expected_version: int | None = None) -> Memory:
-        with self._lock:
-            existing = self._by_id.get(memory.id)
+    async def save(self, memory: Memory, *, expected_version: int | None = None) -> Memory:
+        async with self._lock:
+            user_bucket = self._by_owner.setdefault(memory.owner_user_id, {})
+            existing = user_bucket.get(memory.id)
             if expected_version is None:
                 if existing is not None:
                     raise ConflictError(
@@ -403,12 +452,19 @@ class InMemoryMemoryRepository:
                         expected_version=expected_version,
                         actual_version=existing.version,
                     )
-            self._by_id[memory.id] = memory
+            user_bucket[memory.id] = memory
             return memory
 
-    def delete(self, memory_id: str, *, expected_version: int | None = None) -> None:
-        with self._lock:
-            existing = self._by_id.get(memory_id)
+    async def delete(
+        self,
+        owner_user_id: str,
+        memory_id: str,
+        *,
+        expected_version: int | None = None,
+    ) -> None:
+        async with self._lock:
+            user_bucket = self._by_owner.get(owner_user_id, {})
+            existing = user_bucket.get(memory_id)
             if existing is None:
                 raise EntityNotFoundError(entity_name="Memory", entity_id=memory_id)
             if expected_version is not None and existing.version != expected_version:
@@ -418,7 +474,7 @@ class InMemoryMemoryRepository:
                     expected_version=expected_version,
                     actual_version=existing.version,
                 )
-            del self._by_id[memory_id]
+            del user_bucket[memory_id]
 
 
 def _build_time_boxed_agenda(
@@ -457,11 +513,8 @@ def _build_time_boxed_agenda(
     ]
 
 
-def _compose_contact_context(
-    *,
-    contact: Contact,
-    approved_memories: Sequence[Memory],
-) -> str:
+def _compose_contact_context(context: BriefPreparationContext) -> str:
+    contact = context.contact
     descriptor_parts = [contact.name]
     if contact.title:
         descriptor_parts.append(contact.title)
@@ -474,25 +527,28 @@ def _compose_contact_context(
     if contact.context_notes:
         summary = f"{summary} Context: {contact.context_notes}"
 
-    contact_memories = [mem.text for mem in approved_memories if mem.scope is MemoryScope.CONTACT]
-    if contact_memories:
-        joined = "; ".join(contact_memories[:3])
+    if context.recent_meetings:
+        recent_objectives = "; ".join(m.objective[:100] for m in context.recent_meetings[:2])
+        summary = f"{summary} Recent meetings: {recent_objectives}"
+
+    if context.contact_memories:
+        joined = "; ".join(mem.text for mem in context.contact_memories[:3])
         summary = f"{summary} Prior approved notes: {joined}"
 
     return summary[:2000]
 
 
 class FakeBriefCoachAgent:
-    """Deterministic fake ``BriefCoachAgentPort`` for contract verification without live LLMs."""
+    """Async deterministic fake ``BriefCoachAgentPort`` consuming ``BriefPreparationContext``."""
 
-    def generate_brief(
+    async def generate_brief(
         self,
         *,
         meeting: Meeting,
-        contact: Contact,
-        user_preferences: UserPreferences | None,
-        approved_memories: Sequence[Memory],
+        context: BriefPreparationContext,
     ) -> GeneratedBriefContent:
+        contact = context.contact
+        user_preferences = context.user_preferences
         question_count = (
             user_preferences.preferred_question_count if user_preferences is not None else 3
         )
@@ -572,10 +628,7 @@ class FakeBriefCoachAgent:
         ]
 
         return GeneratedBriefContent(
-            contact_context=_compose_contact_context(
-                contact=contact,
-                approved_memories=approved_memories,
-            ),
+            contact_context=_compose_contact_context(context),
             meeting_objective=meeting.objective,
             conversation_openers=openers,
             time_boxed_agenda=_build_time_boxed_agenda(
@@ -584,23 +637,21 @@ class FakeBriefCoachAgent:
             ),
             suggested_questions=questions,
             suggested_follow_up_topics=follow_ups,
-            referenced_memory_ids=[mem.id for mem in approved_memories],
+            referenced_memory_ids=context.referenced_memory_ids,
             revision_summary=None,
         )
 
-    def revise_brief(
+    async def revise_brief(
         self,
         *,
         current_brief: PreparationBrief,
         meeting: Meeting,
-        contact: Contact,
+        context: BriefPreparationContext,
         instructions: str,
         target_duration_minutes: MeetingDurationMinutes,
         target_tone: MeetingTone,
-        user_preferences: UserPreferences | None,
-        approved_memories: Sequence[Memory],
     ) -> GeneratedBriefContent:
-        del user_preferences
+        contact = context.contact
         cleaned_instruction = scrub_basic_pii(instructions.strip())
         tone_label = target_tone.value.replace("_", " ")
 
@@ -626,10 +677,7 @@ class FakeBriefCoachAgent:
         )
 
         return GeneratedBriefContent(
-            contact_context=_compose_contact_context(
-                contact=contact,
-                approved_memories=approved_memories,
-            ),
+            contact_context=_compose_contact_context(context),
             meeting_objective=current_brief.meeting_objective,
             conversation_openers=updated_openers,
             time_boxed_agenda=_build_time_boxed_agenda(
@@ -638,13 +686,13 @@ class FakeBriefCoachAgent:
             ),
             suggested_questions=updated_questions,
             suggested_follow_up_topics=current_brief.suggested_follow_up_topics,
-            referenced_memory_ids=[mem.id for mem in approved_memories],
+            referenced_memory_ids=context.referenced_memory_ids,
             revision_summary=f"Revised brief ({tone_label}): {cleaned_instruction}"[:1000],
         )
 
 
 class FakeMemoryProposalAgent:
-    """Deterministic fake ``MemoryProposalAgentPort`` extracting PII-scrubbed candidates."""
+    """Async deterministic fake ``MemoryProposalAgentPort`` extracting PII-scrubbed candidates."""
 
     _PREFERENCE_CUES = (
         "i prefer",
@@ -663,7 +711,7 @@ class FakeMemoryProposalAgent:
         "share the",
     )
 
-    def propose_memories(
+    async def propose_memories(
         self,
         *,
         notes: str,
@@ -764,23 +812,56 @@ class FakeMemoryProposalAgent:
         return proposals
 
 
-class FakeServiceContainer:
-    """Self-contained wiring container holding injected in-memory repositories and fake agents."""
+class ServiceContainer:
+    """Protocol-typed dependency container supporting both local fakes and Firestore backends."""
+
+    def __init__(
+        self,
+        *,
+        clock: ClockPort,
+        id_generator: IdGeneratorPort,
+        authenticator: AuthenticatorPort,
+        preferences_repo: UserPreferencesRepository,
+        contact_repo: ContactRepository,
+        meeting_repo: MeetingRepository,
+        brief_repo: BriefRepository,
+        proposal_repo: MemoryProposalRepository,
+        memory_repo: MemoryRepository,
+        brief_agent: BriefCoachAgentPort,
+        proposal_agent: MemoryProposalAgentPort,
+    ) -> None:
+        self.clock = clock
+        self.id_generator = id_generator
+        self.authenticator = authenticator
+        self.preferences_repo = preferences_repo
+        self.contact_repo = contact_repo
+        self.meeting_repo = meeting_repo
+        self.brief_repo = brief_repo
+        self.proposal_repo = proposal_repo
+        self.memory_repo = memory_repo
+        self.brief_agent = brief_agent
+        self.proposal_agent = proposal_agent
+
+
+class FakeServiceContainer(ServiceContainer):
+    """Self-contained wiring container holding injected local fake repositories and agents."""
 
     def __init__(
         self,
         *,
         clock: ClockPort | None = None,
-        authenticator: FakeAuthenticator | None = None,
+        authenticator: AuthenticatorPort | None = None,
     ) -> None:
-        self.clock: ClockPort = clock if clock is not None else SystemUtcClock()
-        self.id_generator = UuidIdGenerator()
-        self.authenticator = authenticator if authenticator is not None else FakeAuthenticator()
-        self.preferences_repo = InMemoryUserPreferencesRepository()
-        self.contact_repo = InMemoryContactRepository()
-        self.meeting_repo = InMemoryMeetingRepository()
-        self.brief_repo = InMemoryBriefRepository()
-        self.proposal_repo = InMemoryMemoryProposalRepository()
-        self.memory_repo = InMemoryMemoryRepository()
-        self.brief_agent = FakeBriefCoachAgent()
-        self.proposal_agent = FakeMemoryProposalAgent()
+        super().__init__(
+            clock=clock if clock is not None else SystemUtcClock(),
+            id_generator=UuidIdGenerator(),
+            authenticator=(authenticator if authenticator is not None else FakeAuthenticator()),
+            preferences_repo=InMemoryUserPreferencesRepository(),
+            contact_repo=InMemoryContactRepository(),
+            meeting_repo=InMemoryMeetingRepository(),
+            brief_repo=InMemoryBriefRepository(),
+            proposal_repo=InMemoryMemoryProposalRepository(),
+            memory_repo=InMemoryMemoryRepository(),
+            brief_agent=FakeBriefCoachAgent(),
+            proposal_agent=FakeMemoryProposalAgent(),
+        )
