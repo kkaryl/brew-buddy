@@ -1,0 +1,2525 @@
+{
+  "components": {
+    "schemas": {
+      "AgendaItemResponse": {
+        "additionalProperties": false,
+        "description": "Serialized time-boxed agenda segment.",
+        "properties": {
+          "description": {
+            "description": "Segment focus and coaching guidance.",
+            "title": "Description",
+            "type": "string"
+          },
+          "duration_minutes": {
+            "description": "Minutes allocated to this segment.",
+            "title": "Duration Minutes",
+            "type": "integer"
+          },
+          "title": {
+            "description": "Agenda segment title.",
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "duration_minutes",
+          "description"
+        ],
+        "title": "AgendaItemResponse",
+        "type": "object"
+      },
+      "ApiErrorResponse": {
+        "additionalProperties": false,
+        "description": "Canonical error envelope returned across all Brew API endpoints.",
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ErrorObject"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "title": "ApiErrorResponse",
+        "type": "object"
+      },
+      "ApproveMemoryProposalRequest": {
+        "additionalProperties": false,
+        "description": "Request payload for ``POST /api/v1/memories/{id}/approve``.",
+        "properties": {
+          "edited_text": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "minLength": 3,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional user-edited memory text to persist upon approval.",
+            "title": "Edited Text"
+          },
+          "expected_version": {
+            "default": 1,
+            "description": "Expected version of the pending memory proposal.",
+            "minimum": 1.0,
+            "title": "Expected Version",
+            "type": "integer"
+          },
+          "memory_type": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MemoryType"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional overridden memory classification."
+          }
+        },
+        "title": "ApproveMemoryProposalRequest",
+        "type": "object"
+      },
+      "ConsentStatus": {
+        "description": "User consent status for durable memories.",
+        "enum": [
+          "approved",
+          "revoked"
+        ],
+        "title": "ConsentStatus",
+        "type": "string"
+      },
+      "ContactListResponse": {
+        "additionalProperties": false,
+        "description": "Paginated/collection response for ``GET /api/v1/contacts``.",
+        "properties": {
+          "items": {
+            "description": "Contacts owned by the authenticated user.",
+            "items": {
+              "$ref": "#/components/schemas/ContactResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "total": {
+            "description": "Total number of contacts returned.",
+            "minimum": 0.0,
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total"
+        ],
+        "title": "ContactListResponse",
+        "type": "object"
+      },
+      "ContactResponse": {
+        "additionalProperties": false,
+        "description": "Serialized representation of a ``Contact``.",
+        "properties": {
+          "context_notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Background context notes.",
+            "title": "Context Notes"
+          },
+          "created_at": {
+            "description": "UTC creation timestamp.",
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "description": "Unique contact identifier.",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "description": "Counterpart full name.",
+            "title": "Name",
+            "type": "string"
+          },
+          "organization": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Counterpart organization.",
+            "title": "Organization"
+          },
+          "role": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Counterpart functional role.",
+            "title": "Role"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Counterpart job title.",
+            "title": "Title"
+          },
+          "updated_at": {
+            "description": "UTC last-updated timestamp.",
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "version": {
+            "description": "Optimistic concurrency version.",
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "version",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "ContactResponse",
+        "type": "object"
+      },
+      "ConversationQuestionResponse": {
+        "additionalProperties": false,
+        "description": "Serialized ``ConversationQuestion`` pairing a question with its rationale.",
+        "properties": {
+          "category": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional thematic category.",
+            "title": "Category"
+          },
+          "id": {
+            "description": "Unique question identifier within the brief.",
+            "title": "Id",
+            "type": "string"
+          },
+          "question": {
+            "description": "Suggested question phrasing.",
+            "title": "Question",
+            "type": "string"
+          },
+          "rationale": {
+            "description": "Why this question fits the meeting objective and context.",
+            "title": "Rationale",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "question",
+          "rationale"
+        ],
+        "title": "ConversationQuestionResponse",
+        "type": "object"
+      },
+      "CreateContactRequest": {
+        "additionalProperties": false,
+        "description": "Request payload for ``POST /api/v1/contacts``.",
+        "properties": {
+          "context_notes": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "minLength": 3,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Known background context or how you connected.",
+            "title": "Context Notes"
+          },
+          "name": {
+            "description": "Counterpart full name.",
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "organization": {
+            "anyOf": [
+              {
+                "maxLength": 160,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Company, team, or organization.",
+            "title": "Organization"
+          },
+          "role": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Counterpart functional role or relationship role.",
+            "title": "Role"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Counterpart job title.",
+            "title": "Title"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "CreateContactRequest",
+        "type": "object"
+      },
+      "ErrorDetailItem": {
+        "additionalProperties": false,
+        "description": "Field-level validation or constraint failure detail.",
+        "properties": {
+          "error_type": {
+            "description": "Machine-readable validation category.",
+            "title": "Error Type",
+            "type": "string"
+          },
+          "field": {
+            "description": "Dot-delimited request location of the offending input.",
+            "title": "Field",
+            "type": "string"
+          },
+          "message": {
+            "description": "Human-readable validation error explanation.",
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "field",
+          "message",
+          "error_type"
+        ],
+        "title": "ErrorDetailItem",
+        "type": "object"
+      },
+      "ErrorObject": {
+        "additionalProperties": false,
+        "description": "Structured error payload included in every error response.",
+        "properties": {
+          "code": {
+            "description": "Stable machine-readable error code.",
+            "title": "Code",
+            "type": "string"
+          },
+          "details": {
+            "description": "Optional field-level validation failures.",
+            "items": {
+              "$ref": "#/components/schemas/ErrorDetailItem"
+            },
+            "title": "Details",
+            "type": "array"
+          },
+          "message": {
+            "description": "Safe human-readable error message.",
+            "title": "Message",
+            "type": "string"
+          },
+          "trace_id": {
+            "description": "Request correlation or OpenTelemetry trace identifier.",
+            "title": "Trace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "trace_id"
+        ],
+        "title": "ErrorObject",
+        "type": "object"
+      },
+      "GenerateBriefRequest": {
+        "additionalProperties": false,
+        "description": "Request payload for ``POST /api/v1/briefs/generate``.",
+        "properties": {
+          "contact_id": {
+            "description": "Target contact identifier.",
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "title": "Contact Id",
+            "type": "string"
+          },
+          "duration_minutes": {
+            "description": "Target meeting duration in minutes (5 to 180).",
+            "maximum": 180.0,
+            "minimum": 5.0,
+            "title": "Duration Minutes",
+            "type": "integer"
+          },
+          "meeting_notes": {
+            "anyOf": [
+              {
+                "maxLength": 5000,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional additional background context for this meeting.",
+            "title": "Meeting Notes"
+          },
+          "meeting_objective": {
+            "description": "Concrete goal for this conversation.",
+            "maxLength": 500,
+            "minLength": 3,
+            "title": "Meeting Objective",
+            "type": "string"
+          },
+          "preferences": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UserPreferencesInput"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional user preference overrides."
+          },
+          "purpose": {
+            "$ref": "#/components/schemas/MeetingPurpose",
+            "description": "Meeting archetype."
+          },
+          "scheduled_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional timezone-aware scheduled date/time (normalized to UTC).",
+            "title": "Scheduled At"
+          },
+          "tone": {
+            "$ref": "#/components/schemas/MeetingTone",
+            "default": "warm_casual",
+            "description": "Desired conversation tone."
+          }
+        },
+        "required": [
+          "contact_id",
+          "purpose",
+          "meeting_objective",
+          "duration_minutes"
+        ],
+        "title": "GenerateBriefRequest",
+        "type": "object"
+      },
+      "HealthResponse": {
+        "description": "Typed HTTP payload returned by Brew health endpoints.",
+        "properties": {
+          "environment": {
+            "description": "Configured deployment environment.",
+            "title": "Environment",
+            "type": "string"
+          },
+          "model": {
+            "description": "Configured default Gemini model.",
+            "title": "Model",
+            "type": "string"
+          },
+          "service": {
+            "description": "Service name.",
+            "title": "Service",
+            "type": "string"
+          },
+          "status": {
+            "description": "Current operational status.",
+            "enum": [
+              "ok",
+              "degraded"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "timestamp_utc": {
+            "description": "UTC timestamp in ISO-8601 format.",
+            "title": "Timestamp Utc",
+            "type": "string"
+          },
+          "version": {
+            "description": "Application semantic version.",
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "service",
+          "version",
+          "environment",
+          "model",
+          "timestamp_utc"
+        ],
+        "title": "HealthResponse",
+        "type": "object"
+      },
+      "MeetingListResponse": {
+        "additionalProperties": false,
+        "description": "Collection response for ``GET /api/v1/meetings``.",
+        "properties": {
+          "items": {
+            "description": "Meetings owned by the authenticated user.",
+            "items": {
+              "$ref": "#/components/schemas/MeetingResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "total": {
+            "description": "Total number of meetings returned.",
+            "minimum": 0.0,
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total"
+        ],
+        "title": "MeetingListResponse",
+        "type": "object"
+      },
+      "MeetingPurpose": {
+        "description": "Supported meeting archetypes in Brew.",
+        "enum": [
+          "coffee_chat",
+          "networking",
+          "mentorship",
+          "customer_discovery"
+        ],
+        "title": "MeetingPurpose",
+        "type": "string"
+      },
+      "MeetingResponse": {
+        "additionalProperties": false,
+        "description": "Serialized representation of a ``Meeting``.",
+        "properties": {
+          "contact_id": {
+            "description": "Associated contact identifier.",
+            "title": "Contact Id",
+            "type": "string"
+          },
+          "created_at": {
+            "description": "UTC creation timestamp.",
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "duration_minutes": {
+            "description": "Allocated meeting duration in minutes.",
+            "title": "Duration Minutes",
+            "type": "integer"
+          },
+          "id": {
+            "description": "Unique meeting identifier.",
+            "title": "Id",
+            "type": "string"
+          },
+          "latest_brief_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Identifier of the latest generated preparation brief.",
+            "title": "Latest Brief Id"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional pre- or post-meeting notes.",
+            "title": "Notes"
+          },
+          "objective": {
+            "description": "Primary objective for the conversation.",
+            "title": "Objective",
+            "type": "string"
+          },
+          "purpose": {
+            "$ref": "#/components/schemas/MeetingPurpose",
+            "description": "Meeting archetype."
+          },
+          "scheduled_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional scheduled UTC timestamp.",
+            "title": "Scheduled At"
+          },
+          "status": {
+            "$ref": "#/components/schemas/MeetingStatus",
+            "description": "Current lifecycle status of the meeting."
+          },
+          "tone": {
+            "$ref": "#/components/schemas/MeetingTone",
+            "description": "Desired coaching and conversation tone."
+          },
+          "updated_at": {
+            "description": "UTC last-updated timestamp.",
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "version": {
+            "description": "Optimistic concurrency version.",
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "contact_id",
+          "purpose",
+          "tone",
+          "objective",
+          "duration_minutes",
+          "status",
+          "version",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "MeetingResponse",
+        "type": "object"
+      },
+      "MeetingStatus": {
+        "description": "Lifecycle states of a meeting session.",
+        "enum": [
+          "preparing",
+          "completed",
+          "cancelled"
+        ],
+        "title": "MeetingStatus",
+        "type": "string"
+      },
+      "MeetingTone": {
+        "description": "Supported coaching and conversation tones.",
+        "enum": [
+          "warm_casual",
+          "curious_exploratory",
+          "structured_executive",
+          "candid_coaching"
+        ],
+        "title": "MeetingTone",
+        "type": "string"
+      },
+      "MemoryListResponse": {
+        "additionalProperties": false,
+        "description": "Collection response for ``GET /api/v1/memories``.",
+        "properties": {
+          "items": {
+            "description": "Approved memories matching query filters.",
+            "items": {
+              "$ref": "#/components/schemas/MemoryResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "total": {
+            "description": "Total number of approved memories returned.",
+            "minimum": 0.0,
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total"
+        ],
+        "title": "MemoryListResponse",
+        "type": "object"
+      },
+      "MemoryProposalBatchResponse": {
+        "additionalProperties": false,
+        "description": "Response payload for ``POST /api/v1/memories/propose``.",
+        "properties": {
+          "proposals": {
+            "description": "Candidate memory proposals awaiting explicit user approval.",
+            "items": {
+              "$ref": "#/components/schemas/MemoryProposalResponse"
+            },
+            "title": "Proposals",
+            "type": "array"
+          },
+          "total": {
+            "description": "Number of proposals generated.",
+            "minimum": 0.0,
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "proposals",
+          "total"
+        ],
+        "title": "MemoryProposalBatchResponse",
+        "type": "object"
+      },
+      "MemoryProposalResponse": {
+        "additionalProperties": false,
+        "description": "Serialized ``MemoryProposal`` staged in the separate proposal store.",
+        "properties": {
+          "approved_memory_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "ID of the approved Memory record once approved.",
+            "title": "Approved Memory Id"
+          },
+          "contact_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Related contact ID when scope is 'contact'.",
+            "title": "Contact Id"
+          },
+          "created_at": {
+            "description": "UTC creation timestamp.",
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "description": "Unique memory proposal identifier.",
+            "title": "Id",
+            "type": "string"
+          },
+          "memory_type": {
+            "$ref": "#/components/schemas/MemoryType",
+            "description": "Semantic classification of the memory."
+          },
+          "rationale": {
+            "description": "Why Brew proposed saving this memory.",
+            "title": "Rationale",
+            "type": "string"
+          },
+          "reviewed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "UTC review timestamp once approved or rejected.",
+            "title": "Reviewed At"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/MemoryScope",
+            "description": "Target memory scope."
+          },
+          "source": {
+            "$ref": "#/components/schemas/MemorySourceResponse",
+            "description": "Provenance reference."
+          },
+          "status": {
+            "$ref": "#/components/schemas/ProposalStatus",
+            "description": "Current review status."
+          },
+          "text": {
+            "description": "Proposed memory statement.",
+            "title": "Text",
+            "type": "string"
+          },
+          "updated_at": {
+            "description": "UTC last-updated timestamp.",
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "version": {
+            "description": "Optimistic concurrency version.",
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "scope",
+          "memory_type",
+          "text",
+          "rationale",
+          "source",
+          "status",
+          "created_at",
+          "updated_at",
+          "version"
+        ],
+        "title": "MemoryProposalResponse",
+        "type": "object"
+      },
+      "MemoryResponse": {
+        "additionalProperties": false,
+        "description": "Serialized user-approved ``Memory``.",
+        "properties": {
+          "consent_status": {
+            "$ref": "#/components/schemas/ConsentStatus",
+            "description": "User consent status."
+          },
+          "contact_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Related contact ID when scope is 'contact'.",
+            "title": "Contact Id"
+          },
+          "created_at": {
+            "description": "UTC creation timestamp.",
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "description": "Unique approved memory identifier.",
+            "title": "Id",
+            "type": "string"
+          },
+          "memory_type": {
+            "$ref": "#/components/schemas/MemoryType",
+            "description": "Semantic memory type."
+          },
+          "owner_user_id": {
+            "description": "Authenticated owner user identifier.",
+            "title": "Owner User Id",
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/MemoryScope",
+            "description": "Scope ('user_preference' or 'contact')."
+          },
+          "source": {
+            "$ref": "#/components/schemas/MemorySourceResponse",
+            "description": "Provenance / source reference."
+          },
+          "text": {
+            "description": "Approved memory text.",
+            "title": "Text",
+            "type": "string"
+          },
+          "updated_at": {
+            "description": "UTC last-updated timestamp.",
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "version": {
+            "description": "Optimistic concurrency version.",
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "owner_user_id",
+          "scope",
+          "memory_type",
+          "text",
+          "source",
+          "consent_status",
+          "created_at",
+          "updated_at",
+          "version"
+        ],
+        "title": "MemoryResponse",
+        "type": "object"
+      },
+      "MemoryScope": {
+        "description": "Target scope of a memory or memory proposal.",
+        "enum": [
+          "user_preference",
+          "contact"
+        ],
+        "title": "MemoryScope",
+        "type": "string"
+      },
+      "MemorySourceResponse": {
+        "additionalProperties": false,
+        "description": "Serialized ``MemorySource`` provenance reference.",
+        "properties": {
+          "brief_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Originating brief ID, if any.",
+            "title": "Brief Id"
+          },
+          "excerpt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "PII-scrubbed source excerpt.",
+            "title": "Excerpt"
+          },
+          "meeting_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Originating meeting ID, if any.",
+            "title": "Meeting Id"
+          },
+          "proposal_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Originating memory proposal ID once approved.",
+            "title": "Proposal Id"
+          },
+          "recorded_at": {
+            "description": "UTC timestamp when provenance was recorded.",
+            "format": "date-time",
+            "title": "Recorded At",
+            "type": "string"
+          },
+          "source_type": {
+            "$ref": "#/components/schemas/MemorySourceType",
+            "description": "Originating workflow stage."
+          }
+        },
+        "required": [
+          "source_type",
+          "recorded_at"
+        ],
+        "title": "MemorySourceResponse",
+        "type": "object"
+      },
+      "MemorySourceType": {
+        "description": "Originating workflow context for a memory or memory proposal.",
+        "enum": [
+          "meeting_notes",
+          "brief_refinement",
+          "direct_user_input"
+        ],
+        "title": "MemorySourceType",
+        "type": "string"
+      },
+      "MemoryType": {
+        "description": "Semantic classification of a proposed or approved memory.",
+        "enum": [
+          "communication_preference",
+          "agenda_preference",
+          "counterpart_background",
+          "shared_interest",
+          "follow_up_commitment",
+          "relationship_note"
+        ],
+        "title": "MemoryType",
+        "type": "string"
+      },
+      "PreparationBriefResponse": {
+        "additionalProperties": false,
+        "description": "Serialized ``PreparationBrief`` returned by brief endpoints.",
+        "properties": {
+          "contact_context": {
+            "description": "Grounded summary of counterpart context.",
+            "title": "Contact Context",
+            "type": "string"
+          },
+          "contact_id": {
+            "description": "Associated contact identifier.",
+            "title": "Contact Id",
+            "type": "string"
+          },
+          "conversation_openers": {
+            "description": "Tailored conversation openers.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Conversation Openers",
+            "type": "array"
+          },
+          "created_at": {
+            "description": "UTC creation timestamp.",
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "duration_minutes": {
+            "description": "Total time-boxed duration in minutes.",
+            "title": "Duration Minutes",
+            "type": "integer"
+          },
+          "id": {
+            "description": "Unique preparation brief identifier.",
+            "title": "Id",
+            "type": "string"
+          },
+          "meeting_id": {
+            "description": "Associated meeting identifier.",
+            "title": "Meeting Id",
+            "type": "string"
+          },
+          "meeting_objective": {
+            "description": "Meeting objective.",
+            "title": "Meeting Objective",
+            "type": "string"
+          },
+          "referenced_memory_ids": {
+            "description": "IDs of approved memories used to ground this brief.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Referenced Memory Ids",
+            "type": "array"
+          },
+          "revision_summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Summary of the latest revision, when revised.",
+            "title": "Revision Summary"
+          },
+          "suggested_follow_up_topics": {
+            "description": "Suggested follow-up topics and next steps.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Suggested Follow Up Topics",
+            "type": "array"
+          },
+          "suggested_questions": {
+            "description": "Suggested questions and coaching rationales.",
+            "items": {
+              "$ref": "#/components/schemas/ConversationQuestionResponse"
+            },
+            "title": "Suggested Questions",
+            "type": "array"
+          },
+          "time_boxed_agenda": {
+            "description": "Time-boxed agenda segments summing to duration_minutes.",
+            "items": {
+              "$ref": "#/components/schemas/AgendaItemResponse"
+            },
+            "title": "Time Boxed Agenda",
+            "type": "array"
+          },
+          "tone": {
+            "$ref": "#/components/schemas/MeetingTone",
+            "description": "Tone applied to the brief."
+          },
+          "updated_at": {
+            "description": "UTC last-updated timestamp.",
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "version": {
+            "description": "Optimistic concurrency version.",
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "meeting_id",
+          "contact_id",
+          "duration_minutes",
+          "tone",
+          "contact_context",
+          "meeting_objective",
+          "conversation_openers",
+          "time_boxed_agenda",
+          "suggested_questions",
+          "suggested_follow_up_topics",
+          "referenced_memory_ids",
+          "version",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "PreparationBriefResponse",
+        "type": "object"
+      },
+      "ProposalStatus": {
+        "description": "Human-in-the-loop review status of a memory proposal.",
+        "enum": [
+          "pending",
+          "approved",
+          "rejected"
+        ],
+        "title": "ProposalStatus",
+        "type": "string"
+      },
+      "ProposeMemoriesRequest": {
+        "additionalProperties": false,
+        "description": "Request payload for ``POST /api/v1/memories/propose``.",
+        "properties": {
+          "brief_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional preparation brief ID associated with the notes.",
+            "title": "Brief Id"
+          },
+          "contact_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional contact ID associated with the notes.",
+            "title": "Contact Id"
+          },
+          "meeting_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional meeting ID associated with the notes.",
+            "title": "Meeting Id"
+          },
+          "notes": {
+            "description": "Post-meeting notes or session reflections used to propose memories.",
+            "maxLength": 10000,
+            "minLength": 5,
+            "title": "Notes",
+            "type": "string"
+          },
+          "source_type": {
+            "$ref": "#/components/schemas/MemorySourceType",
+            "default": "meeting_notes",
+            "description": "Provenance source type."
+          }
+        },
+        "required": [
+          "notes"
+        ],
+        "title": "ProposeMemoriesRequest",
+        "type": "object"
+      },
+      "ReviseBriefRequest": {
+        "additionalProperties": false,
+        "description": "Request payload for ``POST /api/v1/briefs/{id}/revise``.",
+        "properties": {
+          "duration_minutes": {
+            "anyOf": [
+              {
+                "description": "Meeting duration in minutes (5 to 180).",
+                "maximum": 180.0,
+                "minimum": 5.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional updated meeting duration in minutes.",
+            "title": "Duration Minutes"
+          },
+          "expected_version": {
+            "description": "Current brief version expected by the caller for optimistic concurrency.",
+            "minimum": 1.0,
+            "title": "Expected Version",
+            "type": "integer"
+          },
+          "instructions": {
+            "description": "Natural-language revision instructions.",
+            "maxLength": 1000,
+            "minLength": 3,
+            "title": "Instructions",
+            "type": "string"
+          },
+          "tone": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MeetingTone"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional updated coaching tone."
+          }
+        },
+        "required": [
+          "instructions",
+          "expected_version"
+        ],
+        "title": "ReviseBriefRequest",
+        "type": "object"
+      },
+      "UpdateMemoryRequest": {
+        "additionalProperties": false,
+        "description": "Request payload for ``PATCH /api/v1/memories/{id}``.",
+        "properties": {
+          "consent_status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ConsentStatus"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Updated user consent status (e.g. 'revoked')."
+          },
+          "expected_version": {
+            "description": "Current memory version expected by caller for optimistic concurrency.",
+            "minimum": 1.0,
+            "title": "Expected Version",
+            "type": "integer"
+          },
+          "memory_type": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MemoryType"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Updated memory type."
+          },
+          "text": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "minLength": 3,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Updated memory text.",
+            "title": "Text"
+          }
+        },
+        "required": [
+          "expected_version"
+        ],
+        "title": "UpdateMemoryRequest",
+        "type": "object"
+      },
+      "UserPreferencesInput": {
+        "additionalProperties": false,
+        "description": "Optional coaching preference overrides supplied during brief generation.",
+        "properties": {
+          "communication_style_notes": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "minLength": 3,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Personal communication style preferences.",
+            "title": "Communication Style Notes"
+          },
+          "focus_areas": {
+            "anyOf": [
+              {
+                "items": {
+                  "maxLength": 80,
+                  "minLength": 2,
+                  "type": "string"
+                },
+                "maxItems": 10,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional coaching focus tags.",
+            "title": "Focus Areas"
+          },
+          "preferred_question_count": {
+            "anyOf": [
+              {
+                "maximum": 15.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Preferred number of suggested conversation questions (1 to 15).",
+            "title": "Preferred Question Count"
+          }
+        },
+        "title": "UserPreferencesInput",
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "HTTPBearer": {
+        "description": "Opaque or JWT Bearer token resolving the authenticated Brew user.",
+        "scheme": "bearer",
+        "type": "http"
+      }
+    }
+  },
+  "info": {
+    "description": "Brew \u2014 AI-powered Coffee Chat Buddy API contract covering preparation briefs, contacts, meetings, and human-in-the-loop memory governance.",
+    "title": "brew",
+    "version": "0.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/health": {
+      "get": {
+        "description": "Return current backend health and model readiness metadata.",
+        "operationId": "read_health_api_health_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Read Health",
+        "tags": [
+          "system"
+        ]
+      }
+    },
+    "/api/v1/briefs/generate": {
+      "post": {
+        "description": "Create a meeting for an owned contact and synthesize a personalized preparation brief.",
+        "operationId": "generate_brief_api_v1_briefs_generate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GenerateBriefRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PreparationBriefResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Missing, malformed, or invalid Bearer authentication credentials."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Authenticated user does not own the target resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Requested resource does not exist."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Optimistic concurrency version conflict or invalid lifecycle transition."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Request schema or domain invariant validation failure."
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Generate a time-boxed preparation brief",
+        "tags": [
+          "briefs"
+        ]
+      }
+    },
+    "/api/v1/briefs/{id}": {
+      "get": {
+        "description": "Return a preparation brief owned by the authenticated caller.",
+        "operationId": "get_brief_api_v1_briefs__id__get",
+        "parameters": [
+          {
+            "description": "Preparation brief identifier.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "Preparation brief identifier.",
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+              "title": "Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PreparationBriefResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Missing, malformed, or invalid Bearer authentication credentials."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Authenticated user does not own the target resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Requested resource does not exist."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Optimistic concurrency version conflict or invalid lifecycle transition."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Request schema or domain invariant validation failure."
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Retrieve a preparation brief by ID",
+        "tags": [
+          "briefs"
+        ]
+      }
+    },
+    "/api/v1/briefs/{id}/revise": {
+      "post": {
+        "description": "Apply natural-language revision instructions with optimistic version checking.",
+        "operationId": "revise_brief_api_v1_briefs__id__revise_post",
+        "parameters": [
+          {
+            "description": "Preparation brief identifier.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "Preparation brief identifier.",
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+              "title": "Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviseBriefRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PreparationBriefResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Missing, malformed, or invalid Bearer authentication credentials."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Authenticated user does not own the target resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Requested resource does not exist."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Optimistic concurrency version conflict or invalid lifecycle transition."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Request schema or domain invariant validation failure."
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Revise an existing preparation brief",
+        "tags": [
+          "briefs"
+        ]
+      }
+    },
+    "/api/v1/contacts": {
+      "get": {
+        "description": "List counterpart profiles created by the authenticated user.",
+        "operationId": "list_contacts_api_v1_contacts_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContactListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Missing, malformed, or invalid Bearer authentication credentials."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Authenticated user does not own the target resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Requested resource does not exist."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Optimistic concurrency version conflict or invalid lifecycle transition."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Request schema or domain invariant validation failure."
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List contacts owned by the authenticated user",
+        "tags": [
+          "contacts"
+        ]
+      },
+      "post": {
+        "description": "Create a counterpart profile owned by the authenticated user.",
+        "operationId": "create_contact_api_v1_contacts_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateContactRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContactResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Missing, malformed, or invalid Bearer authentication credentials."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Authenticated user does not own the target resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Requested resource does not exist."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Optimistic concurrency version conflict or invalid lifecycle transition."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Request schema or domain invariant validation failure."
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create a new contact",
+        "tags": [
+          "contacts"
+        ]
+      }
+    },
+    "/api/v1/meetings": {
+      "get": {
+        "description": "List meetings belonging to the authenticated caller.",
+        "operationId": "list_meetings_api_v1_meetings_get",
+        "parameters": [
+          {
+            "description": "Optional contact identifier filter.",
+            "in": "query",
+            "name": "contact_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional contact identifier filter.",
+              "title": "Contact Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeetingListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Missing, malformed, or invalid Bearer authentication credentials."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Authenticated user does not own the target resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Requested resource does not exist."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Optimistic concurrency version conflict or invalid lifecycle transition."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Request schema or domain invariant validation failure."
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List meetings owned by the authenticated user",
+        "tags": [
+          "meetings"
+        ]
+      }
+    },
+    "/api/v1/memories": {
+      "get": {
+        "description": "List approved memories owned by the authenticated caller.",
+        "operationId": "list_memories_api_v1_memories_get",
+        "parameters": [
+          {
+            "description": "Optional scope filter ('user_preference' or 'contact').",
+            "in": "query",
+            "name": "scope",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/MemoryScope"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional scope filter ('user_preference' or 'contact').",
+              "title": "Scope"
+            }
+          },
+          {
+            "description": "Optional contact identifier filter.",
+            "in": "query",
+            "name": "contact_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional contact identifier filter.",
+              "title": "Contact Id"
+            }
+          },
+          {
+            "description": "Optional memory classification filter.",
+            "in": "query",
+            "name": "memory_type",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/MemoryType"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional memory classification filter.",
+              "title": "Memory Type"
+            }
+          },
+          {
+            "description": "Include memories whose consent_status was revoked.",
+            "in": "query",
+            "name": "include_revoked",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Include memories whose consent_status was revoked.",
+              "title": "Include Revoked",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Missing, malformed, or invalid Bearer authentication credentials."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Authenticated user does not own the target resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Requested resource does not exist."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Optimistic concurrency version conflict or invalid lifecycle transition."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Request schema or domain invariant validation failure."
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List approved memories",
+        "tags": [
+          "memories"
+        ]
+      }
+    },
+    "/api/v1/memories/propose": {
+      "post": {
+        "description": "Extract candidate memories and stage them separately from approved memories.",
+        "operationId": "propose_memories_api_v1_memories_propose_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProposeMemoriesRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryProposalBatchResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Missing, malformed, or invalid Bearer authentication credentials."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Authenticated user does not own the target resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Requested resource does not exist."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Optimistic concurrency version conflict or invalid lifecycle transition."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Request schema or domain invariant validation failure."
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Propose candidate memories from session notes",
+        "tags": [
+          "memories"
+        ]
+      }
+    },
+    "/api/v1/memories/{id}": {
+      "delete": {
+        "description": "Permanently delete an approved memory owned by the authenticated caller.",
+        "operationId": "delete_memory_api_v1_memories__id__delete",
+        "parameters": [
+          {
+            "description": "Approved memory identifier.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "Approved memory identifier.",
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+              "title": "Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Optional expected version for optimistic concurrency.",
+            "in": "query",
+            "name": "expected_version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "description": "Optimistic concurrency version counter starting at 1.",
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional expected version for optimistic concurrency.",
+              "title": "Expected Version"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Missing, malformed, or invalid Bearer authentication credentials."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Authenticated user does not own the target resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Requested resource does not exist."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Optimistic concurrency version conflict or invalid lifecycle transition."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Request schema or domain invariant validation failure."
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete an approved memory",
+        "tags": [
+          "memories"
+        ]
+      },
+      "patch": {
+        "description": "Modify an approved memory's text, type, or consent status with version checking.",
+        "operationId": "update_memory_api_v1_memories__id__patch",
+        "parameters": [
+          {
+            "description": "Approved memory identifier.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "Approved memory identifier.",
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+              "title": "Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateMemoryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Missing, malformed, or invalid Bearer authentication credentials."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Authenticated user does not own the target resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Requested resource does not exist."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Optimistic concurrency version conflict or invalid lifecycle transition."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Request schema or domain invariant validation failure."
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update an approved memory",
+        "tags": [
+          "memories"
+        ]
+      }
+    },
+    "/api/v1/memories/{id}/approve": {
+      "post": {
+        "description": "Promote a pending memory proposal into durable approved memory storage.",
+        "operationId": "approve_memory_proposal_api_v1_memories__id__approve_post",
+        "parameters": [
+          {
+            "description": "Memory proposal identifier to approve.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "Memory proposal identifier to approve.",
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+              "title": "Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/ApproveMemoryProposalRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Optional version check and user-edited text.",
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Missing, malformed, or invalid Bearer authentication credentials."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Authenticated user does not own the target resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Requested resource does not exist."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Optimistic concurrency version conflict or invalid lifecycle transition."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Request schema or domain invariant validation failure."
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Approve a staged memory proposal",
+        "tags": [
+          "memories"
+        ]
+      }
+    }
+  }
+}

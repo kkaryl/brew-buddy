@@ -10,17 +10,19 @@ from pathlib import Path
 
 from a2a.server.tasks import InMemoryTaskStore
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from google.adk.cli.fast_api import get_fast_api_app
 from google.adk.runners import Runner
 
+from app.api.errors import register_exception_handlers
 from app.api.health import router as health_router
+from app.api.v1 import router as v1_router
 from app.app_utils import services
 from app.app_utils.a2a import attach_a2a_routes
 from app.config import AppSettings, get_settings
-from app.domain.errors import BrewDomainError
+from app.infrastructure.fakes import FakeServiceContainer
 from app.infrastructure.observability import configure_structured_logging
 
 load_dotenv()
@@ -74,8 +76,12 @@ def _attach_spa_routes(fastapi_app: FastAPI, dist_dir: Path) -> None:
         return FileResponse(index_file)
 
 
-def create_app(settings: AppSettings | None = None) -> FastAPI:
-    """Build the Brew FastAPI application with ADK, A2A, health, and optional static SPA routes."""
+def create_app(
+    settings: AppSettings | None = None,
+    *,
+    service_container: FakeServiceContainer | None = None,
+) -> FastAPI:
+    """Build the Brew FastAPI application with ADK, A2A, health, v1 API, and SPA routes."""
     resolved_settings = settings or get_settings()
     configure_structured_logging(resolved_settings.log_level)
 
@@ -130,20 +136,17 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
         lifespan=lifespan,
     )
     fastapi_app.state.settings = resolved_settings
+    fastapi_app.state.service_container = (
+        service_container if service_container is not None else FakeServiceContainer()
+    )
     fastapi_app.title = resolved_settings.app_name
     fastapi_app.version = resolved_settings.app_version
     fastapi_app.description = "Brew — AI-powered Coffee Chat Buddy API"
 
-    @fastapi_app.exception_handler(BrewDomainError)
-    async def handle_domain_error(request: Request, exc: BrewDomainError) -> JSONResponse:
-        del request
-        status_code = 400 if exc.recoverable else 500
-        return JSONResponse(
-            status_code=status_code,
-            content={"error": {"code": exc.code, "message": exc.message}},
-        )
+    register_exception_handlers(fastapi_app)
 
     fastapi_app.include_router(health_router)
+    fastapi_app.include_router(v1_router)
     return fastapi_app
 
 

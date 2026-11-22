@@ -117,3 +117,19 @@ This document records significant architectural and technical decisions for **Br
   - *Positive:* Full native compatibility with `agents-cli` commands, zero nested backend subproject indirection, single-command local startup (`uv run brew-dev`), and single-artifact Cloud Run container deployment.
   - *Trade-off:* SPA fallback routing in FastAPI must explicitly preserve `/api/*`, `/apps/*`, `/a2a/*`, and ADK streaming routes (enforced by integration tests).
 
+---
+
+## ADR-010: Domain-Specific Repository Ports, Optimistic Versioning, and Separated Proposal Storage
+
+- **Date:** 2026-11-22
+- **Status:** Accepted
+- **Context:** Brew's v1 HTTP contract covers contacts, meetings, versioned preparation briefs, and user-consented memories. Concurrent brief revisions or duplicate memory approvals can overwrite state if unchecked, client-supplied `user_id` payloads risk horizontal privilege escalation, and co-mingling proposed and approved memories in one table risks accidental recall of unconsented facts.
+- **Decision:**
+  1. Model all eight domain entities (`UserPreferences`, `Contact`, `Meeting`, `PreparationBrief`, `ConversationQuestion`, `Memory`, `MemoryProposal`, `MemorySource`) as immutable Pydantic v2 objects enforcing timezone-aware UTC timestamps, validated IDs, text length bounds, and exact time-boxed agenda sums.
+  2. Define aggregate-specific `typing.Protocol` repository and agent ports (`ContactRepository`, `MeetingRepository`, `BriefRepository`, `MemoryProposalRepository`, `MemoryRepository`, `UserPreferencesRepository`, `BriefCoachAgentPort`, `MemoryProposalAgentPort`)—explicitly avoiding generic `Repository[T]` frameworks.
+  3. Store `MemoryProposal` records strictly inside `MemoryProposalRepository`, promoting items into `MemoryRepository` only through `POST /api/v1/memories/{id}/approve`.
+  4. Resolve caller identity exclusively from Bearer authentication (`AuthenticatorPort`) while setting `extra="forbid"` on all request schemas, and enforce `expected_version` optimistic concurrency checks (`409 VERSION_CONFLICT`) on mutable resources.
+- **Consequences:**
+  - *Positive:* Unapproved proposals are structurally unreachable by `GET /api/v1/memories` or brief grounding; full HTTP contract and OpenAPI 3.1 specification (`docs/openapi.json`) are deterministically verified using injected in-memory fakes before cloud adapter integration.
+  - *Trade-off:* Clients mutating briefs, proposals, or memories must supply `expected_version` to prevent lost updates.
+

@@ -86,7 +86,8 @@ brew/
 ├── docs/
 │   ├── PRD.md                       # Product scope, user journey, non-goals
 │   ├── ARCHITECTURE.md              # System architecture & boundaries
-│   └── DECISIONS.md                 # Architectural Decision Records (ADRs)
+│   ├── DECISIONS.md                 # Architectural Decision Records (ADRs)
+│   └── openapi.json                 # Generated OpenAPI 3.1 HTTP API contract
 ├── app/
 │   ├── config.py                    # Validated AppSettings (default model: gemini-3.8-flash)
 │   ├── agent.py                     # Root ADK agent & App registration
@@ -94,11 +95,11 @@ brew/
 │   ├── server.py                    # Production uvicorn entrypoint honoring $PORT
 │   ├── dev_runner.py                # Single-command local launcher (API + Vite)
 │   ├── app_utils/                   # Scaffolded ADK shared session/artifact & A2A helpers
-│   ├── domain/                      # Pure entities, value objects, ports, domain errors
-│   ├── application/                 # Use-case services orchestrating domain logic
+│   ├── domain/                      # Pure Pydantic v2 entities, UTC types, ports, domain errors
+│   ├── application/                 # Use-case services (Contact, Meeting, Brief, Memory)
 │   ├── tools/                       # Typed ADK tools with guided error recovery
-│   ├── infrastructure/              # Clocks, JSON logging, OTel tracing, persistence adapters
-│   └── api/                         # FastAPI routers & dependency wiring (/api/health)
+│   ├── infrastructure/              # Clocks, JSON logging, OTel, injected fake adapters
+│   └── api/                         # FastAPI v1 routes, schemas, auth DI, error handlers, OpenAPI
 ├── tests/
 │   ├── unit/                        # Fast isolated unit & architectural boundary tests
 │   ├── integration/                 # Deterministic FastAPI, A2A card, & SPA serving tests
@@ -143,39 +144,35 @@ sequenceDiagram
     participant Flash as Refiner / Extractor (Gemini Flash)
     participant DB as Firestore (via Ports)
 
-    User->>SPA: Enter counterpart + purpose, duration, tone
-    SPA->>API: POST /api/v1/meetings/{id}/brief
+    User->>SPA: Create counterpart + enter purpose, duration, tone
+    SPA->>API: POST /api/v1/contacts & POST /api/v1/briefs/generate
     API->>DB: Fetch approved counterpart & user preference memories
     API->>WF: Run generate_brief stage (compacted context)
     WF->>Pro: Generate structured brief (strict JSON schema)
     Pro-->>WF: PreparationBrief payload
-    WF->>DB: Persist session turn & brief version
-    API-->>SPA: 200 OK (PreparationBrief)
+    WF->>DB: Persist Meeting & PreparationBrief (v1)
+    API-->>SPA: 201 Created (PreparationBrief)
 
-    User->>SPA: "Make openers warmer and trim to 25 mins"
-    SPA->>API: POST /api/v1/meetings/{id}/brief/refine
+    User->>SPA: "Make openers warmer and trim to 20 mins"
+    SPA->>API: POST /api/v1/briefs/{id}/revise (expected_version)
     API->>WF: Run refine_brief stage (compacted history + active brief)
     WF->>Flash: Refine brief (Gemini Flash)
     Flash-->>WF: Updated PreparationBrief
-    WF->>DB: Save updated brief & compacted session state
+    WF->>DB: Save updated brief (v2) with optimistic concurrency check
     API-->>SPA: 200 OK (Updated PreparationBrief)
 
-    User->>SPA: Submit post-meeting notes
-    SPA->>API: POST /api/v1/meetings/{id}/notes
-    API->>DB: Redact PII & save Note; enqueue async extraction
-    API-->>SPA: 202 Accepted (extraction_status: PROCESSING)
+    User->>SPA: Submit post-meeting notes for memory extraction
+    SPA->>API: POST /api/v1/memories/propose
+    API->>WF: Scrub PII & extract MemoryProposal candidates
+    WF->>Flash: Propose MemoryProposal list
+    Flash-->>WF: ProposedMemoryCandidate list
+    WF->>DB: Store MemoryProposal items in separate proposal store (status = pending)
+    API-->>SPA: 201 Created (MemoryProposalBatchResponse)
 
-    par Async Background Task
-        API->>WF: Run extract_memories on redacted notes
-        WF->>Flash: Propose CandidateMemory list
-        Flash-->>WF: CandidateMemoryBatchSchema
-        WF->>DB: Store candidates with status = PENDING_REVIEW (HITL Gate)
-    end
-
-    User->>SPA: Review, optionally edit, and approve/reject memories
-    SPA->>API: POST /api/v1/meetings/{id}/memories/review
-    API->>DB: Promote APPROVED items to durable approved_memories; mark REJECTED
-    API-->>SPA: 200 OK (Committed Memory Summary)
+    User->>SPA: Review, optionally edit, and approve proposal
+    SPA->>API: POST /api/v1/memories/{id}/approve (expected_version)
+    API->>DB: Mark proposal approved; create durable Memory in approved store
+    API-->>SPA: 200 OK (MemoryResponse)
 ```
 
 ### 4.3 Context Management & History Compaction
