@@ -1,0 +1,61 @@
+# Python bytecode & packaging
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+build/
+dist/
+*.egg-info/
+
+# Virtual environments (keep uv.lock committed)
+.venv/
+.venv*
+venv/
+env/
+
+# Environment variables & secrets (keep .env.example committed)
+.env
+.env.*
+!.env.example
+*.pem
+*-key.json
+credentials*.json
+
+# Test, lint, and type-checker caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ty/
+.coverage
+.coverage.*
+htmlcov/
+
+# Frontend (keep web/package-lock.json committed)
+**/node_modules/
+web/dist/
+*.tsbuildinfo
+npm-debug.log*
+
+# Google ADK & agents-cli runtime artifacts
+.adk/
+.google-agents-cli/
+.agents-cli-original/
+.agents-cli-scripts/
+.saved_chats/
+/artifacts/
+deployment_metadata.json.lock
+
+# Terraform
+.terraform/
+.terraform.*
+*.tfstate
+*.tfstate.*
+my_env.tfvars
+
+# Editors & OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json

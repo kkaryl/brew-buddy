@@ -1,0 +1,18 @@
+{
+  "eval_cases": [
+    {
+      "eval_case_id": "greeting",
+      "prompt": {
+        "role": "user",
+        "parts": [{"text": "Hello Brew, what is your current status?"}]
+      }
+    },
+    {
+      "eval_case_id": "service_readiness",
+      "prompt": {
+        "role": "user",
+        "parts": [{"text": "Can you check whether the Brew backend service is healthy and which Gemini model is configured?"}]
+      }
+    }
+  ]
+}

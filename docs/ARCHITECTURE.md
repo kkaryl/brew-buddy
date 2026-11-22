@@ -1,0 +1,226 @@
+# System Architecture — Brew
+
+**Status:** Baseline Architecture v1.0  
+**Last Updated:** 2026-11-22
+
+---
+
+## 1. Architectural Goals & Principles
+
+Brew is engineered around clean, explicit dependency boundaries so domain behavior remains easy to reason about, fast to unit-test, and resilient to SDK or infrastructure evolution:
+
+1. **Domain Independence (Ports & Adapters)**: Core domain entities, value objects, invariants, and repository/service protocols (`domain/`) have **zero imports** from `google.adk`, `google.cloud.firestore`, `fastapi`, or `google.genai`.
+2. **High Cohesion, Low Coupling**: Each module owns a single, well-defined responsibility—prep brief domain rules, ADK orchestration workflows, Firestore persistence adapters, and HTTP transport live in separate layers connected via typed interfaces.
+3. **Explicit Dependency Injection**: External collaborators (repositories, ADK runner, PII redactor, secret provider, clock, tracer) are wired at integration boundaries (`api/dependencies.py` and CLI entrypoints), never instantiated as hidden module-level singletons inside business logic.
+4. **Fail-Safe External Boundaries**: All calls to Gemini, Firestore, Secret Manager, and redaction services enforce explicit timeouts, structured error translation, and graceful degradation.
+
+---
+
+## 2. Layered Dependency Rules
+
+```mermaid
+flowchart TB
+    subgraph Client["Frontend SPA (React + Vite + TS + Tailwind)"]
+        UI["Prep Wizard, Refinement Chat, Notes & Memory Review UI"]
+    end
+
+    subgraph Transport["API Layer (FastAPI + Pydantic)"]
+        Routes["REST / SSE Endpoints & Request Validation"]
+        DI["Dependency Wiring (api/dependencies.py)"]
+    end
+
+    subgraph AppLayer["Application & Orchestration Layer"]
+        UseCases["Application Services / Use Cases"]
+        ADKAgents["ADK 2.x Workflows, Specialist Agents, Tools & Guardrail Plugins"]
+    end
+
+    subgraph Core["Domain Layer (Pure Python 3.12)"]
+        Entities["Entities & Value Objects (Meeting, Counterpart, Brief, Memory)"]
+        Ports["Typed Protocols / Ports (Repositories, MemoryExtractor, PiiRedactor)"]
+        Errors["Structured Domain Errors"]
+    end
+
+    subgraph Infra["Infrastructure Layer (Adapters)"]
+        FirestoreRepo["Firestore Repositories"]
+        GeminiModels["Gemini / Vertex AI Model Routing Config"]
+        Security["PII Redaction Adapter & Secret Manager Loader"]
+        Telemetry["OpenTelemetry + Cloud Trace + JSON Logger"]
+    end
+
+    UI -->|HTTPS JSON| Routes
+    Routes --> DI
+    Routes --> UseCases
+    UseCases --> Core
+    UseCases --> ADKAgents
+    ADKAgents --> Ports
+    Infra -.->|Implements| Ports
+    DI -->|Injects| Infra
+```
+
+**Strict Import Matrix:**
+
+| Source Package | Allowed Internal Imports | Forbidden Imports |
+| :--- | :--- | :--- |
+| `app.domain` | Python stdlib, `pydantic` (pure value/schema types only) | `fastapi`, `google.adk`, `google.cloud.*`, `app.api`, `app.agent`, `app.tools`, `app.infrastructure` |
+| `app.application` | `app.domain` | `fastapi`, `google.adk`, `google.cloud.*` (uses `domain` ports instead) |
+| `app.tools` / `app.agent` | `app.domain`, `app.application`, `app.config`, `google.adk`, `google.genai`, `pydantic` | `fastapi`, direct `google.cloud.firestore` client calls (tools invoke injected ports) |
+| `app.infrastructure` | `app.domain`, `app.application`, `google.cloud.*`, `opentelemetry.*` | `fastapi` |
+| `app.api` / `app.fast_api_app` | `app.domain`, `app.application`, `app.agent`, `app.infrastructure`, `app.config`, `fastapi` | None (composition root) |
+
+---
+
+## 3. Repository Layout
+
+Brew keeps the project directly at the repository root (preserving `agents-cli-manifest.yaml` compatibility) with the React frontend in `web/`:
+
+```text
+brew/
+├── AGENTS.md                        # Permanent engineering rules & working agreement
+├── agents-cli-manifest.yaml         # Official google-agents-cli project manifest
+├── pyproject.toml                   # Python 3.12, uv, ruff, strict mypy, pytest config
+├── uv.lock                          # Locked Python dependency graph
+├── Dockerfile                       # Multistage Node 22 + Python 3.12 Cloud Run image ($PORT)
+├── Makefile                         # Developer task shortcuts (make dev, make check, etc.)
+├── .env.example                     # Safe placeholder environment variables
+├── .editorconfig                    # Workspace formatting rules
+├── docs/
+│   ├── PRD.md                       # Product scope, user journey, non-goals
+│   ├── ARCHITECTURE.md              # System architecture & boundaries
+│   └── DECISIONS.md                 # Architectural Decision Records (ADRs)
+├── app/
+│   ├── config.py                    # Validated AppSettings (default model: gemini-3.8-flash)
+│   ├── agent.py                     # Root ADK agent & App registration
+│   ├── fast_api_app.py              # FastAPI + ADK + A2A + OTel + SPA static serving
+│   ├── server.py                    # Production uvicorn entrypoint honoring $PORT
+│   ├── dev_runner.py                # Single-command local launcher (API + Vite)
+│   ├── app_utils/                   # Scaffolded ADK shared session/artifact & A2A helpers
+│   ├── domain/                      # Pure entities, value objects, ports, domain errors
+│   ├── application/                 # Use-case services orchestrating domain logic
+│   ├── tools/                       # Typed ADK tools with guided error recovery
+│   ├── infrastructure/              # Clocks, JSON logging, OTel tracing, persistence adapters
+│   └── api/                         # FastAPI routers & dependency wiring (/api/health)
+├── tests/
+│   ├── unit/                        # Fast isolated unit & architectural boundary tests
+│   ├── integration/                 # Deterministic FastAPI, A2A card, & SPA serving tests
+│   └── eval/                        # google-agents-cli evaluation config, judge, & datasets
+└── web/
+    ├── package.json                 # React 19, Vite, strict TypeScript, Tailwind CSS, Vitest
+    ├── package-lock.json            # Locked frontend dependency graph
+    └── src/
+        ├── api/                     # Typed fetch clients with AbortController timeouts
+        ├── test/                    # Vitest setup
+        ├── App.tsx                  # Frontend UI
+        └── App.test.tsx             # Component tests
+```
+
+---
+
+## 4. ADK 2.x Multi-Agent & Workflow Architecture
+
+Rather than using a monolithic single-agent prompt, Brew decomposes agentic responsibilities across specialized ADK 2.x components with **strategic model routing**, **explicit JSON schemas**, **runner-wide safety plugins**, and **Human-in-the-Loop memory approval**.
+
+### 4.1 Agent Roster & Model Routing
+
+| Agent / Node | ADK Pattern | Model Tier | Responsibility |
+| :--- | :--- | :--- | :--- |
+| `BrewCoordinatorWorkflow` | ADK 2.x `Workflow` / Coordinator | Deterministic router + stage edges | Routes session actions (`generate_brief`, `refine_brief`, `extract_memories`) across validated typed state. |
+| `ContextAssemblerNode` | Function / Tool stage | Deterministic + Firestore Port | Executes `retrieve_counterpart_memories` and `retrieve_user_preferences`, applying token budget & history compaction before LLM invocation. |
+| `BriefSynthesizerAgent` | `LlmAgent` (`output_schema=PreparationBriefSchema`) | **Gemini Pro** | High-reasoning initial synthesis combining counterpart profile, purpose/duration/tone constraints, and prior approved memories into a structured time-boxed brief. |
+| `BriefRefinerAgent` | `LlmAgent` (`output_schema=PreparationBriefSchema`) | **Gemini Flash** | Low-latency conversational refinement updating targeted sections of the current brief while preserving invariants. |
+| `MemoryExtractorAgent` | `LlmAgent` (`output_schema=CandidateMemoryBatchSchema`) | **Gemini Flash** (Async background) | Analyzes PII-scrubbed post-meeting notes to propose typed `CandidateMemory` items with rationale and confidence. |
+| `BrewGuardrailPlugin` | ADK `BasePlugin` (Runner-wide) | Policy + PII + Audit hooks | Intercepts `before_model`, `after_model`, `before_tool`, and `after_tool` across every sub-agent for PII redaction, prompt-injection defense, and Intent-vs-Outcome structured logging. |
+
+### 4.2 Core Sequence: Preparation, Refinement, Async Memory & HITL Approval
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User
+    participant SPA as React SPA
+    participant API as FastAPI Backend
+    participant WF as ADK 2.x Workflow & Guardrail Plugin
+    participant Pro as BriefSynthesizer (Gemini Pro)
+    participant Flash as Refiner / Extractor (Gemini Flash)
+    participant DB as Firestore (via Ports)
+
+    User->>SPA: Enter counterpart + purpose, duration, tone
+    SPA->>API: POST /api/v1/meetings/{id}/brief
+    API->>DB: Fetch approved counterpart & user preference memories
+    API->>WF: Run generate_brief stage (compacted context)
+    WF->>Pro: Generate structured brief (strict JSON schema)
+    Pro-->>WF: PreparationBrief payload
+    WF->>DB: Persist session turn & brief version
+    API-->>SPA: 200 OK (PreparationBrief)
+
+    User->>SPA: "Make openers warmer and trim to 25 mins"
+    SPA->>API: POST /api/v1/meetings/{id}/brief/refine
+    API->>WF: Run refine_brief stage (compacted history + active brief)
+    WF->>Flash: Refine brief (Gemini Flash)
+    Flash-->>WF: Updated PreparationBrief
+    WF->>DB: Save updated brief & compacted session state
+    API-->>SPA: 200 OK (Updated PreparationBrief)
+
+    User->>SPA: Submit post-meeting notes
+    SPA->>API: POST /api/v1/meetings/{id}/notes
+    API->>DB: Redact PII & save Note; enqueue async extraction
+    API-->>SPA: 202 Accepted (extraction_status: PROCESSING)
+
+    par Async Background Task
+        API->>WF: Run extract_memories on redacted notes
+        WF->>Flash: Propose CandidateMemory list
+        Flash-->>WF: CandidateMemoryBatchSchema
+        WF->>DB: Store candidates with status = PENDING_REVIEW (HITL Gate)
+    end
+
+    User->>SPA: Review, optionally edit, and approve/reject memories
+    SPA->>API: POST /api/v1/meetings/{id}/memories/review
+    API->>DB: Promote APPROVED items to durable approved_memories; mark REJECTED
+    API-->>SPA: 200 OK (Committed Memory Summary)
+```
+
+### 4.3 Context Management & History Compaction
+- **Sliding Window + Structured Summary Compaction**: During multi-turn natural-language brief refinement, Brew retains the active `PreparationBrief` state plus the most recent $N$ verbatim turns, compacting older refinement turns into a concise `RefinementHistorySummary` once token or turn thresholds are exceeded.
+- **Bounded Memory Injection**: When starting a new session, only top-ranked approved memories for the target counterpart and active global user preferences (bounded by a strict token budget) are injected into the prompt context.
+
+### 4.4 Tool Interface & Guided Error Contract
+Every ADK tool exposed to an `LlmAgent`:
+1. Uses a specific action name (`retrieve_counterpart_memories`, `retrieve_user_coaching_preferences`, `validate_brief_timebox`, `stage_candidate_memories_for_approval`).
+2. Declares Pydantic-validated typed parameters and return schemas.
+3. Never raises unhandled operational exceptions into the LLM loop; on recoverable failures (e.g., invalid filter, timebox mismatch, transient Firestore timeout), returns a structured `ToolResult` with `status="error"`, `error_code`, and `recovery_instruction` guiding the model on its next step.
+
+---
+
+## 5. Domain & Persistence Data Model (Firestore)
+
+All Firestore documents are scoped per authenticated user (`users/{user_id}/...`) and mapped to pure domain models inside `brew/infrastructure/persistence/firestore/`:
+
+- **`meetings/{meeting_id}`**: Counterpart metadata (`name`, `title`, `role`, `organization`), meeting config (`purpose`, `duration_minutes`, `tone`), current `brief_version`, lifecycle status (`PREPARING`, `NOTES_ADDED`, `MEMORIES_REVIEWED`).
+- **`meetings/{meeting_id}/brief_versions/{version_id}`**: Immutable versioned snapshots of `PreparationBrief` (objective, openers, time-boxed agenda items, questions, memory citations).
+- **`meetings/{meeting_id}/sessions/{session_id}`**: Persistent ADK conversational state, turn events, and compacted history summary.
+- **`meetings/{meeting_id}/notes/{note_id}`**: PII-scrubbed post-meeting notes and extraction job status (`PENDING`, `PROCESSING`, `READY_FOR_REVIEW`, `FAILED`).
+- **`memory_candidates/{candidate_id}`**: Proposed memories awaiting HITL action (`PENDING_REVIEW`, `APPROVED`, `REJECTED`), source `meeting_id`, category (`COUNTERPART_FACT`, `USER_PREFERENCE`, `FOLLOW_UP`), scrubbed text, and reviewer timestamp.
+- **`approved_memories/{memory_id}`**: Durable, user-approved memories indexed by `user_id`, normalized `counterpart_key`, `category`, and `created_at` for fast cross-session lookup.
+
+---
+
+## 6. Observability, Tracing, and Privacy Pipeline
+
+1. **Distributed Tracing (OpenTelemetry + Cloud Trace)**:
+   - Incoming HTTP requests initialize or propagate W3C `traceparent` headers.
+   - Child spans wrap use-case execution, ADK workflow stages, individual Gemini model calls (recording model name, latency, input/output token counts), tool invocations, PII redaction, and Firestore operations.
+2. **Structured JSON Logging & Intent-vs-Outcome Capture**:
+   - All logs emit single-line JSON structured for Cloud Logging (`severity`, `message`, `logging.googleapis.com/trace`, `logging.googleapis.com/spanId`, `session_id`, `event_type`).
+   - `BrewGuardrailPlugin` emits paired `agent.tool.intent` (before execution, with scrubbed intended arguments) and `agent.tool.outcome` (after execution, with status, duration, and scrubbed outcome summary) events.
+3. **Active PII Redaction**:
+   - A `PiiRedactor` port (backed by Google Cloud Sensitive Data Protection / DLP API with a deterministic local regex/pattern fallback so redaction fails closed even offline) scrubs emails, phone numbers, SSNs/IDs, and street addresses **before** log emission and **before** candidate/approved memory storage.
+
+---
+
+## 7. Security, Infrastructure as Code, and CI/CD
+
+- **Secrets Management**: Zero hardcoded API keys or credentials. Runtime configuration resolves secrets exclusively via Google Cloud Secret Manager and Workload Identity / Application Default Credentials (ADC).
+- **Infrastructure as Code (`infra/terraform/`)**: Declaratively provisions Firestore database & composite indexes, Cloud Run / Agent Runtime services, least-privilege IAM service accounts, Secret Manager secret containers, and Cloud Trace/Logging sinks.
+- **CI/CD Pipeline (GitHub Actions / Cloud Build)**:
+  1. **Static & Lint Checks**: `uv run ruff check .`, `uv run ruff format --check .`, `uv run mypy src`, frontend `eslint` + `tsc --noEmit`, `terraform fmt -check` & `terraform validate`.
+  2. **Deterministic Tests**: `uv run pytest` (unit + integration) and frontend `npm test -- --run` (`Vitest`).
+  3. **Agent Behavioral Evaluation**: `agents-cli eval run` against golden coffee-chat, mentorship, networking, and customer-discovery scenarios with enforced pass thresholds.
