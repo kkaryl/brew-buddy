@@ -98,6 +98,40 @@
         "title": "ApproveMemoryProposalRequest",
         "type": "object"
       },
+      "AuthenticatedPrincipalResponse": {
+        "additionalProperties": false,
+        "description": "Serialized authenticated caller profile returned by ``GET /api/v1/auth/me``.",
+        "properties": {
+          "auth_provider": {
+            "description": "Authentication provider tier ('verified' or 'local_mock').",
+            "title": "Auth Provider",
+            "type": "string"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Human-readable display name when present.",
+            "title": "Display Name"
+          },
+          "user_id": {
+            "description": "Verified or isolated local user identifier.",
+            "title": "User Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "auth_provider"
+        ],
+        "title": "AuthenticatedPrincipalResponse",
+        "type": "object"
+      },
       "BriefRevisionListResponse": {
         "additionalProperties": false,
         "description": "Immutable revision history collection for ``GET /api/v1/briefs/{id}/revisions``.",
@@ -1749,6 +1783,113 @@
         "summary": "Read Health",
         "tags": [
           "system"
+        ]
+      }
+    },
+    "/api/v1/auth/me": {
+      "get": {
+        "description": "Verify the caller's Bearer token and return the resolved identity boundary.",
+        "operationId": "get_authenticated_me_api_v1_auth_me_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthenticatedPrincipalResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Missing, malformed, or invalid Bearer authentication credentials."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Authenticated user does not own the target resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Requested resource does not exist."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Optimistic concurrency version conflict or invalid lifecycle transition."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Request schema, domain invariant, or model output validation failure."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Coaching model execution or invocation budget failure."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Persistence backend unavailable."
+          },
+          "504": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Coaching model request deadline exceeded."
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Inspect the authenticated user principal",
+        "tags": [
+          "auth"
         ]
       }
     },

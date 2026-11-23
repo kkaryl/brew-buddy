@@ -129,7 +129,7 @@ class AdkMemoryProposalAdapter:
         self._model_timeout_seconds = (
             model_timeout_seconds
             if model_timeout_seconds is not None
-            else self._settings.http_timeout_seconds
+            else self._settings.model_workflow_timeout_seconds
         )
 
     def _build_extractor_agent(self) -> Agent:

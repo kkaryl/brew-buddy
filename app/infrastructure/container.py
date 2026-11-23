@@ -14,9 +14,9 @@ from app.domain.ports import (
 )
 from app.infrastructure.adk_brief_coach import AdkConversationCoachBriefAdapter
 from app.infrastructure.adk_memory_extractor import AdkMemoryProposalAdapter
+from app.infrastructure.auth import build_runtime_authenticator
 from app.infrastructure.clock import SystemUtcClock
 from app.infrastructure.fakes import (
-    FakeAuthenticator,
     FakeBriefCoachAgent,
     FakeMemoryProposalAgent,
     FakeServiceContainer,
@@ -131,7 +131,7 @@ def build_firestore_service_container(
     return ServiceContainer(
         clock=resolved_clock,
         id_generator=resolved_ids,
-        authenticator=authenticator or FakeAuthenticator(),
+        authenticator=authenticator or build_runtime_authenticator(settings, clock=resolved_clock),
         preferences_repo=preferences_repo,
         contact_repo=contact_repo,
         meeting_repo=meeting_repo,
@@ -154,6 +154,7 @@ def build_service_container(
         return build_firestore_service_container(settings, client=firestore_client)
 
     container = FakeServiceContainer()
+    container.authenticator = build_runtime_authenticator(settings, clock=container.clock)
     if _should_use_adk_memory_extractor(settings):
         container.proposal_agent = AdkMemoryProposalAdapter(settings=settings)
     if _should_use_adk_brief_coach(settings):

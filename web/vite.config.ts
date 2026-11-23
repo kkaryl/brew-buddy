@@ -7,7 +7,7 @@ const backendOrigin = process.env["BACKEND_ORIGIN"] ?? "http://127.0.0.1:8000";
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
-    host: "127.0.0.1",
+    host: "localhost",
     port: 5173,
     strictPort: true,
     proxy: {

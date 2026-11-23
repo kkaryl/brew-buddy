@@ -193,5 +193,20 @@ This document records significant architectural and technical decisions for **Br
   - *Positive:* Strict human-in-the-loop memory governance, preserved meeting/note provenance and timestamps across all 5 states, automatic exclusion of rejected/superseded/deleted memories from future session retrieval, and end-to-end verification across two distinct Firestore-persisted ADK sessions (`tests/unit/test_memory_lifecycle.py` and `tests/integration/test_firestore_persistence.py`).
   - *Trade-off:* Maintaining immutable `deletedMemories` tombstones adds one subcollection write per deletion transaction in exchange for complete lifecycle provenance and verifiable non-retrieval from `users/{uid}/memories`.
 
+---
+
+## ADR-015: Responsive Material Design 3 SPA, Verified Firebase/Google Authentication, and Deployment Mock Lockout
+
+- **Date:** 2026-11-23
+- **Status:** Accepted
+- **Context:** Brew's browser experience requires a cohesive Material Design interface in a warm cream and soft espresso palette across desktop and mobile viewports, strict 1:1 alignment with existing OpenAPI v1 contracts, same-origin API execution when deployed, zero credentials stored in frontend source code, automatic token-expiry / `401` session recovery, and verified Google/Firebase authentication in deployed environments while preserving isolated local test personas during offline development.
+- **Decision:**
+  1. Implement `FirebaseGoogleTokenAuthenticator` and `RuntimeAuthenticator` (`app/infrastructure/auth.py`), verifying Firebase ID tokens (`verify_firebase_token`) and Google OIDC ID tokens (`verify_oauth2_token`) with bounded network timeouts, mapping expired tokens to HTTP `401` (`TOKEN_EXPIRED`), exposing non-secret client auth bootstrap metadata via `GET /api/auth/config` and caller verification via `GET /api/v1/auth/me`, and enforcing a hard startup/runtime lockout (`MOCK_AUTH_DISABLED`) blocking local mock sessions in `staging`, `production`, and Cloud Run (`K_SERVICE`).
+  2. Build the React 19 + Vite + TypeScript + Tailwind v4 SPA (`web/src/`) using Material Design 3 tokens (`#FAF6F0` warm cream surfaces, `#4A2E1B` soft espresso primary, WCAG AA+ contrast), desktop persistent navigation rail + mobile sticky app bar & 4-tab bottom navigation bar, 1:1 OpenAPI interfaces (`web/src/api/types.ts`), and `BrewApiClient` (`web/src/api/client.ts`) with same-origin `/api/*` paths, `AbortController` deadlines, `Idempotency-Key` headers, silent Firebase refresh when available, and automatic `401` / `TOKEN_EXPIRED` sign-out recovery.
+- **Consequences:**
+  - *Positive:* Zero secrets or developer tokens in `web/src/`, impossible to accidentally enable mock identities in production, full keyboard/screen-reader accessibility (`0` axe/a11y violations), and deterministic coverage via `tests/unit/test_auth_security.py`, `Vitest` + React Testing Library (`web/src/App.test.tsx`), and live headless Chrome desktop/mobile verification.
+  - *Trade-off:* Browser Google Sign-In requires `GOOGLE_OAUTH_CLIENT_ID` (and optional `FIREBASE_PROJECT_ID` / `FIREBASE_WEB_API_KEY`) environment variables injected at deployment time.
+
+
 
 

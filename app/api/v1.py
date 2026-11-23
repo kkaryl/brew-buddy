@@ -17,6 +17,7 @@ from app.api.errors import resolve_request_and_trace_ids
 from app.api.schemas import (
     ApiErrorResponse,
     ApproveMemoryProposalRequest,
+    AuthenticatedPrincipalResponse,
     BriefRevisionListResponse,
     ContactListResponse,
     ContactResponse,
@@ -82,6 +83,27 @@ router = APIRouter(
     prefix="/api/v1",
     responses=_STANDARD_ERROR_RESPONSES,
 )
+
+
+@router.get(
+    "/auth/me",
+    response_model=AuthenticatedPrincipalResponse,
+    status_code=status.HTTP_200_OK,
+    tags=["auth"],
+    summary="Inspect the authenticated user principal",
+)
+async def get_authenticated_me(
+    principal: Annotated[AuthenticatedPrincipal, Depends(get_current_principal)],
+) -> AuthenticatedPrincipalResponse:
+    """Verify the caller's Bearer token and return the resolved identity boundary."""
+    provider = (
+        "verified" if principal.user_id.startswith(("firebase:", "google:")) else "local_mock"
+    )
+    return AuthenticatedPrincipalResponse(
+        user_id=principal.user_id,
+        display_name=principal.display_name,
+        auth_provider=provider,
+    )
 
 
 @router.post(

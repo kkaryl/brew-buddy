@@ -108,10 +108,12 @@ brew/
     ├── package.json                 # React 19, Vite, strict TypeScript, Tailwind CSS, Vitest
     ├── package-lock.json            # Locked frontend dependency graph
     └── src/
-        ├── api/                     # Typed fetch clients with AbortController timeouts
-        ├── test/                    # Vitest setup
-        ├── App.tsx                  # Frontend UI
-        └── App.test.tsx             # Component tests
+        ├── api/                     # 1:1 OpenAPI types & same-origin BrewApiClient with timeouts
+        ├── auth/                    # Session storage, expiry detection, & Firebase/Google OIDC
+        ├── components/              # Material 3 warm cream & espresso workspace views & dialogs
+        ├── test/                    # Vitest + React Testing Library setup
+        ├── App.tsx                  # Responsive desktop rail + mobile bottom-bar application shell
+        └── App.test.tsx             # End-to-end UX, validation, API error, & auth expiry tests
 ```
 
 ---

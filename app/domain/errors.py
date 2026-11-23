@@ -36,8 +36,13 @@ class DomainValidationError(BrewDomainError):
 class AuthenticationError(BrewDomainError):
     """Raised when caller credentials are missing, malformed, or invalid."""
 
-    def __init__(self, message: str = "Valid authentication credentials are required.") -> None:
-        super().__init__(code="AUTHENTICATION_REQUIRED", message=message, recoverable=True)
+    def __init__(
+        self,
+        message: str = "Valid authentication credentials are required.",
+        *,
+        code: str = "AUTHENTICATION_REQUIRED",
+    ) -> None:
+        super().__init__(code=code, message=message, recoverable=True)
 
 
 class AuthorizationError(BrewDomainError):
@@ -46,8 +51,10 @@ class AuthorizationError(BrewDomainError):
     def __init__(
         self,
         message: str = "You are not authorized to access or modify this resource.",
+        *,
+        code: str = "FORBIDDEN",
     ) -> None:
-        super().__init__(code="FORBIDDEN", message=message, recoverable=True)
+        super().__init__(code=code, message=message, recoverable=True)
 
 
 class EntityNotFoundError(BrewDomainError):

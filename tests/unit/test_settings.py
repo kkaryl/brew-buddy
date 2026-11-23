@@ -24,6 +24,7 @@ def test_default_settings_use_gemini_3_8_flash(
     assert settings.app_name == "brew"
     assert settings.gemini_model == "gemini-3.8-flash"
     assert settings.port == 8000
+    assert settings.model_workflow_timeout_seconds == 60.0
     assert settings.otel_enabled is False
     assert settings.allow_origins == [
         "http://localhost:5173",

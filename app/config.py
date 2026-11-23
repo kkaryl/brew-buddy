@@ -5,9 +5,9 @@ from __future__ import annotations
 import functools
 import os
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Self
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -18,6 +18,7 @@ PersistenceBackendName = Literal["in_memory", "firestore"]
 SessionBackendName = Literal["auto", "in_memory", "firestore", "vertex_ai"]
 BriefCoachBackendName = Literal["auto", "adk", "fake"]
 MemoryExtractorBackendName = Literal["auto", "adk", "fake"]
+AuthModeName = Literal["auto", "verified", "local_mock"]
 
 _RESERVED_DOMAIN_COLLECTIONS = frozenset(
     {
@@ -84,6 +85,12 @@ class AppSettings(BaseSettings):
         le=120.0,
         validation_alias="HTTP_TIMEOUT_SECONDS",
     )
+    model_workflow_timeout_seconds: float = Field(
+        default=60.0,
+        gt=0.0,
+        le=180.0,
+        validation_alias="BREW_MODEL_WORKFLOW_TIMEOUT_SECONDS",
+    )
     http_retry_attempts: int = Field(
         default=3,
         ge=1,
@@ -141,6 +148,33 @@ class AppSettings(BaseSettings):
         validation_alias="WEB_DIST_DIR",
     )
 
+    auth_mode: AuthModeName = Field(
+        default="auto",
+        validation_alias="BREW_AUTH_MODE",
+    )
+    firebase_project_id: str | None = Field(
+        default=None,
+        validation_alias="FIREBASE_PROJECT_ID",
+    )
+    firebase_web_api_key: str | None = Field(
+        default=None,
+        validation_alias="FIREBASE_WEB_API_KEY",
+    )
+    firebase_auth_domain: str | None = Field(
+        default=None,
+        validation_alias="FIREBASE_AUTH_DOMAIN",
+    )
+    google_oauth_client_id: str | None = Field(
+        default=None,
+        validation_alias="GOOGLE_OAUTH_CLIENT_ID",
+    )
+    mock_session_ttl_seconds: int = Field(
+        default=3600,
+        ge=60,
+        le=86400,
+        validation_alias="BREW_MOCK_SESSION_TTL_SECONDS",
+    )
+
     @field_validator("gemini_model")
     @classmethod
     def _strip_and_validate_model(cls, value: str) -> str:
@@ -164,6 +198,39 @@ class AppSettings(BaseSettings):
             )
             raise ValueError(msg)
         return cleaned
+
+    @model_validator(mode="after")
+    def _prevent_mock_auth_in_deployment(self) -> Self:
+        if self.auth_mode == "local_mock" and self.is_deployed_environment:
+            msg = (
+                "BREW_AUTH_MODE='local_mock' cannot be enabled in staging, production, "
+                "or Cloud Run deployments."
+            )
+            raise ValueError(msg)
+        return self
+
+    @property
+    def is_deployed_environment(self) -> bool:
+        """Return True when running in staging, production, or managed Cloud Run."""
+        if self.environment in {"staging", "production"}:
+            return True
+        return bool(os.environ.get("K_SERVICE") or os.environ.get("CLOUD_RUN_JOB"))
+
+    @property
+    def local_mock_auth_enabled(self) -> bool:
+        """Return True only when local isolated mock authentication is safe to permit."""
+        return not (self.is_deployed_environment or self.auth_mode == "verified")
+
+    @property
+    def resolved_firebase_project_id(self) -> str | None:
+        """Resolve Firebase project ID for token verification when configured."""
+        explicit = (self.firebase_project_id or "").strip()
+        if explicit:
+            return explicit
+        gcp = (self.google_cloud_project or "").strip()
+        if gcp and gcp != "your-gcp-project-id":
+            return gcp
+        return None
 
     @property
     def allow_origins(self) -> list[str]:

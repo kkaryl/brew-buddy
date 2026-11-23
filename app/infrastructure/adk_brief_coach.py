@@ -47,8 +47,10 @@ BRIEF_WORKFLOW_JSON_CONTRACT = """
 
 ## Structured Brief Workflow Output Contract
 You are executing inside Brew's automated Meeting Preparation Workflow.
-1. You may call `get_user_preferences`, `get_contact_context`, and `get_meeting_history` to
-   verify saved preferences, approved contact memories, and past meeting summaries.
+1. `contact`, `user_preferences`, `approved_preference_memories`, and `approved_contact_memories`
+   are ALREADY pre-loaded in the `BASELINE_GROUNDING_CONTEXT` JSON in this prompt—do NOT re-call
+   `get_user_preferences` or `get_contact_context` when that context is already provided. Only call
+   `get_meeting_history` if checking prior sessions for a returning contact is genuinely needed.
 2. If any tool returns `status="error"`, do NOT loop retries endlessly and NEVER invent missing
    history or biographical details.
 3. Return ONLY a single valid JSON object (no markdown commentary outside JSON) conforming to:
@@ -252,7 +254,7 @@ class AdkConversationCoachBriefAdapter:
         self._model_timeout_seconds = (
             model_timeout_seconds
             if model_timeout_seconds is not None
-            else self._settings.http_timeout_seconds
+            else self._settings.model_workflow_timeout_seconds
         )
         self._max_total_tool_calls = max_total_tool_calls
 

@@ -1,1 +1,336 @@
 @import "tailwindcss";
+
+:root {
+  /* Material Design 3 — Warm Cream & Soft Espresso Palette */
+  --md-sys-color-surface: #faf6f0;
+  --md-sys-color-surface-dim: #efe7dc;
+  --md-sys-color-surface-container-lowest: #ffffff;
+  --md-sys-color-surface-container-low: #f5eee4;
+  --md-sys-color-surface-container: #ede3d5;
+  --md-sys-color-surface-container-high: #e3d6c4;
+
+  --md-sys-color-primary: #4a2e1b;
+  --md-sys-color-primary-hover: #382112;
+  --md-sys-color-on-primary: #fffbf7;
+  --md-sys-color-primary-container: #ead8c7;
+  --md-sys-color-on-primary-container: #2b170a;
+
+  --md-sys-color-secondary: #684d39;
+  --md-sys-color-secondary-container: #efe3d6;
+  --md-sys-color-on-secondary-container: #332012;
+
+  --md-sys-color-tertiary: #2c553e;
+  --md-sys-color-tertiary-container: #dceadf;
+  --md-sys-color-on-tertiary-container: #133321;
+
+  --md-sys-color-warning: #744c0c;
+  --md-sys-color-warning-container: #f8e8cb;
+  --md-sys-color-on-warning-container: #3f2702;
+
+  --md-sys-color-error: #9e2a2b;
+  --md-sys-color-error-container: #fceae9;
+  --md-sys-color-on-error-container: #5a1213;
+
+  --md-sys-color-on-surface: #23170f;
+  --md-sys-color-on-surface-variant: #594638;
+  --md-sys-color-outline: #857060;
+  --md-sys-color-outline-variant: #d6c7b7;
+
+  /* Elevation & Motion */
+  --md-elevation-1: 0 1px 2px rgba(35, 23, 15, 0.06), 0 1px 3px 1px rgba(35, 23, 15, 0.04);
+  --md-elevation-2: 0 2px 6px 2px rgba(35, 23, 15, 0.07), 0 1px 2px rgba(35, 23, 15, 0.05);
+  --md-elevation-3: 0 6px 18px 4px rgba(35, 23, 15, 0.09), 0 2px 4px rgba(35, 23, 15, 0.06);
+  --md-motion-standard: 160ms cubic-bezier(0.2, 0, 0, 1);
+
+  /* Typography */
+  --font-sans: "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-display: "Fraunces", Georgia, Cambria, "Times New Roman", serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  color-scheme: light;
+}
+
+@layer base {
+  html {
+    font-family: var(--font-sans);
+    background-color: var(--md-sys-color-surface);
+    color: var(--md-sys-color-on-surface);
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    overflow-x: hidden;
+    background-color: var(--md-sys-color-surface);
+    color: var(--md-sys-color-on-surface);
+    line-height: 1.55;
+  }
+
+  h1,
+  .font-display {
+    font-family: var(--font-display);
+    letter-spacing: -0.015em;
+  }
+
+  code,
+  pre,
+  .font-mono-code {
+    font-family: var(--font-mono);
+  }
+
+  *:focus-visible {
+    outline: 2px solid var(--md-sys-color-primary);
+    outline-offset: 2px;
+  }
+}
+
+/* Skip navigation link for keyboard accessibility */
+.md-skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0.75rem;
+  z-index: 100;
+  padding: 0.625rem 1rem;
+  border-radius: 9999px;
+  background-color: var(--md-sys-color-primary);
+  color: var(--md-sys-color-on-primary);
+  font-size: 0.875rem;
+  font-weight: 600;
+  box-shadow: var(--md-elevation-2);
+}
+
+.md-skip-link:focus {
+  left: 0.75rem;
+}
+
+/* Material 3 Surface Containers */
+.md-card {
+  background-color: var(--md-sys-color-surface-container-lowest);
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: 1.25rem;
+  box-shadow: var(--md-elevation-1);
+}
+
+.md-card-tonal {
+  background-color: var(--md-sys-color-surface-container-low);
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: 1.25rem;
+}
+
+.md-card-elevated {
+  background-color: var(--md-sys-color-surface-container-lowest);
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: 1.5rem;
+  box-shadow: var(--md-elevation-3);
+}
+
+/* Material 3 Buttons */
+.md-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  min-height: 2.625rem;
+  padding: 0.5rem 1.25rem;
+  border-radius: 9999px;
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1.25rem;
+  cursor: pointer;
+  transition:
+    background-color var(--md-motion-standard),
+    border-color var(--md-motion-standard),
+    color var(--md-motion-standard),
+    box-shadow var(--md-motion-standard);
+}
+
+.md-btn:disabled {
+  opacity: 0.48;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.md-btn-filled {
+  background-color: var(--md-sys-color-primary);
+  color: var(--md-sys-color-on-primary);
+  border: 1px solid transparent;
+}
+
+.md-btn-filled:hover:not(:disabled) {
+  background-color: var(--md-sys-color-primary-hover);
+  box-shadow: var(--md-elevation-1);
+}
+
+.md-btn-tonal {
+  background-color: var(--md-sys-color-primary-container);
+  color: var(--md-sys-color-on-primary-container);
+  border: 1px solid transparent;
+}
+
+.md-btn-tonal:hover:not(:disabled) {
+  background-color: #dfcbb6;
+}
+
+.md-btn-outlined {
+  background-color: var(--md-sys-color-surface-container-lowest);
+  color: var(--md-sys-color-primary);
+  border: 1px solid var(--md-sys-color-outline);
+}
+
+.md-btn-outlined:hover:not(:disabled) {
+  background-color: var(--md-sys-color-surface-container-low);
+}
+
+.md-btn-text {
+  background-color: transparent;
+  color: var(--md-sys-color-primary);
+  border: 1px solid transparent;
+  padding-inline: 0.875rem;
+}
+
+.md-btn-text:hover:not(:disabled) {
+  background-color: var(--md-sys-color-surface-container);
+}
+
+.md-btn-danger {
+  background-color: var(--md-sys-color-error-container);
+  color: var(--md-sys-color-on-error-container);
+  border: 1px solid #eabcbc;
+}
+
+.md-btn-danger:hover:not(:disabled) {
+  background-color: #f6d5d4;
+}
+
+/* Material 3 Outlined Form Controls */
+.md-input,
+.md-select,
+.md-textarea {
+  width: 100%;
+  border-radius: 0.75rem;
+  border: 1px solid var(--md-sys-color-outline);
+  background-color: var(--md-sys-color-surface-container-lowest);
+  color: var(--md-sys-color-on-surface);
+  padding: 0.65rem 0.875rem;
+  font-size: 0.9375rem;
+  line-height: 1.4;
+  transition:
+    border-color var(--md-motion-standard),
+    box-shadow var(--md-motion-standard);
+}
+
+.md-input {
+  min-height: 2.75rem;
+}
+
+.md-select {
+  min-height: 2.75rem;
+}
+
+.md-input::placeholder,
+.md-textarea::placeholder {
+  color: #7c6757;
+}
+
+.md-input:hover:not(:disabled),
+.md-select:hover:not(:disabled),
+.md-textarea:hover:not(:disabled) {
+  border-color: var(--md-sys-color-primary);
+}
+
+.md-input:focus,
+.md-select:focus,
+.md-textarea:focus {
+  outline: none;
+  border-color: var(--md-sys-color-primary);
+  box-shadow: 0 0 0 2px rgba(74, 46, 27, 0.18);
+}
+
+.md-input[aria-invalid="true"],
+.md-select[aria-invalid="true"],
+.md-textarea[aria-invalid="true"] {
+  border-color: var(--md-sys-color-error);
+}
+
+/* Material 3 Filter & Choice Chips */
+.md-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  min-height: 2.25rem;
+  padding: 0.375rem 0.875rem;
+  border-radius: 0.625rem;
+  border: 1px solid var(--md-sys-color-outline-variant);
+  background-color: var(--md-sys-color-surface-container-lowest);
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    background-color var(--md-motion-standard),
+    border-color var(--md-motion-standard),
+    color var(--md-motion-standard);
+}
+
+.md-chip:hover:not(:disabled) {
+  background-color: var(--md-sys-color-surface-container-low);
+  border-color: var(--md-sys-color-outline);
+}
+
+.md-chip-active {
+  background-color: var(--md-sys-color-primary-container);
+  border-color: var(--md-sys-color-primary);
+  color: var(--md-sys-color-on-primary-container);
+  font-weight: 600;
+}
+
+/* Status Badges */
+.md-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.2rem 0.65rem;
+  border-radius: 9999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.md-badge-espresso {
+  background-color: var(--md-sys-color-primary-container);
+  color: var(--md-sys-color-on-primary-container);
+}
+
+.md-badge-sage {
+  background-color: var(--md-sys-color-tertiary-container);
+  color: var(--md-sys-color-on-tertiary-container);
+}
+
+.md-badge-amber {
+  background-color: var(--md-sys-color-warning-container);
+  color: var(--md-sys-color-on-warning-container);
+}
+
+.md-badge-error {
+  background-color: var(--md-sys-color-error-container);
+  color: var(--md-sys-color-on-error-container);
+}
+
+.md-badge-neutral {
+  background-color: var(--md-sys-color-surface-container);
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

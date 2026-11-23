@@ -4,6 +4,12 @@ from __future__ import annotations
 
 from app.infrastructure.adk_brief_coach import AdkConversationCoachBriefAdapter
 from app.infrastructure.adk_memory_extractor import AdkMemoryProposalAdapter
+from app.infrastructure.auth import (
+    FirebaseGoogleTokenAuthenticator,
+    LocalMockSessionRegistry,
+    RuntimeAuthenticator,
+    build_runtime_authenticator,
+)
 from app.infrastructure.clock import SystemUtcClock
 from app.infrastructure.container import (
     build_firestore_service_container,
@@ -51,6 +57,7 @@ __all__ = [
     "FakeBriefCoachAgent",
     "FakeMemoryProposalAgent",
     "FakeServiceContainer",
+    "FirebaseGoogleTokenAuthenticator",
     "FirestoreBriefRepository",
     "FirestoreContactRepository",
     "FirestoreMeetingRepository",
@@ -65,12 +72,15 @@ __all__ = [
     "InMemoryMemoryRepository",
     "InMemoryUserPreferencesRepository",
     "InMemoryWorkflowIdempotencyRepository",
+    "LocalMockSessionRegistry",
+    "RuntimeAuthenticator",
     "SequentialIdGenerator",
     "ServiceContainer",
     "SessionServiceFactory",
     "SystemUtcClock",
     "UuidIdGenerator",
     "build_firestore_service_container",
+    "build_runtime_authenticator",
     "build_service_container",
     "create_adk_firestore_session_service",
     "create_firestore_async_client",

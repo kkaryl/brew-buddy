@@ -16,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from google.adk.cli.fast_api import get_fast_api_app
 from google.adk.runners import Runner
 
+from app.api.auth import router as auth_router
 from app.api.errors import register_exception_handlers
 from app.api.health import router as health_router
 from app.api.v1 import router as v1_router
@@ -184,6 +185,7 @@ def create_app(
     register_exception_handlers(fastapi_app)
 
     fastapi_app.include_router(health_router)
+    fastapi_app.include_router(auth_router)
     fastapi_app.include_router(v1_router)
     return fastapi_app
 
