@@ -167,6 +167,7 @@ class MemoryProposalRepository(Protocol):
         owner_user_id: str,
         *,
         status: ProposalStatus | None = None,
+        contact_id: str | None = None,
     ) -> list[MemoryProposal]:
         """List memory proposals belonging to ``owner_user_id``."""
 
@@ -196,6 +197,7 @@ class MemoryRepository(Protocol):
         contact_id: str | None = None,
         memory_type: MemoryType | None = None,
         include_revoked: bool = False,
+        include_superseded: bool = False,
     ) -> list[Memory]:
         """List approved memories belonging to ``owner_user_id`` matching optional filters."""
 
@@ -208,8 +210,16 @@ class MemoryRepository(Protocol):
         memory_id: str,
         *,
         expected_version: int | None = None,
+        deleted_snapshot: Memory | None = None,
     ) -> None:
         """Delete an approved memory under ``owner_user_id`` enforcing version checks."""
+
+    async def get_deleted_for_owner(
+        self,
+        owner_user_id: str,
+        memory_id: str,
+    ) -> Memory | None:
+        """Return the archived ``DELETED`` tombstone for ``memory_id``, if any."""
 
 
 class UserPreferencesReaderPort(Protocol):
@@ -300,6 +310,7 @@ class ProposedMemoryCandidate(BaseModel):
     text: MemoryBodyText
     rationale: RationaleText
     excerpt: SourceExcerptText | None = None
+    supersedes_memory_id: EntityId | None = None
 
     @model_validator(mode="after")
     def _validate_scope_binding(self) -> Self:

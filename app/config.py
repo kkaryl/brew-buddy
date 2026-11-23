@@ -17,6 +17,7 @@ LogLevelName = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 PersistenceBackendName = Literal["in_memory", "firestore"]
 SessionBackendName = Literal["auto", "in_memory", "firestore", "vertex_ai"]
 BriefCoachBackendName = Literal["auto", "adk", "fake"]
+MemoryExtractorBackendName = Literal["auto", "adk", "fake"]
 
 _RESERVED_DOMAIN_COLLECTIONS = frozenset(
     {
@@ -27,6 +28,7 @@ _RESERVED_DOMAIN_COLLECTIONS = frozenset(
         "briefs",
         "revisions",
         "memories",
+        "deletedMemories",
         "memoryProposals",
         "workflowIdempotency",
     }
@@ -91,6 +93,10 @@ class AppSettings(BaseSettings):
     brief_coach_backend: BriefCoachBackendName = Field(
         default="auto",
         validation_alias="BREW_BRIEF_COACH_BACKEND",
+    )
+    memory_extractor_backend: MemoryExtractorBackendName = Field(
+        default="auto",
+        validation_alias="BREW_MEMORY_EXTRACTOR_BACKEND",
     )
     workflow_max_model_invocations: int = Field(
         default=6,

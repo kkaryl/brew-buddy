@@ -178,4 +178,20 @@ This document records significant architectural and technical decisions for **Br
   - *Positive:* Predictable upper bounds on LLM calls and tool retries per request, zero silent revision overwrites, graceful degradation when optional enrichment tools fail, and deterministic table-driven testability with `DeterministicMockCoachLlm` (`tests/unit/test_meeting_preparation_workflow.py`).
   - *Trade-off:* Unrecoverable model schema/quality failures fail closed after at most two synthesis attempts rather than retrying indefinitely.
 
+---
+
+## ADR-014: Five-State Long-Term Memory Lifecycle, Epistemic Attribution, Contradiction Supersession, and Tombstone Deletion
+
+- **Date:** 2026-11-23
+- **Status:** Accepted
+- **Context:** Long-term relationship coaching requires extracting counterpart takeaways and user communication preferences from free-form post-meeting notes without (1) treating subjective session notes as verified objective facts about the wider world, (2) silently committing memories via agent callbacks, (3) memorizing sensitive personal or third-party rumors, (4) accumulating duplicate or contradictory memories over time, or (5) leaving deleted memories retrievable in future sessions while losing audit provenance.
+- **Decision:**
+  1. Model an explicit 5-state lifecycle (`MemoryLifecycleState`: `proposed`, `approved`, `rejected`, `superseded`, `deleted`) paired with `MemoryEpistemicStatus` (`user_reported_observation`, `user_stated_preference`) in `app/domain/types.py`, `app/domain/models.py`, and `app/domain/memory_lifecycle.py`.
+  2. Implement Gemini-backed extraction in `AdkMemoryProposalAdapter` (`app/infrastructure/adk_memory_extractor.py`) running ADK `Agent(name="memory_candidate_extractor", tools=[])` with zero repository handles and zero automatic write callbacks; enforce deterministic PII redaction, sensitive third-party assumption filtering (`detect_sensitive_or_third_party_assumption`), epistemic attribution (`ensure_attributed_epistemic_text`), semantic deduplication, and contradiction detection (`classify_candidate_against_existing`) inside `MemoryPersistenceService` (`app/application/memory_persistence_service.py`).
+  3. Expose full human review endpoints (`POST /api/v1/memories/propose`, `GET /api/v1/memories/proposals`, `POST /api/v1/memories/{id}/approve`, `POST /api/v1/memories/{id}/reject`, `GET /api/v1/memories`, `PATCH /api/v1/memories/{id}`, `DELETE /api/v1/memories/{id}`). Approving a contradicting/updating proposal atomically marks the prior active memory `superseded` (`superseded_by_memory_id`, `superseded_at`); rejecting keeps the proposal in `memoryProposals` (`rejected`) with zero writes to `memories`; deleting executes an atomic transaction removing the document from `users/{uid}/memories/{id}` while writing a `deleted` audit tombstone to `users/{uid}/deletedMemories/{id}`.
+- **Consequences:**
+  - *Positive:* Strict human-in-the-loop memory governance, preserved meeting/note provenance and timestamps across all 5 states, automatic exclusion of rejected/superseded/deleted memories from future session retrieval, and end-to-end verification across two distinct Firestore-persisted ADK sessions (`tests/unit/test_memory_lifecycle.py` and `tests/integration/test_firestore_persistence.py`).
+  - *Trade-off:* Maintaining immutable `deletedMemories` tombstones adds one subcollection write per deletion transaction in exchange for complete lifecycle provenance and verifiable non-retrieval from `users/{uid}/memories`.
+
+
 

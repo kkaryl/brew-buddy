@@ -78,6 +78,7 @@ def test_agent_tools_and_plugins_do_not_import_fastapi_or_raw_cloud_clients() ->
     target_files = [
         REPO_ROOT / "app" / "agent.py",
         REPO_ROOT / "app" / "infrastructure" / "adk_brief_coach.py",
+        REPO_ROOT / "app" / "infrastructure" / "adk_memory_extractor.py",
         *list((REPO_ROOT / "app" / "tools").rglob("*.py")),
         *list((REPO_ROOT / "app" / "plugins").rglob("*.py")),
     ]

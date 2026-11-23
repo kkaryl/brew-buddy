@@ -193,6 +193,23 @@ class ProposalStatus(StrEnum):
     REJECTED = "rejected"
 
 
+class MemoryLifecycleState(StrEnum):
+    """Canonical lifecycle state across staged proposals and durable memories."""
+
+    PROPOSED = "proposed"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    SUPERSEDED = "superseded"
+    DELETED = "deleted"
+
+
+class MemoryEpistemicStatus(StrEnum):
+    """Epistemic status ensuring memories are framed as attributed context, not world facts."""
+
+    USER_REPORTED_OBSERVATION = "user_reported_observation"
+    USER_STATED_PREFERENCE = "user_stated_preference"
+
+
 class MemorySourceType(StrEnum):
     """Originating workflow context for a memory or memory proposal."""
 

@@ -43,6 +43,7 @@ from app.domain.models import (
 from app.domain.types import (
     BriefWorkflowOperation,
     ConsentStatus,
+    MemoryLifecycleState,
     MemoryScope,
     MemoryType,
     ProposalStatus,
@@ -56,6 +57,7 @@ MEETINGS_SUBCOLLECTION = "meetings"
 BRIEFS_SUBCOLLECTION = "briefs"
 BRIEF_REVISIONS_SUBCOLLECTION = "revisions"
 MEMORIES_SUBCOLLECTION = "memories"
+DELETED_MEMORIES_SUBCOLLECTION = "deletedMemories"
 MEMORY_PROPOSALS_SUBCOLLECTION = "memoryProposals"
 WORKFLOW_IDEMPOTENCY_SUBCOLLECTION = "workflowIdempotency"
 
@@ -602,12 +604,16 @@ class FirestoreMemoryProposalRepository:
         owner_user_id: str,
         *,
         status: ProposalStatus | None = None,
+        contact_id: str | None = None,
     ) -> list[MemoryProposal]:
         uid = _validate_doc_segment("owner_user_id", owner_user_id)
         coll_ref = self._collection_ref(uid)
         query: firestore.AsyncCollectionReference | firestore.AsyncQuery = coll_ref
         if status is not None:
             query = coll_ref.where(filter=FieldFilter("status", "==", status.value))
+        elif contact_id is not None:
+            cid = _validate_doc_segment("contact_id", contact_id)
+            query = coll_ref.where(filter=FieldFilter("contact_id", "==", cid))
 
         docs = await _run_firestore_op(
             "firestore.memory_proposals.list",
@@ -615,9 +621,12 @@ class FirestoreMemoryProposalRepository:
             timeout_seconds=self._timeout_seconds,
         )
         proposals = [
-            MemoryProposal.model_validate(data)
+            proposal
             for doc in docs
-            if (data := doc.to_dict()) and data.get("owner_user_id") == uid
+            if (data := doc.to_dict())
+            and data.get("owner_user_id") == uid
+            and (proposal := MemoryProposal.model_validate(data))
+            and (contact_id is None or proposal.contact_id == contact_id)
         ]
         return sorted(proposals, key=lambda item: (item.created_at, item.id))
 
@@ -666,6 +675,21 @@ class FirestoreMemoryRepository:
         mid = _validate_doc_segment("memory_id", memory_id)
         return self._collection_ref(owner_user_id).document(mid)
 
+    def _deleted_doc_ref(
+        self,
+        owner_user_id: str,
+        memory_id: str,
+    ) -> firestore.AsyncDocumentReference:
+        uid = _validate_doc_segment("owner_user_id", owner_user_id)
+        mid = _validate_doc_segment("memory_id", memory_id)
+        return cast(
+            firestore.AsyncDocumentReference,
+            self._client.collection(USERS_COLLECTION)
+            .document(uid)
+            .collection(DELETED_MEMORIES_SUBCOLLECTION)
+            .document(mid),
+        )
+
     async def get_for_owner(self, owner_user_id: str, memory_id: str) -> Memory | None:
         uid = _validate_doc_segment("owner_user_id", owner_user_id)
         snap = await _run_firestore_op(
@@ -696,6 +720,7 @@ class FirestoreMemoryRepository:
         contact_id: str | None = None,
         memory_type: MemoryType | None = None,
         include_revoked: bool = False,
+        include_superseded: bool = False,
     ) -> list[Memory]:
         uid = _validate_doc_segment("owner_user_id", owner_user_id)
         coll_ref = self._collection_ref(uid)
@@ -722,6 +747,11 @@ class FirestoreMemoryRepository:
                 continue
             memory = Memory.model_validate(data)
             if not include_revoked and memory.consent_status is not ConsentStatus.APPROVED:
+                continue
+            if (
+                not include_superseded
+                and memory.lifecycle_state is not MemoryLifecycleState.APPROVED
+            ):
                 continue
             if scope is not None and memory.scope is not scope:
                 continue
@@ -753,17 +783,19 @@ class FirestoreMemoryRepository:
         memory_id: str,
         *,
         expected_version: int | None = None,
+        deleted_snapshot: Memory | None = None,
     ) -> None:
         doc_ref = self._doc_ref(owner_user_id, memory_id)
+        deleted_ref = self._deleted_doc_ref(owner_user_id, memory_id)
 
         @firestore.async_transactional
         async def _delete_txn(transaction: firestore.AsyncTransaction) -> None:
             snap = await doc_ref.get(transaction=transaction)
             if not snap.exists:
                 raise EntityNotFoundError(entity_name="Memory", entity_id=memory_id)
+            existing_dict = snap.to_dict() or {}
             if expected_version is not None:
-                existing = snap.to_dict() or {}
-                actual_version = int(existing.get("version", 0))
+                actual_version = int(existing_dict.get("version", 0))
                 if actual_version != expected_version:
                     raise VersionConflictError(
                         entity_name="Memory",
@@ -771,6 +803,12 @@ class FirestoreMemoryRepository:
                         expected_version=expected_version,
                         actual_version=actual_version,
                     )
+            if deleted_snapshot is not None:
+                tombstone = deleted_snapshot
+            else:
+                parsed = Memory.model_validate(existing_dict)
+                tombstone = parsed.mark_deleted(deleted_at=parsed.updated_at)
+            transaction.set(deleted_ref, _serialize_domain_model(tombstone))
             transaction.delete(doc_ref)
 
         await _run_firestore_op(
@@ -778,6 +816,24 @@ class FirestoreMemoryRepository:
             _delete_txn(self._client.transaction()),
             timeout_seconds=self._timeout_seconds,
         )
+
+    async def get_deleted_for_owner(
+        self,
+        owner_user_id: str,
+        memory_id: str,
+    ) -> Memory | None:
+        uid = _validate_doc_segment("owner_user_id", owner_user_id)
+        snap = await _run_firestore_op(
+            "firestore.deleted_memories.get",
+            self._deleted_doc_ref(uid, memory_id).get(),
+            timeout_seconds=self._timeout_seconds,
+        )
+        if not snap.exists:
+            return None
+        data = snap.to_dict()
+        if not data or data.get("owner_user_id") != uid:
+            return None
+        return Memory.model_validate(data)
 
 
 class FirestoreWorkflowIdempotencyRepository:

@@ -30,6 +30,13 @@ from app.domain.errors import (
     EntityNotFoundError,
 )
 from app.domain.health import ClockPort
+from app.domain.memory_lifecycle import (
+    MemoryRelationKind,
+    classify_candidate_against_existing,
+    default_epistemic_status_for_scope,
+    detect_sensitive_or_third_party_assumption,
+    ensure_attributed_epistemic_text,
+)
 from app.domain.models import (
     AuthenticatedPrincipal,
     Contact,
@@ -49,7 +56,6 @@ from app.domain.ports import (
     UserPreferencesReaderPort,
 )
 from app.domain.types import (
-    ConsentStatus,
     MeetingPurpose,
     MeetingStatus,
     MemoryScope,
@@ -212,7 +218,7 @@ class ConversationCoachService:
             mem
             for mem in raw_memories
             if mem.owner_user_id == uid
-            and mem.consent_status is ConsentStatus.APPROVED
+            and mem.is_active
             and mem.scope is MemoryScope.USER_PREFERENCE
         ]
         ranked = sorted(
@@ -290,7 +296,7 @@ class ConversationCoachService:
             mem
             for mem in raw_memories
             if mem.owner_user_id == uid
-            and mem.consent_status is ConsentStatus.APPROVED
+            and mem.is_active
             and mem.scope is MemoryScope.CONTACT
             and mem.contact_id == contact.id
         ]
@@ -444,7 +450,13 @@ class ConversationCoachService:
         if contact_id is not None:
             contact = await self._require_owned_contact(uid, contact_id)
 
-        safe_segments, dropped_directives = split_safe_note_segments(notes)
+        raw_segments, dropped_directives = split_safe_note_segments(notes)
+        safe_segments: list[str] = []
+        for seg in raw_segments:
+            if detect_sensitive_or_third_party_assumption(seg) is not None:
+                dropped_directives += 1
+                continue
+            safe_segments.append(seg)
         if not safe_segments:
             return SuggestedMemoryCandidatesProjection(
                 candidates=[],
@@ -455,9 +467,8 @@ class ConversationCoachService:
         existing_memories = [
             mem
             for mem in await self._memory_reader.list_by_owner(uid, include_revoked=False)
-            if mem.owner_user_id == uid
+            if mem.owner_user_id == uid and mem.is_active
         ]
-        existing_texts = {mem.text.strip().lower() for mem in existing_memories}
 
         safe_joined_notes = ". ".join(safe_segments)
         proposed = await self._proposal_agent.propose_memories(
@@ -468,7 +479,9 @@ class ConversationCoachService:
         )
 
         now = self._clock.now_utc()
+        contact_name = contact.name if contact is not None else None
         staged_items: list[StagedMemoryCandidateProjection] = []
+        synthetic_existing = list(existing_memories)
         for candidate in proposed:
             if len(staged_items) >= max_candidates:
                 break
@@ -479,21 +492,49 @@ class ConversationCoachService:
             if sanitized_text.injection_detected or len(sanitized_text.text) < 3:
                 dropped_directives += 1
                 continue
-            if sanitized_text.text.lower() in existing_texts:
+            if detect_sensitive_or_third_party_assumption(sanitized_text.text) is not None:
+                dropped_directives += 1
                 continue
-
-            sanitized_rationale = sanitize_untrusted_text(candidate.rationale, max_chars=500)
-            sanitized_excerpt = (
-                sanitize_untrusted_text(candidate.excerpt, max_chars=500).text
-                if candidate.excerpt
-                else None
-            )
 
             resolved_contact_id = (
                 contact.id
                 if candidate.scope is MemoryScope.CONTACT and contact is not None
                 else candidate.contact_id
             )
+            attributed_text = ensure_attributed_epistemic_text(
+                sanitized_text.text,
+                scope=candidate.scope,
+                contact_name=contact_name,
+            )
+            relation = classify_candidate_against_existing(
+                scope=candidate.scope,
+                contact_id=resolved_contact_id,
+                memory_type=candidate.memory_type,
+                text=attributed_text,
+                existing_memories=synthetic_existing,
+                explicit_supersedes_memory_id=candidate.supersedes_memory_id,
+                contact_name=contact_name,
+            )
+            if relation.kind is MemoryRelationKind.DUPLICATE:
+                continue
+
+            supersedes_id: str | None = None
+            conflict_summary: str | None = None
+            if (
+                relation.kind is MemoryRelationKind.SUPERSEDES
+                and relation.matched_memory is not None
+                and any(m.id == relation.matched_memory.id for m in existing_memories)
+            ):
+                supersedes_id = relation.matched_memory.id
+                conflict_summary = (relation.reason or "")[:500] or None
+
+            sanitized_rationale = sanitize_untrusted_text(candidate.rationale, max_chars=500)
+            sanitized_excerpt = (
+                sanitize_untrusted_text(candidate.excerpt, max_chars=500).text
+                if candidate.excerpt
+                else sanitized_text.text[:500]
+            )
+
             try:
                 source = MemorySource(
                     source_type=source_type,
@@ -509,10 +550,13 @@ class ConversationCoachService:
                     scope=candidate.scope,
                     contact_id=resolved_contact_id,
                     memory_type=candidate.memory_type,
-                    text=sanitized_text.text,
+                    text=attributed_text,
                     rationale=sanitized_rationale.text,
                     source=source,
                     status=ProposalStatus.PENDING,
+                    epistemic_status=default_epistemic_status_for_scope(candidate.scope),
+                    supersedes_memory_id=supersedes_id,
+                    conflict_summary=conflict_summary,
                     created_at=now,
                     updated_at=now,
                     version=1,
@@ -521,7 +565,19 @@ class ConversationCoachService:
                 raise translate_pydantic_error(exc) from exc
 
             saved = await self._proposal_stager.save(proposal)
-            existing_texts.add(saved.text.strip().lower())
+            synthetic_existing.append(
+                Memory(
+                    id=f"staged_{saved.id}",
+                    owner_user_id=uid,
+                    scope=saved.scope,
+                    contact_id=saved.contact_id,
+                    memory_type=saved.memory_type,
+                    text=saved.text,
+                    source=saved.source,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
             staged_items.append(
                 StagedMemoryCandidateProjection(
                     proposal_id=saved.id,

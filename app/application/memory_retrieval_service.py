@@ -29,7 +29,6 @@ from app.domain.ports import (
     UserPreferencesRepository,
 )
 from app.domain.types import (
-    ConsentStatus,
     MeetingPurpose,
     MeetingStatus,
     MemoryScope,
@@ -215,7 +214,7 @@ class MemoryRetrievalService:
             mem
             for mem in raw_preference_memories
             if mem.owner_user_id == uid
-            and mem.consent_status is ConsentStatus.APPROVED
+            and mem.is_active
             and mem.scope is MemoryScope.USER_PREFERENCE
         ]
         ranked_pref_memories = sorted(
@@ -228,7 +227,7 @@ class MemoryRetrievalService:
             mem
             for mem in raw_contact_memories
             if mem.owner_user_id == uid
-            and mem.consent_status is ConsentStatus.APPROVED
+            and mem.is_active
             and mem.scope is MemoryScope.CONTACT
             and mem.contact_id == contact.id
         ]
@@ -321,6 +320,7 @@ class MemoryRetrievalService:
         contact_id: str | None = None,
         memory_type: MemoryType | None = None,
         include_revoked: bool = False,
+        include_superseded: bool = False,
     ) -> list[Memory]:
         """List approved memories strictly owned by ``principal``."""
         if scope is MemoryScope.USER_PREFERENCE and contact_id is not None:
@@ -340,5 +340,6 @@ class MemoryRetrievalService:
             contact_id=contact_id,
             memory_type=memory_type,
             include_revoked=include_revoked,
+            include_superseded=include_superseded,
         )
         return [mem for mem in records if mem.owner_user_id == principal.user_id]

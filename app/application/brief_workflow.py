@@ -75,7 +75,6 @@ from app.domain.ports import (
 from app.domain.types import (
     BriefWorkflowOperation,
     BriefWorkflowTerminalState,
-    ConsentStatus,
     EntityId,
     MeetingDurationMinutes,
     MeetingNotesText,
@@ -358,7 +357,7 @@ class MeetingPreparationWorkflow:
             _sanitize_memory_for_context(mem)
             for mem in raw_pref_memories
             if mem.owner_user_id == uid
-            and mem.consent_status is ConsentStatus.APPROVED
+            and mem.is_active
             and mem.scope is MemoryScope.USER_PREFERENCE
         ]
         ranked_pref_memories = sorted(
@@ -371,7 +370,7 @@ class MeetingPreparationWorkflow:
             _sanitize_memory_for_context(mem)
             for mem in raw_contact_memories
             if mem.owner_user_id == uid
-            and mem.consent_status is ConsentStatus.APPROVED
+            and mem.is_active
             and mem.scope is MemoryScope.CONTACT
             and mem.contact_id == contact.id
         ]

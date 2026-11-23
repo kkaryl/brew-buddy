@@ -16,6 +16,12 @@ from app.domain.errors import (
     VersionConflictError,
 )
 from app.domain.health import ClockPort
+from app.domain.memory_lifecycle import (
+    MemoryRelationKind,
+    classify_candidate_against_existing,
+    detect_sensitive_or_third_party_assumption,
+    ensure_attributed_epistemic_text,
+)
 from app.domain.models import (
     AuthenticatedPrincipal,
     BriefPreparationContext,
@@ -51,6 +57,7 @@ from app.domain.types import (
     MeetingDurationMinutes,
     MeetingPurpose,
     MeetingTone,
+    MemoryLifecycleState,
     MemoryScope,
     MemoryType,
     ProposalStatus,
@@ -412,12 +419,14 @@ class InMemoryMemoryProposalRepository:
         owner_user_id: str,
         *,
         status: ProposalStatus | None = None,
+        contact_id: str | None = None,
     ) -> list[MemoryProposal]:
         async with self._lock:
             items = [
                 proposal
                 for proposal in self._by_owner.get(owner_user_id, {}).values()
-                if status is None or proposal.status is status
+                if (status is None or proposal.status is status)
+                and (contact_id is None or proposal.contact_id == contact_id)
             ]
         return sorted(items, key=lambda item: (item.created_at, item.id))
 
@@ -459,6 +468,7 @@ class InMemoryMemoryRepository:
     def __init__(self) -> None:
         self._lock = asyncio.Lock()
         self._by_owner: dict[str, dict[str, Memory]] = {}
+        self._deleted_by_owner: dict[str, dict[str, Memory]] = {}
 
     async def get_for_owner(self, owner_user_id: str, memory_id: str) -> Memory | None:
         async with self._lock:
@@ -476,12 +486,14 @@ class InMemoryMemoryRepository:
         contact_id: str | None = None,
         memory_type: MemoryType | None = None,
         include_revoked: bool = False,
+        include_superseded: bool = False,
     ) -> list[Memory]:
         async with self._lock:
             items = [
                 memory
                 for memory in self._by_owner.get(owner_user_id, {}).values()
                 if (include_revoked or memory.consent_status is ConsentStatus.APPROVED)
+                and (include_superseded or memory.lifecycle_state is MemoryLifecycleState.APPROVED)
                 and (scope is None or memory.scope is scope)
                 and (contact_id is None or memory.contact_id == contact_id)
                 and (memory_type is None or memory.memory_type is memory_type)
@@ -517,6 +529,7 @@ class InMemoryMemoryRepository:
         memory_id: str,
         *,
         expected_version: int | None = None,
+        deleted_snapshot: Memory | None = None,
     ) -> None:
         async with self._lock:
             user_bucket = self._by_owner.get(owner_user_id, {})
@@ -530,7 +543,17 @@ class InMemoryMemoryRepository:
                     expected_version=expected_version,
                     actual_version=existing.version,
                 )
+            tombstone = deleted_snapshot or existing.mark_deleted(deleted_at=existing.updated_at)
+            self._deleted_by_owner.setdefault(owner_user_id, {})[memory_id] = tombstone
             del user_bucket[memory_id]
+
+    async def get_deleted_for_owner(
+        self,
+        owner_user_id: str,
+        memory_id: str,
+    ) -> Memory | None:
+        async with self._lock:
+            return self._deleted_by_owner.get(owner_user_id, {}).get(memory_id)
 
 
 def _build_time_boxed_agenda(
@@ -924,11 +947,17 @@ class FakeMemoryProposalAgent:
 
     _PREFERENCE_CUES = (
         "i prefer",
+        "actually, i now prefer",
+        "i now prefer",
+        "i like",
         "my preference",
         "my style",
         "always include",
         "keep agendas",
         "prefer concise",
+        "prefer having",
+        "prefer structured",
+        "prefer informal",
     )
     _FOLLOW_UP_CUES = (
         "follow up",
@@ -937,6 +966,8 @@ class FakeMemoryProposalAgent:
         "send over",
         "reconnect",
         "share the",
+        "recommended learning",
+        "recommended exploring",
     )
 
     async def propose_memories(
@@ -953,89 +984,78 @@ class FakeMemoryProposalAgent:
             segment.strip()
             for segment in re.split(r"[\n.;]+", scrubbed)
             if len(segment.strip()) >= 5
+            and detect_sensitive_or_third_party_assumption(segment) is None
         ]
         if not raw_segments:
-            raw_segments = [scrubbed.strip()]
+            return []
 
-        existing_texts = {mem.text.lower() for mem in existing_memories}
+        contact_name = contact.name if contact is not None else None
         proposals: list[ProposedMemoryCandidate] = []
 
         for segment in raw_segments[:5]:
-            normalized_text = segment[:1000]
-            if normalized_text.lower() in existing_texts:
-                continue
-
-            lowered = normalized_text.lower()
+            raw_excerpt = segment[:500]
+            lowered = segment.lower()
             is_user_pref = contact is None or any(cue in lowered for cue in self._PREFERENCE_CUES)
 
             if is_user_pref:
-                proposals.append(
-                    ProposedMemoryCandidate(
-                        scope=MemoryScope.USER_PREFERENCE,
-                        contact_id=None,
-                        memory_type=MemoryType.COMMUNICATION_PREFERENCE,
-                        text=normalized_text,
-                        rationale=(
-                            "Captures a durable coaching or communication preference "
-                            "for future briefs."
-                        ),
-                        excerpt=normalized_text[:500],
-                    )
+                scope = MemoryScope.USER_PREFERENCE
+                target_cid = None
+                mem_type = MemoryType.COMMUNICATION_PREFERENCE
+                rationale = (
+                    "Captures a caller-stated coaching or communication preference "
+                    "for future briefs."
                 )
             elif any(cue in lowered for cue in self._FOLLOW_UP_CUES):
                 assert contact is not None
-                proposals.append(
-                    ProposedMemoryCandidate(
-                        scope=MemoryScope.CONTACT,
-                        contact_id=contact.id,
-                        memory_type=MemoryType.FOLLOW_UP_COMMITMENT,
-                        text=normalized_text,
-                        rationale=(
-                            f"Tracks a follow-up thread discussed with {contact.name} "
-                            "for future sessions."
-                        ),
-                        excerpt=normalized_text[:500],
-                    )
+                scope = MemoryScope.CONTACT
+                target_cid = contact.id
+                mem_type = MemoryType.FOLLOW_UP_COMMITMENT
+                rationale = (
+                    f"Tracks a session-attributed recommendation or follow-up thread with "
+                    f"{contact.name}."
                 )
             else:
                 assert contact is not None
-                proposals.append(
-                    ProposedMemoryCandidate(
-                        scope=MemoryScope.CONTACT,
-                        contact_id=contact.id,
-                        memory_type=MemoryType.COUNTERPART_BACKGROUND,
-                        text=normalized_text,
-                        rationale=(
-                            f"Preserves user-noted counterpart context about {contact.name}."
-                        ),
-                        excerpt=normalized_text[:500],
-                    )
+                scope = MemoryScope.CONTACT
+                target_cid = contact.id
+                mem_type = MemoryType.COUNTERPART_BACKGROUND
+                rationale = (
+                    f"Preserves session-attributed counterpart context noted about {contact.name}."
                 )
 
-        if not proposals:
-            fallback_text = raw_segments[0][:1000]
-            if contact is not None:
-                proposals.append(
-                    ProposedMemoryCandidate(
-                        scope=MemoryScope.CONTACT,
-                        contact_id=contact.id,
-                        memory_type=MemoryType.RELATIONSHIP_NOTE,
-                        text=fallback_text,
-                        rationale=f"Candidate relationship context noted for {contact.name}.",
-                        excerpt=fallback_text[:500],
-                    )
+            attributed_text = ensure_attributed_epistemic_text(
+                segment[:1000],
+                scope=scope,
+                contact_name=contact_name,
+            )
+            relation = classify_candidate_against_existing(
+                scope=scope,
+                contact_id=target_cid,
+                memory_type=mem_type,
+                text=attributed_text,
+                existing_memories=existing_memories,
+                contact_name=contact_name,
+            )
+            if relation.kind is MemoryRelationKind.DUPLICATE:
+                continue
+
+            supersedes_id = (
+                relation.matched_memory.id
+                if relation.kind is MemoryRelationKind.SUPERSEDES
+                and relation.matched_memory is not None
+                else None
+            )
+            proposals.append(
+                ProposedMemoryCandidate(
+                    scope=scope,
+                    contact_id=target_cid,
+                    memory_type=mem_type,
+                    text=attributed_text,
+                    rationale=rationale,
+                    excerpt=raw_excerpt,
+                    supersedes_memory_id=supersedes_id,
                 )
-            else:
-                proposals.append(
-                    ProposedMemoryCandidate(
-                        scope=MemoryScope.USER_PREFERENCE,
-                        contact_id=None,
-                        memory_type=MemoryType.COMMUNICATION_PREFERENCE,
-                        text=fallback_text,
-                        rationale="Candidate coaching preference noted by user.",
-                        excerpt=fallback_text[:500],
-                    )
-                )
+            )
 
         return proposals
 

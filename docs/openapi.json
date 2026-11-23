@@ -78,6 +78,21 @@
               }
             ],
             "description": "Optional overridden memory classification."
+          },
+          "supersedes_memory_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional existing active memory ID explicitly superseded by this approval.",
+            "title": "Supersedes Memory Id"
           }
         },
         "title": "ApproveMemoryProposalRequest",
@@ -828,6 +843,27 @@
         "title": "MeetingTone",
         "type": "string"
       },
+      "MemoryEpistemicStatus": {
+        "description": "Epistemic status ensuring memories are framed as attributed context, not world facts.",
+        "enum": [
+          "user_reported_observation",
+          "user_stated_preference"
+        ],
+        "title": "MemoryEpistemicStatus",
+        "type": "string"
+      },
+      "MemoryLifecycleState": {
+        "description": "Canonical lifecycle state across staged proposals and durable memories.",
+        "enum": [
+          "proposed",
+          "approved",
+          "rejected",
+          "superseded",
+          "deleted"
+        ],
+        "title": "MemoryLifecycleState",
+        "type": "string"
+      },
       "MemoryListResponse": {
         "additionalProperties": false,
         "description": "Collection response for ``GET /api/v1/memories``.",
@@ -856,18 +892,32 @@
       },
       "MemoryProposalBatchResponse": {
         "additionalProperties": false,
-        "description": "Response payload for ``POST /api/v1/memories/propose``.",
+        "description": "Response payload for proposing or listing staged memory proposals.",
         "properties": {
+          "filtered_sensitive_count": {
+            "default": 0,
+            "description": "Note clauses rejected as sensitive or speculative third-party assumptions.",
+            "minimum": 0.0,
+            "title": "Filtered Sensitive Count",
+            "type": "integer"
+          },
           "proposals": {
-            "description": "Candidate memory proposals awaiting explicit user approval.",
+            "description": "Candidate memory proposals staged for or reviewed by the user.",
             "items": {
               "$ref": "#/components/schemas/MemoryProposalResponse"
             },
             "title": "Proposals",
             "type": "array"
           },
+          "skipped_duplicates": {
+            "default": 0,
+            "description": "Candidate items skipped because an equivalent active memory already exists.",
+            "minimum": 0.0,
+            "title": "Skipped Duplicates",
+            "type": "integer"
+          },
           "total": {
-            "description": "Number of proposals generated.",
+            "description": "Number of proposals returned.",
             "minimum": 0.0,
             "title": "Total",
             "type": "integer"
@@ -896,6 +946,18 @@
             "description": "ID of the approved Memory record once approved.",
             "title": "Approved Memory Id"
           },
+          "conflict_summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Human-readable explanation when resolving an update or contradiction.",
+            "title": "Conflict Summary"
+          },
           "contact_id": {
             "anyOf": [
               {
@@ -914,10 +976,18 @@
             "title": "Created At",
             "type": "string"
           },
+          "epistemic_status": {
+            "$ref": "#/components/schemas/MemoryEpistemicStatus",
+            "description": "Epistemic framing indicating session-attributed context, not world fact."
+          },
           "id": {
             "description": "Unique memory proposal identifier.",
             "title": "Id",
             "type": "string"
+          },
+          "lifecycle_state": {
+            "$ref": "#/components/schemas/MemoryLifecycleState",
+            "description": "Canonical 5-state memory lifecycle status ('proposed', 'approved', 'rejected')."
           },
           "memory_type": {
             "$ref": "#/components/schemas/MemoryType",
@@ -927,6 +997,18 @@
             "description": "Why Brew proposed saving this memory.",
             "title": "Rationale",
             "type": "string"
+          },
+          "rejection_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional user-supplied reason recorded when rejected.",
+            "title": "Rejection Reason"
           },
           "reviewed_at": {
             "anyOf": [
@@ -953,6 +1035,18 @@
             "$ref": "#/components/schemas/ProposalStatus",
             "description": "Current review status."
           },
+          "supersedes_memory_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Existing active memory ID this proposal updates or contradicts, if any.",
+            "title": "Supersedes Memory Id"
+          },
           "text": {
             "description": "Proposed memory statement.",
             "title": "Text",
@@ -978,6 +1072,8 @@
           "rationale",
           "source",
           "status",
+          "lifecycle_state",
+          "epistemic_status",
           "created_at",
           "updated_at",
           "version"
@@ -1011,10 +1107,18 @@
             "title": "Created At",
             "type": "string"
           },
+          "epistemic_status": {
+            "$ref": "#/components/schemas/MemoryEpistemicStatus",
+            "description": "Epistemic framing indicating session-attributed context, not world fact."
+          },
           "id": {
             "description": "Unique approved memory identifier.",
             "title": "Id",
             "type": "string"
+          },
+          "lifecycle_state": {
+            "$ref": "#/components/schemas/MemoryLifecycleState",
+            "description": "Canonical lifecycle state ('approved' or 'superseded')."
           },
           "memory_type": {
             "$ref": "#/components/schemas/MemoryType",
@@ -1032,6 +1136,43 @@
           "source": {
             "$ref": "#/components/schemas/MemorySourceResponse",
             "description": "Provenance / source reference."
+          },
+          "superseded_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "UTC timestamp when this memory was superseded.",
+            "title": "Superseded At"
+          },
+          "superseded_by_memory_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Newer memory ID that superseded this memory, if superseded.",
+            "title": "Superseded By Memory Id"
+          },
+          "supersedes_memory_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Prior memory ID superseded by this memory, if any.",
+            "title": "Supersedes Memory Id"
           },
           "text": {
             "description": "Approved memory text.",
@@ -1058,6 +1199,8 @@
           "text",
           "source",
           "consent_status",
+          "lifecycle_state",
+          "epistemic_status",
           "created_at",
           "updated_at",
           "version"
@@ -1382,6 +1525,35 @@
           "notes"
         ],
         "title": "ProposeMemoriesRequest",
+        "type": "object"
+      },
+      "RejectMemoryProposalRequest": {
+        "additionalProperties": false,
+        "description": "Request payload for ``POST /api/v1/memories/{id}/reject``.",
+        "properties": {
+          "expected_version": {
+            "default": 1,
+            "description": "Expected version of the pending memory proposal.",
+            "minimum": 1.0,
+            "title": "Expected Version",
+            "type": "integer"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional user reason for rejecting the candidate memory.",
+            "title": "Reason"
+          }
+        },
+        "title": "RejectMemoryProposalRequest",
         "type": "object"
       },
       "ReviseBriefRequest": {
@@ -2545,6 +2717,18 @@
               "title": "Include Revoked",
               "type": "boolean"
             }
+          },
+          {
+            "description": "Include historical memories superseded by newer updates.",
+            "in": "query",
+            "name": "include_superseded",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Include historical memories superseded by newer updates.",
+              "title": "Include Superseded",
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -2645,6 +2829,154 @@
           }
         ],
         "summary": "List approved memories",
+        "tags": [
+          "memories"
+        ]
+      }
+    },
+    "/api/v1/memories/proposals": {
+      "get": {
+        "description": "Return candidate memory proposals staged for human review.",
+        "operationId": "list_memory_proposals_api_v1_memories_proposals_get",
+        "parameters": [
+          {
+            "description": "Optional review status filter ('pending', 'approved', or 'rejected').",
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/ProposalStatus"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional review status filter ('pending', 'approved', or 'rejected').",
+              "title": "Status"
+            }
+          },
+          {
+            "description": "Optional contact identifier filter.",
+            "in": "query",
+            "name": "contact_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional contact identifier filter.",
+              "title": "Contact Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryProposalBatchResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Missing, malformed, or invalid Bearer authentication credentials."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Authenticated user does not own the target resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Requested resource does not exist."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Optimistic concurrency version conflict or invalid lifecycle transition."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Request schema, domain invariant, or model output validation failure."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Coaching model execution or invocation budget failure."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Persistence backend unavailable."
+          },
+          "504": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Coaching model request deadline exceeded."
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List memory proposals for human review",
         "tags": [
           "memories"
         ]
@@ -3066,7 +3398,7 @@
                     "type": "null"
                   }
                 ],
-                "description": "Optional version check and user-edited text.",
+                "description": "Optional version check, user-edited text, and supersede target.",
                 "title": "Payload"
               }
             }
@@ -3170,6 +3502,147 @@
           }
         ],
         "summary": "Approve a staged memory proposal",
+        "tags": [
+          "memories"
+        ]
+      }
+    },
+    "/api/v1/memories/{id}/reject": {
+      "post": {
+        "description": "Reject a pending memory proposal so it is never persisted as an active memory.",
+        "operationId": "reject_memory_proposal_api_v1_memories__id__reject_post",
+        "parameters": [
+          {
+            "description": "Memory proposal identifier to reject.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "Memory proposal identifier to reject.",
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+              "title": "Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/RejectMemoryProposalRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Optional version check and rejection reason.",
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryProposalResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Missing, malformed, or invalid Bearer authentication credentials."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Authenticated user does not own the target resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Requested resource does not exist."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Optimistic concurrency version conflict or invalid lifecycle transition."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Request schema, domain invariant, or model output validation failure."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Coaching model execution or invocation budget failure."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Persistence backend unavailable."
+          },
+          "504": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Coaching model request deadline exceeded."
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Reject a staged memory proposal",
         "tags": [
           "memories"
         ]

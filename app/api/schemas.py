@@ -31,6 +31,8 @@ from app.domain.types import (
     MeetingStatus,
     MeetingTone,
     MemoryBodyText,
+    MemoryEpistemicStatus,
+    MemoryLifecycleState,
     MemoryScope,
     MemorySourceType,
     MemoryType,
@@ -40,6 +42,7 @@ from app.domain.types import (
     RawSessionNotesText,
     ShortLabelText,
     ShortTagText,
+    SourceExcerptText,
     UtcDatetime,
     VersionNumber,
 )
@@ -484,6 +487,26 @@ class MemoryProposalResponse(_ResponseModel):
     rationale: str = Field(description="Why Brew proposed saving this memory.")
     source: MemorySourceResponse = Field(description="Provenance reference.")
     status: ProposalStatus = Field(description="Current review status.")
+    lifecycle_state: MemoryLifecycleState = Field(
+        description=(
+            "Canonical 5-state memory lifecycle status ('proposed', 'approved', 'rejected')."
+        ),
+    )
+    epistemic_status: MemoryEpistemicStatus = Field(
+        description="Epistemic framing indicating session-attributed context, not world fact.",
+    )
+    supersedes_memory_id: str | None = Field(
+        default=None,
+        description="Existing active memory ID this proposal updates or contradicts, if any.",
+    )
+    conflict_summary: str | None = Field(
+        default=None,
+        description="Human-readable explanation when resolving an update or contradiction.",
+    )
+    rejection_reason: str | None = Field(
+        default=None,
+        description="Optional user-supplied reason recorded when rejected.",
+    )
     approved_memory_id: str | None = Field(
         default=None,
         description="ID of the approved Memory record once approved.",
@@ -507,6 +530,11 @@ class MemoryProposalResponse(_ResponseModel):
             rationale=proposal.rationale,
             source=MemorySourceResponse.from_domain(proposal.source),
             status=proposal.status,
+            lifecycle_state=proposal.lifecycle_state,
+            epistemic_status=proposal.epistemic_status,
+            supersedes_memory_id=proposal.supersedes_memory_id,
+            conflict_summary=proposal.conflict_summary,
+            rejection_reason=proposal.rejection_reason,
             approved_memory_id=proposal.approved_memory_id,
             created_at=proposal.created_at,
             updated_at=proposal.updated_at,
@@ -516,12 +544,22 @@ class MemoryProposalResponse(_ResponseModel):
 
 
 class MemoryProposalBatchResponse(_ResponseModel):
-    """Response payload for ``POST /api/v1/memories/propose``."""
+    """Response payload for proposing or listing staged memory proposals."""
 
     proposals: list[MemoryProposalResponse] = Field(
-        description="Candidate memory proposals awaiting explicit user approval.",
+        description="Candidate memory proposals staged for or reviewed by the user.",
     )
-    total: int = Field(ge=0, description="Number of proposals generated.")
+    total: int = Field(ge=0, description="Number of proposals returned.")
+    skipped_duplicates: int = Field(
+        default=0,
+        ge=0,
+        description="Candidate items skipped because an equivalent active memory already exists.",
+    )
+    filtered_sensitive_count: int = Field(
+        default=0,
+        ge=0,
+        description="Note clauses rejected as sensitive or speculative third-party assumptions.",
+    )
 
 
 class ApproveMemoryProposalRequest(_StrictRequestModel):
@@ -538,6 +576,23 @@ class ApproveMemoryProposalRequest(_StrictRequestModel):
     memory_type: MemoryType | None = Field(
         default=None,
         description="Optional overridden memory classification.",
+    )
+    supersedes_memory_id: EntityId | None = Field(
+        default=None,
+        description="Optional existing active memory ID explicitly superseded by this approval.",
+    )
+
+
+class RejectMemoryProposalRequest(_StrictRequestModel):
+    """Request payload for ``POST /api/v1/memories/{id}/reject``."""
+
+    expected_version: VersionNumber = Field(
+        default=1,
+        description="Expected version of the pending memory proposal.",
+    )
+    reason: SourceExcerptText | None = Field(
+        default=None,
+        description="Optional user reason for rejecting the candidate memory.",
     )
 
 
@@ -582,6 +637,24 @@ class MemoryResponse(_ResponseModel):
     text: str = Field(description="Approved memory text.")
     source: MemorySourceResponse = Field(description="Provenance / source reference.")
     consent_status: ConsentStatus = Field(description="User consent status.")
+    lifecycle_state: MemoryLifecycleState = Field(
+        description="Canonical lifecycle state ('approved' or 'superseded').",
+    )
+    epistemic_status: MemoryEpistemicStatus = Field(
+        description="Epistemic framing indicating session-attributed context, not world fact.",
+    )
+    supersedes_memory_id: str | None = Field(
+        default=None,
+        description="Prior memory ID superseded by this memory, if any.",
+    )
+    superseded_by_memory_id: str | None = Field(
+        default=None,
+        description="Newer memory ID that superseded this memory, if superseded.",
+    )
+    superseded_at: datetime | None = Field(
+        default=None,
+        description="UTC timestamp when this memory was superseded.",
+    )
     created_at: datetime = Field(description="UTC creation timestamp.")
     updated_at: datetime = Field(description="UTC last-updated timestamp.")
     version: int = Field(description="Optimistic concurrency version.")
@@ -597,6 +670,11 @@ class MemoryResponse(_ResponseModel):
             text=memory.text,
             source=MemorySourceResponse.from_domain(memory.source),
             consent_status=memory.consent_status,
+            lifecycle_state=memory.lifecycle_state,
+            epistemic_status=memory.epistemic_status,
+            supersedes_memory_id=memory.supersedes_memory_id,
+            superseded_by_memory_id=memory.superseded_by_memory_id,
+            superseded_at=memory.superseded_at,
             created_at=memory.created_at,
             updated_at=memory.updated_at,
             version=memory.version,

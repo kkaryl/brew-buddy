@@ -13,6 +13,7 @@ from app.application.brief_workflow import (
 )
 from app.application.memory_persistence_service import (
     MemoryPersistenceService,
+    MemoryProposalBatchResult,
     translate_pydantic_error,
 )
 from app.application.memory_retrieval_service import MemoryRetrievalService
@@ -45,6 +46,7 @@ from app.domain.types import (
     MemoryScope,
     MemorySourceType,
     MemoryType,
+    ProposalStatus,
 )
 
 logger = logging.getLogger(__name__)
@@ -360,6 +362,25 @@ class MemoryService:
     def persistence(self) -> MemoryPersistenceService:
         return self._persistence
 
+    async def propose_memories_batch(
+        self,
+        *,
+        principal: AuthenticatedPrincipal,
+        notes: str,
+        source_type: MemorySourceType = MemorySourceType.MEETING_NOTES,
+        meeting_id: str | None = None,
+        contact_id: str | None = None,
+        brief_id: str | None = None,
+    ) -> MemoryProposalBatchResult:
+        return await self._persistence.propose_memories_batch(
+            principal=principal,
+            notes=notes,
+            source_type=source_type,
+            meeting_id=meeting_id,
+            contact_id=contact_id,
+            brief_id=brief_id,
+        )
+
     async def propose_memories(
         self,
         *,
@@ -379,6 +400,19 @@ class MemoryService:
             brief_id=brief_id,
         )
 
+    async def list_proposals(
+        self,
+        *,
+        principal: AuthenticatedPrincipal,
+        status: ProposalStatus | None = None,
+        contact_id: str | None = None,
+    ) -> list[MemoryProposal]:
+        return await self._persistence.list_proposals(
+            principal=principal,
+            status=status,
+            contact_id=contact_id,
+        )
+
     async def approve_proposal(
         self,
         *,
@@ -387,6 +421,7 @@ class MemoryService:
         expected_version: int,
         edited_text: str | None = None,
         memory_type: MemoryType | None = None,
+        supersedes_memory_id: str | None = None,
     ) -> Memory:
         return await self._persistence.approve_proposal(
             principal=principal,
@@ -394,6 +429,22 @@ class MemoryService:
             expected_version=expected_version,
             edited_text=edited_text,
             memory_type=memory_type,
+            supersedes_memory_id=supersedes_memory_id,
+        )
+
+    async def reject_proposal(
+        self,
+        *,
+        principal: AuthenticatedPrincipal,
+        proposal_id: str,
+        expected_version: int = 1,
+        reason: str | None = None,
+    ) -> MemoryProposal:
+        return await self._persistence.reject_proposal(
+            principal=principal,
+            proposal_id=proposal_id,
+            expected_version=expected_version,
+            reason=reason,
         )
 
     async def list_memories(
@@ -404,6 +455,7 @@ class MemoryService:
         contact_id: str | None = None,
         memory_type: MemoryType | None = None,
         include_revoked: bool = False,
+        include_superseded: bool = False,
     ) -> list[Memory]:
         return await self._retrieval.list_memories(
             principal=principal,
@@ -411,6 +463,7 @@ class MemoryService:
             contact_id=contact_id,
             memory_type=memory_type,
             include_revoked=include_revoked,
+            include_superseded=include_superseded,
         )
 
     async def update_memory(

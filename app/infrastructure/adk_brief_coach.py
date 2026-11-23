@@ -102,11 +102,26 @@ def _format_baseline_context_payload(context: BriefPreparationContext) -> dict[s
             else None
         ),
         "approved_preference_memories": [
-            {"memory_id": item.memory_id, "type": item.memory_type.value, "text": item.text}
+            {
+                "memory_id": item.memory_id,
+                "type": item.memory_type.value,
+                "epistemic_status": item.epistemic_status.value,
+                "source_type": item.source.source_type.value,
+                "recorded_at_utc": item.source.recorded_at.isoformat(),
+                "text": item.text,
+            }
             for item in context.preference_memories
         ],
         "approved_contact_memories": [
-            {"memory_id": item.memory_id, "type": item.memory_type.value, "text": item.text}
+            {
+                "memory_id": item.memory_id,
+                "type": item.memory_type.value,
+                "epistemic_status": item.epistemic_status.value,
+                "source_type": item.source.source_type.value,
+                "meeting_id": item.source.meeting_id,
+                "recorded_at_utc": item.source.recorded_at.isoformat(),
+                "text": item.text,
+            }
             for item in context.contact_memories
         ],
         "recent_meetings": [

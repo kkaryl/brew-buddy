@@ -25,6 +25,14 @@ from app.domain.errors import (
     VersionConflictError,
 )
 from app.domain.health import ClockPort, HealthStatus, ServiceHealthReport
+from app.domain.memory_lifecycle import (
+    MemoryRelationKind,
+    MemoryRelationResolution,
+    classify_candidate_against_existing,
+    default_epistemic_status_for_scope,
+    detect_sensitive_or_third_party_assumption,
+    ensure_attributed_epistemic_text,
+)
 from app.domain.models import (
     AuthenticatedPrincipal,
     BriefPreparationContext,
@@ -69,6 +77,8 @@ from app.domain.types import (
     MeetingPurpose,
     MeetingStatus,
     MeetingTone,
+    MemoryEpistemicStatus,
+    MemoryLifecycleState,
     MemoryScope,
     MemorySourceType,
     MemoryType,
@@ -115,9 +125,13 @@ __all__ = [
     "MeetingStatus",
     "MeetingTone",
     "Memory",
+    "MemoryEpistemicStatus",
+    "MemoryLifecycleState",
     "MemoryProposal",
     "MemoryProposalAgentPort",
     "MemoryProposalRepository",
+    "MemoryRelationKind",
+    "MemoryRelationResolution",
     "MemoryRepository",
     "MemoryScope",
     "MemorySource",
@@ -142,6 +156,10 @@ __all__ = [
     "VersionNumber",
     "WorkflowIdempotencyRecord",
     "WorkflowIdempotencyRepository",
+    "classify_candidate_against_existing",
+    "default_epistemic_status_for_scope",
+    "detect_sensitive_or_third_party_assumption",
+    "ensure_attributed_epistemic_text",
     "evaluate_brief_quality",
     "parse_refinement_overrides",
 ]

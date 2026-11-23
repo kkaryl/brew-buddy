@@ -30,6 +30,7 @@ from app.api.schemas import (
     MemoryResponse,
     PreparationBriefResponse,
     ProposeMemoriesRequest,
+    RejectMemoryProposalRequest,
     ReviseBriefRequest,
     UpdateMemoryRequest,
 )
@@ -40,7 +41,7 @@ from app.application.services import (
     MemoryService,
 )
 from app.domain.models import AuthenticatedPrincipal
-from app.domain.types import EntityId, MemoryScope, MemoryType, VersionNumber
+from app.domain.types import EntityId, MemoryScope, MemoryType, ProposalStatus, VersionNumber
 
 _STANDARD_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
     401: {
@@ -279,7 +280,7 @@ async def propose_memories(
     memory_service: Annotated[MemoryService, Depends(get_memory_service)],
 ) -> MemoryProposalBatchResponse:
     """Extract candidate memories and stage them separately from approved memories."""
-    proposals = await memory_service.propose_memories(
+    batch = await memory_service.propose_memories_batch(
         principal=principal,
         notes=payload.notes,
         source_type=payload.source_type,
@@ -287,7 +288,44 @@ async def propose_memories(
         contact_id=payload.contact_id,
         brief_id=payload.brief_id,
     )
-    items = [MemoryProposalResponse.from_domain(proposal) for proposal in proposals]
+    items = [MemoryProposalResponse.from_domain(proposal) for proposal in batch.proposals]
+    return MemoryProposalBatchResponse(
+        proposals=items,
+        total=len(items),
+        skipped_duplicates=batch.skipped_duplicates,
+        filtered_sensitive_count=batch.filtered_sensitive_count,
+    )
+
+
+@router.get(
+    "/memories/proposals",
+    response_model=MemoryProposalBatchResponse,
+    status_code=status.HTTP_200_OK,
+    tags=["memories"],
+    summary="List memory proposals for human review",
+)
+async def list_memory_proposals(
+    principal: Annotated[AuthenticatedPrincipal, Depends(get_current_principal)],
+    memory_service: Annotated[MemoryService, Depends(get_memory_service)],
+    proposal_status: Annotated[
+        ProposalStatus | None,
+        Query(
+            alias="status",
+            description="Optional review status filter ('pending', 'approved', or 'rejected').",
+        ),
+    ] = None,
+    contact_id: Annotated[
+        EntityId | None,
+        Query(description="Optional contact identifier filter."),
+    ] = None,
+) -> MemoryProposalBatchResponse:
+    """Return candidate memory proposals staged for human review."""
+    proposals = await memory_service.list_proposals(
+        principal=principal,
+        status=proposal_status,
+        contact_id=contact_id,
+    )
+    items = [MemoryProposalResponse.from_domain(item) for item in proposals]
     return MemoryProposalBatchResponse(proposals=items, total=len(items))
 
 
@@ -304,7 +342,7 @@ async def approve_memory_proposal(
     memory_service: Annotated[MemoryService, Depends(get_memory_service)],
     payload: Annotated[
         ApproveMemoryProposalRequest | None,
-        Body(description="Optional version check and user-edited text."),
+        Body(description="Optional version check, user-edited text, and supersede target."),
     ] = None,
 ) -> MemoryResponse:
     """Promote a pending memory proposal into durable approved memory storage."""
@@ -315,8 +353,36 @@ async def approve_memory_proposal(
         expected_version=resolved_payload.expected_version,
         edited_text=resolved_payload.edited_text,
         memory_type=resolved_payload.memory_type,
+        supersedes_memory_id=resolved_payload.supersedes_memory_id,
     )
     return MemoryResponse.from_domain(approved)
+
+
+@router.post(
+    "/memories/{id}/reject",
+    response_model=MemoryProposalResponse,
+    status_code=status.HTTP_200_OK,
+    tags=["memories"],
+    summary="Reject a staged memory proposal",
+)
+async def reject_memory_proposal(
+    id: Annotated[EntityId, Path(description="Memory proposal identifier to reject.")],
+    principal: Annotated[AuthenticatedPrincipal, Depends(get_current_principal)],
+    memory_service: Annotated[MemoryService, Depends(get_memory_service)],
+    payload: Annotated[
+        RejectMemoryProposalRequest | None,
+        Body(description="Optional version check and rejection reason."),
+    ] = None,
+) -> MemoryProposalResponse:
+    """Reject a pending memory proposal so it is never persisted as an active memory."""
+    resolved_payload = payload or RejectMemoryProposalRequest()
+    rejected = await memory_service.reject_proposal(
+        principal=principal,
+        proposal_id=id,
+        expected_version=resolved_payload.expected_version,
+        reason=resolved_payload.reason,
+    )
+    return MemoryProposalResponse.from_domain(rejected)
 
 
 @router.get(
@@ -345,6 +411,10 @@ async def list_memories(
         bool,
         Query(description="Include memories whose consent_status was revoked."),
     ] = False,
+    include_superseded: Annotated[
+        bool,
+        Query(description="Include historical memories superseded by newer updates."),
+    ] = False,
 ) -> MemoryListResponse:
     """List approved memories owned by the authenticated caller."""
     memories = await memory_service.list_memories(
@@ -353,6 +423,7 @@ async def list_memories(
         contact_id=contact_id,
         memory_type=memory_type,
         include_revoked=include_revoked,
+        include_superseded=include_superseded,
     )
     items = [MemoryResponse.from_domain(memory) for memory in memories]
     return MemoryListResponse(items=items, total=len(items))

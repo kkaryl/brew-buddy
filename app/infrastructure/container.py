@@ -13,6 +13,7 @@ from app.domain.ports import (
     MemoryProposalAgentPort,
 )
 from app.infrastructure.adk_brief_coach import AdkConversationCoachBriefAdapter
+from app.infrastructure.adk_memory_extractor import AdkMemoryProposalAdapter
 from app.infrastructure.clock import SystemUtcClock
 from app.infrastructure.fakes import (
     FakeAuthenticator,
@@ -43,6 +44,14 @@ def _should_use_adk_brief_coach(settings: AppSettings) -> bool:
     return settings.environment != "test"
 
 
+def _should_use_adk_memory_extractor(settings: AppSettings) -> bool:
+    if settings.memory_extractor_backend == "adk":
+        return True
+    if settings.memory_extractor_backend == "fake":
+        return False
+    return settings.environment != "test"
+
+
 def build_firestore_service_container(
     settings: AppSettings,
     *,
@@ -61,7 +70,13 @@ def build_firestore_service_container(
     timeout = settings.firestore_timeout_seconds
     resolved_clock = clock or SystemUtcClock()
     resolved_ids = id_generator or UuidIdGenerator()
-    resolved_proposal_agent = proposal_agent or FakeMemoryProposalAgent()
+    resolved_proposal_agent: MemoryProposalAgentPort
+    if proposal_agent is not None:
+        resolved_proposal_agent = proposal_agent
+    elif _should_use_adk_memory_extractor(settings):
+        resolved_proposal_agent = AdkMemoryProposalAdapter(settings=settings)
+    else:
+        resolved_proposal_agent = FakeMemoryProposalAgent()
 
     preferences_repo = FirestoreUserPreferencesRepository(
         resolved_client,
@@ -139,6 +154,8 @@ def build_service_container(
         return build_firestore_service_container(settings, client=firestore_client)
 
     container = FakeServiceContainer()
+    if _should_use_adk_memory_extractor(settings):
+        container.proposal_agent = AdkMemoryProposalAdapter(settings=settings)
     if _should_use_adk_brief_coach(settings):
         container.brief_agent = AdkConversationCoachBriefAdapter(
             tool_dependencies=CoachingToolDependencies(

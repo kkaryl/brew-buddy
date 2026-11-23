@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from app.infrastructure.adk_brief_coach import AdkConversationCoachBriefAdapter
+from app.infrastructure.adk_memory_extractor import AdkMemoryProposalAdapter
 from app.infrastructure.clock import SystemUtcClock
 from app.infrastructure.container import (
     build_firestore_service_container,
@@ -45,6 +46,7 @@ from app.infrastructure.session_service_factory import (
 __all__ = [
     "DEFAULT_FAKE_TOKENS",
     "AdkConversationCoachBriefAdapter",
+    "AdkMemoryProposalAdapter",
     "FakeAuthenticator",
     "FakeBriefCoachAgent",
     "FakeMemoryProposalAgent",

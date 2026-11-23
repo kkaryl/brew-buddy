@@ -1312,7 +1312,7 @@ def test_http_brief_workflow_endpoints_idempotency_revisions_and_error_classific
                 )
             ),
             # 3. Timeout failure -> HTTP 504
-            DelayedTimeoutStep(sleep_seconds=0.25),
+            DelayedTimeoutStep(sleep_seconds=0.45),
             # 4. Unrecoverable invalid output -> HTTP 422 MODEL_OUTPUT_VALIDATION_ERROR
             _json_brief_response("invalid json payload"),
             _json_brief_response("still invalid json payload"),
@@ -1333,7 +1333,7 @@ def test_http_brief_workflow_endpoints_idempotency_revisions_and_error_classific
     settings = AppSettings(
         environment="test",
         otel_to_cloud=False,
-        http_timeout_seconds=0.05,
+        http_timeout_seconds=0.25,
         web_dist_dir=tmp_path / "no-dist",
     )
     adk_adapter = AdkConversationCoachBriefAdapter(
@@ -1350,7 +1350,7 @@ def test_http_brief_workflow_endpoints_idempotency_revisions_and_error_classific
         ),
         settings=settings,
         model_override=mock_llm,
-        model_timeout_seconds=0.05,
+        model_timeout_seconds=0.25,
     )
     container = ServiceContainer(
         clock=clock,
