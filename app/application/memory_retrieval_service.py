@@ -127,6 +127,26 @@ class MemoryRetrievalService:
         self._memory_repo = memory_repo
         self._default_budget = default_budget or ContextBudget()
 
+    @property
+    def preferences_repo(self) -> UserPreferencesRepository:
+        return self._preferences_repo
+
+    @property
+    def contact_repo(self) -> ContactRepository:
+        return self._contact_repo
+
+    @property
+    def meeting_repo(self) -> MeetingRepository:
+        return self._meeting_repo
+
+    @property
+    def memory_repo(self) -> MemoryRepository:
+        return self._memory_repo
+
+    @property
+    def default_budget(self) -> ContextBudget:
+        return self._default_budget
+
     async def build_brief_context(
         self,
         *,

@@ -1140,19 +1140,24 @@ async def suggest_memory_candidates(
 
 def build_coaching_tools(
     dependencies: CoachingToolDependencies | None = None,
+    *,
+    include_memory_staging: bool = True,
 ) -> list[FunctionTool]:
     """Construct ADK ``FunctionTool`` instances for ``conversation_coach``.
 
     When ``dependencies`` is supplied explicitly, each returned tool is bound directly
     to that isolated ``CoachingToolDependencies`` bundle without mutating global state.
+    Set ``include_memory_staging=False`` for read-only pre-meeting brief preparation.
     """
     if dependencies is None:
-        return [
+        tools = [
             FunctionTool(get_user_preferences),
             FunctionTool(get_contact_context),
             FunctionTool(get_meeting_history),
-            FunctionTool(suggest_memory_candidates),
         ]
+        if include_memory_staging:
+            tools.append(FunctionTool(suggest_memory_candidates))
+        return tools
 
     bound_deps = dependencies
 
@@ -1226,9 +1231,11 @@ def build_coaching_tools(
     _bound_suggest_memory_candidates.__name__ = "suggest_memory_candidates"
     _bound_suggest_memory_candidates.__doc__ = suggest_memory_candidates.__doc__
 
-    return [
+    bound_tools = [
         FunctionTool(_bound_get_user_preferences),
         FunctionTool(_bound_get_contact_context),
         FunctionTool(_bound_get_meeting_history),
-        FunctionTool(_bound_suggest_memory_candidates),
     ]
+    if include_memory_staging:
+        bound_tools.append(FunctionTool(_bound_suggest_memory_candidates))
+    return bound_tools

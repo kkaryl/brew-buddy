@@ -16,6 +16,7 @@ EnvironmentName = Literal["local", "development", "staging", "production", "test
 LogLevelName = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 PersistenceBackendName = Literal["in_memory", "firestore"]
 SessionBackendName = Literal["auto", "in_memory", "firestore", "vertex_ai"]
+BriefCoachBackendName = Literal["auto", "adk", "fake"]
 
 _RESERVED_DOMAIN_COLLECTIONS = frozenset(
     {
@@ -24,8 +25,10 @@ _RESERVED_DOMAIN_COLLECTIONS = frozenset(
         "contacts",
         "meetings",
         "briefs",
+        "revisions",
         "memories",
         "memoryProposals",
+        "workflowIdempotency",
     }
 )
 
@@ -84,6 +87,22 @@ class AppSettings(BaseSettings):
         ge=1,
         le=5,
         validation_alias="HTTP_RETRY_ATTEMPTS",
+    )
+    brief_coach_backend: BriefCoachBackendName = Field(
+        default="auto",
+        validation_alias="BREW_BRIEF_COACH_BACKEND",
+    )
+    workflow_max_model_invocations: int = Field(
+        default=6,
+        ge=1,
+        le=12,
+        validation_alias="BREW_WORKFLOW_MAX_MODEL_INVOCATIONS",
+    )
+    workflow_max_tool_retries: int = Field(
+        default=1,
+        ge=0,
+        le=3,
+        validation_alias="BREW_WORKFLOW_MAX_TOOL_RETRIES",
     )
 
     persistence_backend: PersistenceBackendName = Field(

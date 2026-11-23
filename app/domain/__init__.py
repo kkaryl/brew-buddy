@@ -2,6 +2,14 @@
 
 from __future__ import annotations
 
+from app.domain.brief_quality import (
+    BriefQualityPolicy,
+    BriefQualityReport,
+    BriefQualityViolation,
+    RefinementResolution,
+    evaluate_brief_quality,
+    parse_refinement_overrides,
+)
 from app.domain.errors import (
     AuthenticationError,
     AuthorizationError,
@@ -10,12 +18,18 @@ from app.domain.errors import (
     DomainValidationError,
     EntityNotFoundError,
     InvalidConfigurationError,
+    ModelExecutionError,
+    ModelOutputValidationError,
+    ModelTimeoutError,
+    PersistenceOperationError,
     VersionConflictError,
 )
 from app.domain.health import ClockPort, HealthStatus, ServiceHealthReport
 from app.domain.models import (
     AuthenticatedPrincipal,
     BriefPreparationContext,
+    BriefWorkflowDiagnostics,
+    BriefWorkflowResult,
     Contact,
     ContextBudget,
     ConversationQuestion,
@@ -28,9 +42,11 @@ from app.domain.models import (
     RecentMeetingSummary,
     TimeBoxedAgendaItem,
     UserPreferences,
+    WorkflowIdempotencyRecord,
 )
 from app.domain.ports import (
     AuthenticatorPort,
+    BriefAttemptMetrics,
     BriefCoachAgentPort,
     BriefRepository,
     ContactRepository,
@@ -42,8 +58,11 @@ from app.domain.ports import (
     MemoryRepository,
     ProposedMemoryCandidate,
     UserPreferencesRepository,
+    WorkflowIdempotencyRepository,
 )
 from app.domain.types import (
+    BriefWorkflowOperation,
+    BriefWorkflowTerminalState,
     ConsentStatus,
     EntityId,
     MeetingDurationMinutes,
@@ -64,9 +83,17 @@ __all__ = [
     "AuthenticatorPort",
     "AuthorizationError",
     "BrewDomainError",
+    "BriefAttemptMetrics",
     "BriefCoachAgentPort",
     "BriefPreparationContext",
+    "BriefQualityPolicy",
+    "BriefQualityReport",
+    "BriefQualityViolation",
     "BriefRepository",
+    "BriefWorkflowDiagnostics",
+    "BriefWorkflowOperation",
+    "BriefWorkflowResult",
+    "BriefWorkflowTerminalState",
     "ClockPort",
     "ConflictError",
     "ConsentStatus",
@@ -96,11 +123,16 @@ __all__ = [
     "MemorySource",
     "MemorySourceType",
     "MemoryType",
+    "ModelExecutionError",
+    "ModelOutputValidationError",
+    "ModelTimeoutError",
+    "PersistenceOperationError",
     "PreparationBrief",
     "ProposalStatus",
     "ProposedMemoryCandidate",
     "ProvenanceMemoryItem",
     "RecentMeetingSummary",
+    "RefinementResolution",
     "ServiceHealthReport",
     "TimeBoxedAgendaItem",
     "UserPreferences",
@@ -108,4 +140,8 @@ __all__ = [
     "UtcDatetime",
     "VersionConflictError",
     "VersionNumber",
+    "WorkflowIdempotencyRecord",
+    "WorkflowIdempotencyRepository",
+    "evaluate_brief_quality",
+    "parse_refinement_overrides",
 ]

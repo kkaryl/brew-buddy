@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from app.infrastructure.adk_brief_coach import AdkConversationCoachBriefAdapter
 from app.infrastructure.clock import SystemUtcClock
 from app.infrastructure.container import (
     build_firestore_service_container,
@@ -19,6 +20,7 @@ from app.infrastructure.fakes import (
     InMemoryMemoryProposalRepository,
     InMemoryMemoryRepository,
     InMemoryUserPreferencesRepository,
+    InMemoryWorkflowIdempotencyRepository,
     SequentialIdGenerator,
     ServiceContainer,
     UuidIdGenerator,
@@ -31,6 +33,7 @@ from app.infrastructure.firestore_repositories import (
     FirestoreMemoryProposalRepository,
     FirestoreMemoryRepository,
     FirestoreUserPreferencesRepository,
+    FirestoreWorkflowIdempotencyRepository,
 )
 from app.infrastructure.session_service_factory import (
     SessionServiceFactory,
@@ -41,6 +44,7 @@ from app.infrastructure.session_service_factory import (
 
 __all__ = [
     "DEFAULT_FAKE_TOKENS",
+    "AdkConversationCoachBriefAdapter",
     "FakeAuthenticator",
     "FakeBriefCoachAgent",
     "FakeMemoryProposalAgent",
@@ -51,12 +55,14 @@ __all__ = [
     "FirestoreMemoryProposalRepository",
     "FirestoreMemoryRepository",
     "FirestoreUserPreferencesRepository",
+    "FirestoreWorkflowIdempotencyRepository",
     "InMemoryBriefRepository",
     "InMemoryContactRepository",
     "InMemoryMeetingRepository",
     "InMemoryMemoryProposalRepository",
     "InMemoryMemoryRepository",
     "InMemoryUserPreferencesRepository",
+    "InMemoryWorkflowIdempotencyRepository",
     "SequentialIdGenerator",
     "ServiceContainer",
     "SessionServiceFactory",

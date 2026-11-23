@@ -199,3 +199,26 @@ class MemorySourceType(StrEnum):
     MEETING_NOTES = "meeting_notes"
     BRIEF_REFINEMENT = "brief_refinement"
     DIRECT_USER_INPUT = "direct_user_input"
+
+
+class BriefWorkflowTerminalState(StrEnum):
+    """Explicit terminal outcomes for the meeting preparation and refinement workflow."""
+
+    COMPLETED = "completed"
+    COMPLETED_REPAIRED = "completed_repaired"
+    COMPLETED_IDEMPOTENT_REPLAY = "completed_idempotent_replay"
+    FAILED_INPUT_VALIDATION = "failed_input_validation"
+    FAILED_NOT_FOUND = "failed_not_found"
+    FAILED_FORBIDDEN = "failed_forbidden"
+    FAILED_CONFLICT = "failed_conflict"
+    FAILED_OUTPUT_VALIDATION = "failed_output_validation"
+    FAILED_MODEL_TIMEOUT = "failed_model_timeout"
+    FAILED_MODEL_ERROR = "failed_model_error"
+    FAILED_PERSISTENCE = "failed_persistence"
+
+
+class BriefWorkflowOperation(StrEnum):
+    """Supported brief workflow execution modes."""
+
+    GENERATE = "generate"
+    REVISE = "revise"

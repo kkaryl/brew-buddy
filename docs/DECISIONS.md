@@ -163,3 +163,19 @@ This document records significant architectural and technical decisions for **Br
   - *Positive:* Defense-in-depth isolation against cross-user lookups, caller-ID spoofing, silent memory promotion, and stored prompt injection inside meeting notes—all deterministically verified in `tests/unit/test_conversation_coach.py`.
   - *Trade-off:* Every new coaching tool must define explicit Pydantic input/output contracts, narrow port facades, and `TypedDict` return annotations compatible with Vertex AI JSON schemas.
 
+---
+
+## ADR-013: Bounded 9-Step Meeting Preparation Workflow, Single Corrective Regeneration, and Immutable Brief Revisions
+
+- **Date:** 2026-11-23
+- **Status:** Accepted
+- **Context:** End-to-end brief synthesis and conversational refinement must ground outputs in user preferences and approved memories, enforce strict quality invariants (2-3 openers, 5-8 non-redundant questions, realistic time-boxed agenda, goal-linked rationales, zero unsupported biographical claims), support natural-language refinement without losing prior revisions, and guard against unbounded critique loops, runaway tool retries, model timeouts, and duplicate submissions.
+- **Decision:**
+  1. Implement `MeetingPreparationWorkflow` (`app/application/brief_workflow.py`) executing a deterministic 9-step pipeline over `AdkConversationCoachBriefAdapter` (`app/infrastructure/adk_brief_coach.py`), which runs Brew's ADK `conversation_coach` agent with read-only coaching tools (`get_user_preferences`, `get_contact_context`, `get_meeting_history`), `ConversationCoachGuardrailPlugin`, and `WorkflowSafeguardPlugin` (`app/plugins/workflow_safeguards.py`).
+  2. Validate candidate briefs through strict Pydantic schemas (`GeneratedBriefContent`) plus pure domain checks (`evaluate_brief_quality` in `app/domain/brief_quality.py`), permitting **at most one** corrective regeneration (`max_corrective_regenerations = 1`) and classifying `ModelTimeoutError` (HTTP 504), `ModelExecutionError` (HTTP 502), and `ModelOutputValidationError` (HTTP 422) into distinct domain errors and explicit `BriefWorkflowTerminalState` values.
+  3. Propagate unified `request_id` and `trace_id` via `WorkflowCorrelation` (`app/application/correlation.py`) across HTTP handlers, workflow logs, OpenTelemetry spans, and ADK plugins; deduplicate repeated submissions via `WorkflowIdempotencyRepository`; and archive immutable revision snapshots (`v1`, `v2`, ...) on every `BriefRepository.save` transaction.
+- **Consequences:**
+  - *Positive:* Predictable upper bounds on LLM calls and tool retries per request, zero silent revision overwrites, graceful degradation when optional enrichment tools fail, and deterministic table-driven testability with `DeterministicMockCoachLlm` (`tests/unit/test_meeting_preparation_workflow.py`).
+  - *Trade-off:* Unrecoverable model schema/quality failures fail closed after at most two synthesis attempts rather than retrying indefinitely.
+
+

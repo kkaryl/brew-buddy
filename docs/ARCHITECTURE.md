@@ -64,7 +64,7 @@ flowchart TB
 | `app.domain` | Python stdlib, `pydantic` (pure value/schema types only) | `fastapi`, `google.adk`, `google.cloud.*`, `app.api`, `app.agent`, `app.tools`, `app.plugins`, `app.infrastructure` |
 | `app.application` | `app.domain` | `fastapi`, `google.adk`, `google.cloud.*`, `app.api`, `app.agent`, `app.tools`, `app.plugins`, `app.infrastructure` |
 | `app.tools` / `app.plugins` / `app.agent` | `app.domain`, `app.application`, `app.config`, `google.adk`, `google.genai`, `opentelemetry.*`, `pydantic` | `fastapi`, direct `google.cloud.*` client calls (tools invoke capability-restricted ports) |
-| `app.infrastructure` | `app.domain`, `app.application`, `google.cloud.*`, `opentelemetry.*` | `fastapi` |
+| `app.infrastructure` | `app.domain`, `app.application`, `app.agent`, `app.tools`, `app.plugins`, `app.config`, `google.adk`, `google.genai`, `google.cloud.*`, `opentelemetry.*` | `fastapi` (`app/infrastructure/adk_brief_coach.py` additionally forbids `google.cloud.*`) |
 | `app.api` / `app.fast_api_app` | `app.domain`, `app.application`, `app.agent`, `app.tools`, `app.plugins`, `app.infrastructure`, `app.config`, `fastapi` | None (composition root) |
 
 ---
@@ -196,7 +196,8 @@ All domain Firestore documents are strictly partitioned per authenticated user (
 - **`users/{uid}/preferences/default`**: User coaching defaults (`default_tone`, `default_duration_minutes`, `preferred_question_count`, `communication_style_notes`, `focus_areas`, `version`).
 - **`users/{uid}/contacts/{contactId}`**: Counterpart metadata (`name`, `title`, `role`, `organization`, `context_notes`, `version`).
 - **`users/{uid}/meetings/{meetingId}`**: Meeting configuration (`contact_id`, `purpose`, `tone`, `objective`, `duration_minutes`, `scheduled_at`, `notes`, `status`, `latest_brief_id`, `version`).
-- **`users/{uid}/briefs/{briefId}`**: Versioned `PreparationBrief` entities (`meeting_id`, `contact_id`, `contact_context`, `meeting_objective`, `conversation_openers`, `time_boxed_agenda`, `suggested_questions`, `suggested_follow_up_topics`, `referenced_memory_ids`, `version`).
+- **`users/{uid}/briefs/{briefId}`**: Versioned `PreparationBrief` entities (`meeting_id`, `contact_id`, `contact_context`, `meeting_objective`, `conversation_openers`, `time_boxed_agenda`, `suggested_questions`, `suggested_follow_up_topics`, `referenced_memory_ids`, `version`), paired with atomic immutable revision snapshots at **`users/{uid}/briefs/{briefId}/revisions/v{version}`** so prior versions are never silently overwritten.
+- **`users/{uid}/workflowIdempotency/{operation}:{key}`**: Per-user workflow deduplication records binding `Idempotency-Key` values and canonical payload fingerprints to persisted brief versions.
 - **`users/{uid}/memories/{memoryId}`**: Consented, durable `Memory` entities (`scope`, `contact_id`, `memory_type`, `text`, `source` provenance, `consent_status`, `version`).
 - **`users/{uid}/memoryProposals/{proposalId}`**: Separate pending/reviewed `MemoryProposal` entities (`status`, `approved_memory_id`, `source`, `version`) isolated from `memories`.
 - **Isolated ADK Session Storage (`adk-session`, `app_states`, `user_states`)**: Managed via the official `google.adk.integrations.firestore.firestore_session_service.FirestoreSessionService` constructed by `SessionServiceFactory` (`app/infrastructure/session_service_factory.py`), strictly separated from `users/{uid}/...` domain collections.

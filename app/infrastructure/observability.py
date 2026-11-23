@@ -10,6 +10,8 @@ from typing import Any
 
 from opentelemetry import trace
 
+from app.application.correlation import get_workflow_correlation
+
 
 class StructuredJsonFormatter(logging.Formatter):
     """Formats Python log records as single-line Cloud Logging compatible JSON."""
@@ -22,12 +24,24 @@ class StructuredJsonFormatter(logging.Formatter):
             "message": record.getMessage(),
         }
 
+        corr = get_workflow_correlation()
+        if corr is not None:
+            payload["request_id"] = corr.request_id
+            payload["trace_id"] = corr.trace_id
+
         span_context = trace.get_current_span().get_span_context()
         if span_context.is_valid:
-            payload["trace_id"] = format(span_context.trace_id, "032x")
+            payload.setdefault("trace_id", format(span_context.trace_id, "032x"))
             payload["span_id"] = format(span_context.span_id, "016x")
 
-        for extra_key in ("event_type", "session_id", "agent_name", "tool_name"):
+        for extra_key in (
+            "event_type",
+            "request_id",
+            "trace_id",
+            "session_id",
+            "agent_name",
+            "tool_name",
+        ):
             value = getattr(record, extra_key, None)
             if value is not None:
                 payload[extra_key] = value

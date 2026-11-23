@@ -7,6 +7,7 @@ from typing import Annotated
 from fastapi import Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
+from app.application.brief_workflow import BriefWorkflowSafeguardConfig
 from app.application.memory_persistence_service import MemoryPersistenceService
 from app.application.memory_retrieval_service import MemoryRetrievalService
 from app.application.services import (
@@ -106,13 +107,20 @@ def get_memory_persistence_service(
 
 
 def get_brief_service(
+    request: Request,
     container: Annotated[ServiceContainer, Depends(get_service_container)],
     memory_retrieval: Annotated[MemoryRetrievalService, Depends(get_memory_retrieval_service)],
     memory_persistence: Annotated[
         MemoryPersistenceService, Depends(get_memory_persistence_service)
     ],
 ) -> BriefService:
-    """Construct ``BriefService`` wired with retrieval and persistence services."""
+    """Construct ``BriefService`` wired with retrieval, persistence, and workflow safeguards."""
+    settings: AppSettings = getattr(request.app.state, "settings", None) or get_settings()
+    safeguards = BriefWorkflowSafeguardConfig(
+        max_model_invocations=settings.workflow_max_model_invocations,
+        max_tool_retries=settings.workflow_max_tool_retries,
+        context_io_timeout_seconds=settings.firestore_timeout_seconds,
+    )
     return BriefService(
         meeting_repo=container.meeting_repo,
         brief_repo=container.brief_repo,
@@ -121,6 +129,8 @@ def get_brief_service(
         brief_agent=container.brief_agent,
         clock=container.clock,
         id_generator=container.id_generator,
+        idempotency_repo=container.idempotency_repo,
+        safeguards=safeguards,
     )
 
 

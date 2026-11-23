@@ -52,13 +52,13 @@ Brew is organized around seven sequential, repeatable user journey stages:
 ### 4.1 In-Scope (MVP & Core Platform)
 - Counterpart intake form and structured validation (name, title, role, optional organization/context).
 - Meeting configuration selector for **purpose**, **duration**, and **tone**.
-- Structured preparation brief generation containing:
-  - Meeting objective & rapport opener
-  - Time-boxed conversation arc tailored to selected duration
-  - Prioritized, non-generic questions matched to purpose and tone
-  - Personalized context callouts (sourced strictly from user input and approved memories—zero hallucinated biographical facts)
+- Structured preparation brief generation (`MeetingPreparationWorkflow`) containing:
+  - Meeting objective & 2 to 3 tailored rapport openers
+  - Realistic time-boxed conversation agenda summing strictly to selected duration
+  - 5 to 8 prioritized, non-redundant open-ended questions with goal-linked coaching rationales (or explicit user-configured question count)
+  - Personalized context callouts (sourced strictly from user input and approved memories—zero hallucinated biographical facts, verified via deterministic quality gates and at most one corrective regeneration)
   - Closing & next-step prompt
-- Multi-turn natural-language refinement chat with context compaction for extended sessions.
+- Multi-turn natural-language refinement (`POST /api/v1/briefs/{id}/revise`) supporting duration adjustments (e.g., *"I only have 15 minutes"*), tone shifts (*"Make the questions less formal"*), topic pivots (*"Focus more on their engineering career"*, *"Give me more customer discovery questions"*), and non-repetitive replacements (*"I have already asked these questions before"*), while preserving unchanged context and archiving every historical brief revision immutably (`GET /api/v1/briefs/{id}/revisions`).
 - Post-meeting note capture with non-blocking asynchronous candidate memory generation.
 - Human-in-the-Loop (HITL) memory review queue (approve, edit before approving, or reject).
 - Cross-session persistence in Firestore and memory-informed preparation in subsequent sessions.

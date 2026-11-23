@@ -18,9 +18,11 @@ from app.domain.models import (
     PreparationBrief,
     TimeBoxedAgendaItem,
     UserPreferences,
+    WorkflowIdempotencyRecord,
     _validate_memory_scope_contact_binding,
 )
 from app.domain.types import (
+    BriefWorkflowOperation,
     ContextSummaryText,
     EntityId,
     FollowUpTopicText,
@@ -130,6 +132,21 @@ class BriefRepository(Protocol):
         expected_version: int | None = None,
     ) -> PreparationBrief:
         """Persist a new or revised brief enforcing optimistic version checks."""
+
+    async def list_revisions(
+        self,
+        owner_user_id: str,
+        brief_id: str,
+    ) -> list[PreparationBrief]:
+        """Return immutable historical revisions of ``brief_id`` ordered by version."""
+
+    async def get_revision(
+        self,
+        owner_user_id: str,
+        brief_id: str,
+        version: int,
+    ) -> PreparationBrief | None:
+        """Fetch a specific immutable historical revision of ``brief_id``."""
 
 
 class MemoryProposalRepository(Protocol):
@@ -290,6 +307,36 @@ class ProposedMemoryCandidate(BaseModel):
         return self
 
 
+class BriefAttemptMetrics(BaseModel):
+    """Per-attempt execution telemetry and safeguard budget shared with coach adapters."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    remaining_model_budget: int = Field(default=6, ge=0, le=50)
+    max_tool_retries: int = Field(default=1, ge=0, le=5)
+    model_invocations: int = Field(default=0, ge=0)
+    tool_invocations: int = Field(default=0, ge=0)
+    degraded_tools: list[str] = Field(default_factory=list)
+
+
+class WorkflowIdempotencyRepository(Protocol):
+    """Async persistence port for workflow request deduplication records."""
+
+    async def get(
+        self,
+        owner_user_id: str,
+        operation: BriefWorkflowOperation,
+        idempotency_key: str,
+    ) -> WorkflowIdempotencyRecord | None:
+        """Fetch an existing deduplication record for ``owner_user_id``."""
+
+    async def save(
+        self,
+        record: WorkflowIdempotencyRecord,
+    ) -> WorkflowIdempotencyRecord:
+        """Persist a workflow deduplication record."""
+
+
 class BriefCoachAgentPort(Protocol):
     """Async agent interface synthesizing and revising structured preparation briefs."""
 
@@ -298,6 +345,8 @@ class BriefCoachAgentPort(Protocol):
         *,
         meeting: Meeting,
         context: BriefPreparationContext,
+        corrective_feedback: Sequence[str] | None = None,
+        attempt_metrics: BriefAttemptMetrics | None = None,
     ) -> GeneratedBriefContent:
         """Synthesize an initial time-boxed brief grounded in ``BriefPreparationContext``."""
 
@@ -310,6 +359,8 @@ class BriefCoachAgentPort(Protocol):
         instructions: str,
         target_duration_minutes: MeetingDurationMinutes,
         target_tone: MeetingTone,
+        corrective_feedback: Sequence[str] | None = None,
+        attempt_metrics: BriefAttemptMetrics | None = None,
     ) -> GeneratedBriefContent:
         """Revise an existing preparation brief grounded in ``BriefPreparationContext``."""
 

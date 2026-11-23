@@ -83,6 +83,152 @@
         "title": "ApproveMemoryProposalRequest",
         "type": "object"
       },
+      "BriefRevisionListResponse": {
+        "additionalProperties": false,
+        "description": "Immutable revision history collection for ``GET /api/v1/briefs/{id}/revisions``.",
+        "properties": {
+          "items": {
+            "description": "Ordered immutable revisions of the preparation brief.",
+            "items": {
+              "$ref": "#/components/schemas/PreparationBriefResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "total": {
+            "description": "Total number of saved revisions.",
+            "minimum": 0.0,
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total"
+        ],
+        "title": "BriefRevisionListResponse",
+        "type": "object"
+      },
+      "BriefWorkflowDiagnosticsResponse": {
+        "additionalProperties": false,
+        "description": "Structured workflow execution metadata returned alongside preparation briefs.",
+        "properties": {
+          "attempt_count": {
+            "description": "Synthesis attempts executed (0 on replay).",
+            "minimum": 0.0,
+            "title": "Attempt Count",
+            "type": "integer"
+          },
+          "degraded_sources": {
+            "description": "Optional context/tool sources that degraded gracefully.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Degraded Sources",
+            "type": "array"
+          },
+          "model_invocations": {
+            "description": "Total LLM calls executed for this request.",
+            "minimum": 0.0,
+            "title": "Model Invocations",
+            "type": "integer"
+          },
+          "operation": {
+            "$ref": "#/components/schemas/BriefWorkflowOperation",
+            "description": "Workflow operation ('generate' or 'revise')."
+          },
+          "previous_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Prior brief version preserved in history before refinement.",
+            "title": "Previous Version"
+          },
+          "quality_passed": {
+            "description": "True when deterministic quality checks passed.",
+            "title": "Quality Passed",
+            "type": "boolean"
+          },
+          "regeneration_count": {
+            "description": "Corrective regenerations triggered (at most 1).",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Regeneration Count",
+            "type": "integer"
+          },
+          "replayed": {
+            "description": "True when served from idempotency deduplication store.",
+            "title": "Replayed",
+            "type": "boolean"
+          },
+          "request_id": {
+            "description": "Request correlation identifier.",
+            "title": "Request Id",
+            "type": "string"
+          },
+          "terminal_state": {
+            "$ref": "#/components/schemas/BriefWorkflowTerminalState",
+            "description": "Explicit workflow terminal state."
+          },
+          "tool_invocations": {
+            "description": "Total ADK tool calls executed.",
+            "minimum": 0.0,
+            "title": "Tool Invocations",
+            "type": "integer"
+          },
+          "trace_id": {
+            "description": "Distributed trace identifier.",
+            "title": "Trace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id",
+          "trace_id",
+          "operation",
+          "terminal_state",
+          "attempt_count",
+          "regeneration_count",
+          "model_invocations",
+          "tool_invocations",
+          "replayed",
+          "quality_passed"
+        ],
+        "title": "BriefWorkflowDiagnosticsResponse",
+        "type": "object"
+      },
+      "BriefWorkflowOperation": {
+        "description": "Supported brief workflow execution modes.",
+        "enum": [
+          "generate",
+          "revise"
+        ],
+        "title": "BriefWorkflowOperation",
+        "type": "string"
+      },
+      "BriefWorkflowTerminalState": {
+        "description": "Explicit terminal outcomes for the meeting preparation and refinement workflow.",
+        "enum": [
+          "completed",
+          "completed_repaired",
+          "completed_idempotent_replay",
+          "failed_input_validation",
+          "failed_not_found",
+          "failed_forbidden",
+          "failed_conflict",
+          "failed_output_validation",
+          "failed_model_timeout",
+          "failed_model_error",
+          "failed_persistence"
+        ],
+        "title": "BriefWorkflowTerminalState",
+        "type": "string"
+      },
       "ConsentStatus": {
         "description": "User consent status for durable memories.",
         "enum": [
@@ -1127,6 +1273,17 @@
             "description": "Optimistic concurrency version.",
             "title": "Version",
             "type": "integer"
+          },
+          "workflow": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BriefWorkflowDiagnosticsResponse"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Workflow execution diagnostics when produced by generate or revise."
           }
         },
         "required": [
@@ -1427,6 +1584,29 @@
       "post": {
         "description": "Create a meeting for an owned contact and synthesize a personalized preparation brief.",
         "operationId": "generate_brief_api_v1_briefs_generate_post",
+        "parameters": [
+          {
+            "description": "Optional caller deduplication key preventing duplicate brief generation.",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional caller deduplication key preventing duplicate brief generation.",
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -1496,7 +1676,37 @@
                 }
               }
             },
-            "description": "Request schema or domain invariant validation failure."
+            "description": "Request schema, domain invariant, or model output validation failure."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Coaching model execution or invocation budget failure."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Persistence backend unavailable."
+          },
+          "504": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Coaching model request deadline exceeded."
           }
         },
         "security": [
@@ -1589,7 +1799,37 @@
                 }
               }
             },
-            "description": "Request schema or domain invariant validation failure."
+            "description": "Request schema, domain invariant, or model output validation failure."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Coaching model execution or invocation budget failure."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Persistence backend unavailable."
+          },
+          "504": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Coaching model request deadline exceeded."
           }
         },
         "security": [
@@ -1620,6 +1860,27 @@
               "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
               "title": "Id",
               "type": "string"
+            }
+          },
+          {
+            "description": "Optional caller deduplication key preventing duplicate brief revisions.",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional caller deduplication key preventing duplicate brief revisions.",
+              "title": "Idempotency-Key"
             }
           }
         ],
@@ -1692,7 +1953,37 @@
                 }
               }
             },
-            "description": "Request schema or domain invariant validation failure."
+            "description": "Request schema, domain invariant, or model output validation failure."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Coaching model execution or invocation budget failure."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Persistence backend unavailable."
+          },
+          "504": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Coaching model request deadline exceeded."
           }
         },
         "security": [
@@ -1701,6 +1992,129 @@
           }
         ],
         "summary": "Revise an existing preparation brief",
+        "tags": [
+          "briefs"
+        ]
+      }
+    },
+    "/api/v1/briefs/{id}/revisions": {
+      "get": {
+        "description": "Return every saved revision snapshot of an owned preparation brief in version order.",
+        "operationId": "list_brief_revisions_api_v1_briefs__id__revisions_get",
+        "parameters": [
+          {
+            "description": "Preparation brief identifier.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "Preparation brief identifier.",
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+              "title": "Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BriefRevisionListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Missing, malformed, or invalid Bearer authentication credentials."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Authenticated user does not own the target resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Requested resource does not exist."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Optimistic concurrency version conflict or invalid lifecycle transition."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Request schema, domain invariant, or model output validation failure."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Coaching model execution or invocation budget failure."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Persistence backend unavailable."
+          },
+          "504": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Coaching model request deadline exceeded."
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List immutable historical revisions of a preparation brief",
         "tags": [
           "briefs"
         ]
@@ -1769,7 +2183,37 @@
                 }
               }
             },
-            "description": "Request schema or domain invariant validation failure."
+            "description": "Request schema, domain invariant, or model output validation failure."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Coaching model execution or invocation budget failure."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Persistence backend unavailable."
+          },
+          "504": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Coaching model request deadline exceeded."
           }
         },
         "security": [
@@ -1854,7 +2298,37 @@
                 }
               }
             },
-            "description": "Request schema or domain invariant validation failure."
+            "description": "Request schema, domain invariant, or model output validation failure."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Coaching model execution or invocation budget failure."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Persistence backend unavailable."
+          },
+          "504": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Coaching model request deadline exceeded."
           }
         },
         "security": [
@@ -1954,7 +2428,37 @@
                 }
               }
             },
-            "description": "Request schema or domain invariant validation failure."
+            "description": "Request schema, domain invariant, or model output validation failure."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Coaching model execution or invocation budget failure."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Persistence backend unavailable."
+          },
+          "504": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Coaching model request deadline exceeded."
           }
         },
         "security": [
@@ -2102,7 +2606,37 @@
                 }
               }
             },
-            "description": "Request schema or domain invariant validation failure."
+            "description": "Request schema, domain invariant, or model output validation failure."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Coaching model execution or invocation budget failure."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Persistence backend unavailable."
+          },
+          "504": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Coaching model request deadline exceeded."
           }
         },
         "security": [
@@ -2189,7 +2723,37 @@
                 }
               }
             },
-            "description": "Request schema or domain invariant validation failure."
+            "description": "Request schema, domain invariant, or model output validation failure."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Coaching model execution or invocation budget failure."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Persistence backend unavailable."
+          },
+          "504": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Coaching model request deadline exceeded."
           }
         },
         "security": [
@@ -2295,7 +2859,37 @@
                 }
               }
             },
-            "description": "Request schema or domain invariant validation failure."
+            "description": "Request schema, domain invariant, or model output validation failure."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Coaching model execution or invocation budget failure."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Persistence backend unavailable."
+          },
+          "504": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Coaching model request deadline exceeded."
           }
         },
         "security": [
@@ -2396,7 +2990,37 @@
                 }
               }
             },
-            "description": "Request schema or domain invariant validation failure."
+            "description": "Request schema, domain invariant, or model output validation failure."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Coaching model execution or invocation budget failure."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Persistence backend unavailable."
+          },
+          "504": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Coaching model request deadline exceeded."
           }
         },
         "security": [
@@ -2507,7 +3131,37 @@
                 }
               }
             },
-            "description": "Request schema or domain invariant validation failure."
+            "description": "Request schema, domain invariant, or model output validation failure."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Coaching model execution or invocation budget failure."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Persistence backend unavailable."
+          },
+          "504": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Coaching model request deadline exceeded."
           }
         },
         "security": [

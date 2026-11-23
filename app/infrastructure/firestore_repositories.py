@@ -38,8 +38,10 @@ from app.domain.models import (
     MemoryProposal,
     PreparationBrief,
     UserPreferences,
+    WorkflowIdempotencyRecord,
 )
 from app.domain.types import (
+    BriefWorkflowOperation,
     ConsentStatus,
     MemoryScope,
     MemoryType,
@@ -52,8 +54,10 @@ DEFAULT_PREFERENCES_DOC_ID = "default"
 CONTACTS_SUBCOLLECTION = "contacts"
 MEETINGS_SUBCOLLECTION = "meetings"
 BRIEFS_SUBCOLLECTION = "briefs"
+BRIEF_REVISIONS_SUBCOLLECTION = "revisions"
 MEMORIES_SUBCOLLECTION = "memories"
 MEMORY_PROPOSALS_SUBCOLLECTION = "memoryProposals"
+WORKFLOW_IDEMPOTENCY_SUBCOLLECTION = "workflowIdempotency"
 
 _tracer = trace.get_tracer(__name__)
 
@@ -117,6 +121,7 @@ async def _save_versioned_document(
     expected_version: int | None,
     timeout_seconds: float,
     span_name: str,
+    snapshot_doc_ref: firestore.AsyncDocumentReference | None = None,
 ) -> None:
     @firestore.async_transactional
     async def _txn(transaction: firestore.AsyncTransaction) -> None:
@@ -140,6 +145,8 @@ async def _save_versioned_document(
                     actual_version=actual_version,
                 )
         transaction.set(doc_ref, payload)
+        if snapshot_doc_ref is not None:
+            transaction.set(snapshot_doc_ref, payload)
 
     await _run_firestore_op(
         span_name,
@@ -460,6 +467,24 @@ class FirestoreBriefRepository:
         ]
         return sorted(briefs, key=lambda item: (item.version, item.id))
 
+    def _revisions_collection_ref(
+        self,
+        owner_user_id: str,
+        brief_id: str,
+    ) -> firestore.AsyncCollectionReference:
+        return cast(
+            firestore.AsyncCollectionReference,
+            self._doc_ref(owner_user_id, brief_id).collection(BRIEF_REVISIONS_SUBCOLLECTION),
+        )
+
+    def _revision_doc_ref(
+        self,
+        owner_user_id: str,
+        brief_id: str,
+        version: int,
+    ) -> firestore.AsyncDocumentReference:
+        return self._revisions_collection_ref(owner_user_id, brief_id).document(f"v{version}")
+
     async def save(
         self,
         brief: PreparationBrief,
@@ -467,6 +492,7 @@ class FirestoreBriefRepository:
         expected_version: int | None = None,
     ) -> PreparationBrief:
         doc_ref = self._doc_ref(brief.owner_user_id, brief.id)
+        rev_ref = self._revision_doc_ref(brief.owner_user_id, brief.id, brief.version)
         await _save_versioned_document(
             client=self._client,
             doc_ref=doc_ref,
@@ -476,8 +502,48 @@ class FirestoreBriefRepository:
             expected_version=expected_version,
             timeout_seconds=self._timeout_seconds,
             span_name="firestore.briefs.save",
+            snapshot_doc_ref=rev_ref,
         )
         return brief
+
+    async def list_revisions(
+        self,
+        owner_user_id: str,
+        brief_id: str,
+    ) -> list[PreparationBrief]:
+        uid = _validate_doc_segment("owner_user_id", owner_user_id)
+        bid = _validate_doc_segment("brief_id", brief_id)
+        docs = await _run_firestore_op(
+            "firestore.briefs.list_revisions",
+            self._revisions_collection_ref(uid, bid).get(),
+            timeout_seconds=self._timeout_seconds,
+        )
+        revisions = [
+            PreparationBrief.model_validate(data)
+            for doc in docs
+            if (data := doc.to_dict()) and data.get("owner_user_id") == uid
+        ]
+        return sorted(revisions, key=lambda item: item.version)
+
+    async def get_revision(
+        self,
+        owner_user_id: str,
+        brief_id: str,
+        version: int,
+    ) -> PreparationBrief | None:
+        uid = _validate_doc_segment("owner_user_id", owner_user_id)
+        bid = _validate_doc_segment("brief_id", brief_id)
+        snap = await _run_firestore_op(
+            "firestore.briefs.get_revision",
+            self._revision_doc_ref(uid, bid, version).get(),
+            timeout_seconds=self._timeout_seconds,
+        )
+        if not snap.exists:
+            return None
+        data = snap.to_dict()
+        if not data or data.get("owner_user_id") != uid:
+            return None
+        return PreparationBrief.model_validate(data)
 
 
 class FirestoreMemoryProposalRepository:
@@ -712,3 +778,64 @@ class FirestoreMemoryRepository:
             _delete_txn(self._client.transaction()),
             timeout_seconds=self._timeout_seconds,
         )
+
+
+class FirestoreWorkflowIdempotencyRepository:
+    """Firestore adapter for ``users/{uid}/workflowIdempotency/{operation}:{key}``."""
+
+    def __init__(
+        self,
+        client: firestore.AsyncClient,
+        *,
+        timeout_seconds: float = 10.0,
+    ) -> None:
+        self._client = client
+        self._timeout_seconds = timeout_seconds
+
+    def _doc_ref(
+        self,
+        owner_user_id: str,
+        operation: BriefWorkflowOperation,
+        idempotency_key: str,
+    ) -> firestore.AsyncDocumentReference:
+        uid = _validate_doc_segment("owner_user_id", owner_user_id)
+        safe_key = _validate_doc_segment("idempotency_key", idempotency_key)
+        doc_id = f"{operation.value}:{safe_key}"
+        return cast(
+            firestore.AsyncDocumentReference,
+            self._client.collection(USERS_COLLECTION)
+            .document(uid)
+            .collection(WORKFLOW_IDEMPOTENCY_SUBCOLLECTION)
+            .document(doc_id),
+        )
+
+    async def get(
+        self,
+        owner_user_id: str,
+        operation: BriefWorkflowOperation,
+        idempotency_key: str,
+    ) -> WorkflowIdempotencyRecord | None:
+        uid = _validate_doc_segment("owner_user_id", owner_user_id)
+        snap = await _run_firestore_op(
+            "firestore.workflow_idempotency.get",
+            self._doc_ref(uid, operation, idempotency_key).get(),
+            timeout_seconds=self._timeout_seconds,
+        )
+        if not snap.exists:
+            return None
+        data = snap.to_dict()
+        if not data or data.get("owner_user_id") != uid:
+            return None
+        return WorkflowIdempotencyRecord.model_validate(data)
+
+    async def save(
+        self,
+        record: WorkflowIdempotencyRecord,
+    ) -> WorkflowIdempotencyRecord:
+        doc_ref = self._doc_ref(record.owner_user_id, record.operation, record.idempotency_key)
+        await _run_firestore_op(
+            "firestore.workflow_idempotency.save",
+            doc_ref.set(_serialize_domain_model(record)),
+            timeout_seconds=self._timeout_seconds,
+        )
+        return record

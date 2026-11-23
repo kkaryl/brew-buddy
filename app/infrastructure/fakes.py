@@ -8,6 +8,7 @@ import threading
 import uuid
 from collections.abc import Mapping, Sequence
 
+from app.domain.brief_quality import parse_refinement_overrides
 from app.domain.errors import (
     AuthenticationError,
     ConflictError,
@@ -26,9 +27,11 @@ from app.domain.models import (
     PreparationBrief,
     TimeBoxedAgendaItem,
     UserPreferences,
+    WorkflowIdempotencyRecord,
 )
 from app.domain.ports import (
     AuthenticatorPort,
+    BriefAttemptMetrics,
     BriefCoachAgentPort,
     BriefRepository,
     ContactRepository,
@@ -40,8 +43,10 @@ from app.domain.ports import (
     MemoryRepository,
     ProposedMemoryCandidate,
     UserPreferencesRepository,
+    WorkflowIdempotencyRepository,
 )
 from app.domain.types import (
+    BriefWorkflowOperation,
     ConsentStatus,
     MeetingDurationMinutes,
     MeetingPurpose,
@@ -269,11 +274,12 @@ class InMemoryMeetingRepository:
 
 
 class InMemoryBriefRepository:
-    """Async fake repository mirroring ``users/{uid}/briefs/{briefId}``."""
+    """Async fake repository mirroring ``users/{uid}/briefs/{briefId}`` and immutable revisions."""
 
     def __init__(self) -> None:
         self._lock = asyncio.Lock()
         self._by_owner: dict[str, dict[str, PreparationBrief]] = {}
+        self._revisions_by_owner: dict[str, dict[str, dict[int, PreparationBrief]]] = {}
 
     async def get_for_owner(
         self,
@@ -329,7 +335,57 @@ class InMemoryBriefRepository:
                         actual_version=existing.version,
                     )
             user_bucket[brief.id] = brief
+            rev_bucket = self._revisions_by_owner.setdefault(brief.owner_user_id, {}).setdefault(
+                brief.id, {}
+            )
+            rev_bucket[brief.version] = brief
             return brief
+
+    async def list_revisions(
+        self,
+        owner_user_id: str,
+        brief_id: str,
+    ) -> list[PreparationBrief]:
+        async with self._lock:
+            rev_map = self._revisions_by_owner.get(owner_user_id, {}).get(brief_id, {})
+            items = list(rev_map.values())
+        return sorted(items, key=lambda item: item.version)
+
+    async def get_revision(
+        self,
+        owner_user_id: str,
+        brief_id: str,
+        version: int,
+    ) -> PreparationBrief | None:
+        async with self._lock:
+            return self._revisions_by_owner.get(owner_user_id, {}).get(brief_id, {}).get(version)
+
+
+class InMemoryWorkflowIdempotencyRepository:
+    """Async fake repository storing deduplication records per ``(owner, operation, key)``."""
+
+    def __init__(self) -> None:
+        self._lock = asyncio.Lock()
+        self._records: dict[tuple[str, str, str], WorkflowIdempotencyRecord] = {}
+
+    async def get(
+        self,
+        owner_user_id: str,
+        operation: BriefWorkflowOperation,
+        idempotency_key: str,
+    ) -> WorkflowIdempotencyRecord | None:
+        async with self._lock:
+            return self._records.get((owner_user_id, operation.value, idempotency_key))
+
+    async def save(
+        self,
+        record: WorkflowIdempotencyRecord,
+    ) -> WorkflowIdempotencyRecord:
+        async with self._lock:
+            self._records[
+                (record.owner_user_id, record.operation.value, record.idempotency_key)
+            ] = record
+            return record
 
 
 class InMemoryMemoryProposalRepository:
@@ -546,13 +602,19 @@ class FakeBriefCoachAgent:
         *,
         meeting: Meeting,
         context: BriefPreparationContext,
+        corrective_feedback: Sequence[str] | None = None,
+        attempt_metrics: BriefAttemptMetrics | None = None,
     ) -> GeneratedBriefContent:
+        del corrective_feedback
+        if attempt_metrics is not None:
+            attempt_metrics.model_invocations += 1
+
         contact = context.contact
         user_preferences = context.user_preferences
         question_count = (
-            user_preferences.preferred_question_count if user_preferences is not None else 3
+            user_preferences.preferred_question_count if user_preferences is not None else 6
         )
-        question_count = max(1, min(question_count, 6))
+        question_count = max(1, min(question_count, 8))
 
         tone_label = meeting.tone.value.replace("_", " ")
         purpose_label = meeting.purpose.value.replace("_", " ")
@@ -574,7 +636,7 @@ class FakeBriefCoachAgent:
                     "what trade-offs have mattered most in practice?"
                 ),
                 (
-                    f"Anchors the {purpose_label} discussion in real-world decisions "
+                    f"Anchors the {purpose_label} objective in real-world decisions "
                     "rather than generic advice."
                 ),
                 "core_objective",
@@ -584,23 +646,33 @@ class FakeBriefCoachAgent:
                     "What signal tells you an initiative in your domain is on the right track, "
                     f"{contact.name}?"
                 ),
-                "Surfaces concrete evaluation criteria and mental models within the timebox.",
+                "Surfaces concrete evaluation criteria aligned with the meeting goal.",
                 "perspective",
             ),
             (
                 "What common misconception do people bring when approaching this space?",
-                "Invites candid nuance and memorable insights.",
+                "Invites candid nuance and memorable insights relevant to our discussion.",
                 "nuance",
             ),
             (
                 "Where do you see the biggest upcoming shift over the next two quarters?",
-                "Opens forward-looking context for potential future conversations.",
+                "Opens forward-looking roadmap context for potential future conversations.",
                 "outlook",
             ),
             (
+                "Which habit or operating cadence helped your team navigate growing complexity?",
+                "Connects practical execution lessons directly to our conversation objective.",
+                "execution",
+            ),
+            (
                 "Who or what resource shaped how you think about this problem?",
-                "Creates natural follow-up threads without overstepping.",
+                "Creates natural follow-up threads and shared learning context.",
                 "resources",
+            ),
+            (
+                "When priorities collide, what framework helps you decide what to defer?",
+                "Highlights concrete prioritization trade-offs tied to the meeting purpose.",
+                "prioritization",
             ),
             (
                 "Before we wrap, is there any context or connection that would be useful to you?",
@@ -650,31 +722,187 @@ class FakeBriefCoachAgent:
         instructions: str,
         target_duration_minutes: MeetingDurationMinutes,
         target_tone: MeetingTone,
+        corrective_feedback: Sequence[str] | None = None,
+        attempt_metrics: BriefAttemptMetrics | None = None,
     ) -> GeneratedBriefContent:
+        del corrective_feedback
+        if attempt_metrics is not None:
+            attempt_metrics.model_invocations += 1
+
         contact = context.contact
         cleaned_instruction = scrub_basic_pii(instructions.strip())
         tone_label = target_tone.value.replace("_", " ")
+        resolution = parse_refinement_overrides(
+            cleaned_instruction,
+            explicit_duration_minutes=target_duration_minutes,
+            explicit_tone=target_tone,
+            fallback_duration_minutes=current_brief.duration_minutes,
+            fallback_tone=current_brief.tone,
+        )
 
         updated_openers = [
             (
-                f"[{tone_label}] Hi {contact.name}, excited for our focused "
-                f"{target_duration_minutes}-minute chat—{cleaned_instruction[:180]}."
+                f"Hi {contact.name}, glad we could catch up for {target_duration_minutes} "
+                f"minutes ({tone_label})—excited to explore {cleaned_instruction[:140]}."
             ),
-            *current_brief.conversation_openers[:1],
+            (
+                current_brief.conversation_openers[1]
+                if len(current_brief.conversation_openers) > 1
+                else (
+                    f"Before jumping into {current_brief.meeting_objective[:110]}, how has "
+                    "your week been unfolding?"
+                )
+            ),
         ]
 
-        updated_questions = list(current_brief.suggested_questions)
-        updated_questions[0] = ConversationQuestion(
-            id=updated_questions[0].id,
-            question=(
-                f"With '{cleaned_instruction[:140]}' in mind, what stands out most "
-                f"regarding {current_brief.meeting_objective[:120]}?"
-            )[:400],
-            rationale=(
-                f"Updated during revision v{current_brief.version + 1} to reflect caller guidance."
-            ),
-            category=updated_questions[0].category,
-        )
+        desired_count = len(current_brief.suggested_questions)
+        rev_num = current_brief.version + 1
+
+        if resolution.focus_customer_discovery:
+            discovery_pool = [
+                (
+                    "Walk me through how your team currently handles this workflow end to end?",
+                    "Grounds customer discovery in real current-state workflow behavior.",
+                    "discovery_workflow",
+                ),
+                (
+                    "Which step in that process creates the sharpest bottleneck or manual cost?",
+                    "Identifies high-friction customer pain points worth solving.",
+                    "discovery_pain",
+                ),
+                (
+                    "What workarounds or tools have you already evaluated to solve this problem?",
+                    "Surfaces existing alternatives and switching barriers for discovery.",
+                    "discovery_alternatives",
+                ),
+                (
+                    "How do you measure whether an onboarding or workflow improvement succeeded?",
+                    "Links customer discovery findings to concrete evaluation metrics.",
+                    "discovery_metrics",
+                ),
+                (
+                    "Who else on the team feels this friction most acutely during adoption?",
+                    "Maps stakeholder roles and adoption dynamics for the objective.",
+                    "discovery_stakeholders",
+                ),
+                (
+                    "What would need to be true for fixing this problem to become urgent now?",
+                    "Tests priority and timing constraints against our discovery goal.",
+                    "discovery_urgency",
+                ),
+            ]
+            updated_questions = [
+                ConversationQuestion(
+                    id=f"q_disc_{rev_num}_{idx + 1}",
+                    question=q_text,
+                    rationale=r_text,
+                    category=cat,
+                )
+                for idx, (q_text, r_text, cat) in enumerate(discovery_pool[: max(5, desired_count)])
+            ]
+        elif resolution.focus_engineering_career:
+            eng_pool = [
+                (
+                    "Which technical project shifted your engineering career trajectory the most?",
+                    "Connects concrete engineering career inflection points to our goal.",
+                    "engineering_career",
+                ),
+                (
+                    "How did your day-to-day system design scope change as you grew into senior "
+                    "technical leadership?",
+                    "Clarifies engineering role progression and technical scope trade-offs.",
+                    "technical_scope",
+                ),
+                (
+                    "What signal helped you decide between deepening IC architecture work versus "
+                    "broader platform leadership?",
+                    "Explores career ladder decisions aligned with the mentorship objective.",
+                    "career_decisions",
+                ),
+                (
+                    "Which production reliability or scaling failure taught you the most durable "
+                    "engineering lesson?",
+                    "Extracts grounded systems engineering wisdom without generic clichés.",
+                    "systems_lessons",
+                ),
+                (
+                    "How do you carve out time for hands-on technical context alongside org-wide "
+                    "architecture reviews?",
+                    "Addresses sustainable engineering operating habits for career growth.",
+                    "operating_cadence",
+                ),
+                (
+                    "What capability do engineers overlook when aiming for staff-plus impact?",
+                    "Surfaces actionable coaching guidance linked to career advancement.",
+                    "staff_growth",
+                ),
+            ]
+            updated_questions = [
+                ConversationQuestion(
+                    id=f"q_eng_{rev_num}_{idx + 1}",
+                    question=q_text,
+                    rationale=r_text,
+                    category=cat,
+                )
+                for idx, (q_text, r_text, cat) in enumerate(eng_pool[: max(5, desired_count)])
+            ]
+        elif resolution.avoid_prior_questions:
+            fresh_pool = [
+                (
+                    f"In revision {rev_num}, what unexpected constraint reshaped how you view "
+                    f"{current_brief.meeting_objective[:90]}?",
+                    "Explores an unasked constraint angle tied to the meeting objective.",
+                    "constraints",
+                ),
+                (
+                    "Looking back at a recent launch, which early assumption turned out false?",
+                    "Uncovers candid retrospective lessons not covered in earlier questions.",
+                    "retrospective",
+                ),
+                (
+                    "How do you align cross-functional partners when technical timelines tighten?",
+                    "Examines stakeholder alignment mechanics relevant to our goal.",
+                    "alignment",
+                ),
+                (
+                    "What metric would make six months from now look like a clear success?",
+                    "Anchors concrete outcome criteria for future follow-up sessions.",
+                    "outcomes",
+                ),
+                (
+                    "Which emerging tool or workflow change has genuinely saved your team time?",
+                    "Surfaces practical operational leverage without repeating prior prompts.",
+                    "leverage",
+                ),
+                (
+                    "Who else in your ecosystem approaches this domain from a contrasting angle?",
+                    "Opens fresh relationship threads and perspective diversity.",
+                    "ecosystem",
+                ),
+            ]
+            updated_questions = [
+                ConversationQuestion(
+                    id=f"q_fresh_{rev_num}_{idx + 1}",
+                    question=q_text,
+                    rationale=r_text,
+                    category=cat,
+                )
+                for idx, (q_text, r_text, cat) in enumerate(fresh_pool[: max(5, desired_count)])
+            ]
+        else:
+            updated_questions = list(current_brief.suggested_questions)
+            updated_questions[0] = ConversationQuestion(
+                id=updated_questions[0].id,
+                question=(
+                    f"With '{cleaned_instruction[:120]}' in mind, what practical decision stands "
+                    f"out regarding {current_brief.meeting_objective[:110]}?"
+                )[:400],
+                rationale=(
+                    f"Updated during revision v{rev_num} to advance the meeting objective "
+                    "under caller guidance."
+                ),
+                category=updated_questions[0].category,
+            )
 
         return GeneratedBriefContent(
             contact_context=_compose_contact_context(context),
@@ -685,7 +913,7 @@ class FakeBriefCoachAgent:
                 purpose=meeting.purpose,
             ),
             suggested_questions=updated_questions,
-            suggested_follow_up_topics=current_brief.suggested_follow_up_topics,
+            suggested_follow_up_topics=list(current_brief.suggested_follow_up_topics),
             referenced_memory_ids=context.referenced_memory_ids,
             revision_summary=f"Revised brief ({tone_label}): {cleaned_instruction}"[:1000],
         )
@@ -829,6 +1057,7 @@ class ServiceContainer:
         memory_repo: MemoryRepository,
         brief_agent: BriefCoachAgentPort,
         proposal_agent: MemoryProposalAgentPort,
+        idempotency_repo: WorkflowIdempotencyRepository | None = None,
     ) -> None:
         self.clock = clock
         self.id_generator = id_generator
@@ -841,6 +1070,11 @@ class ServiceContainer:
         self.memory_repo = memory_repo
         self.brief_agent = brief_agent
         self.proposal_agent = proposal_agent
+        self.idempotency_repo: WorkflowIdempotencyRepository = (
+            idempotency_repo
+            if idempotency_repo is not None
+            else InMemoryWorkflowIdempotencyRepository()
+        )
 
 
 class FakeServiceContainer(ServiceContainer):
@@ -851,6 +1085,7 @@ class FakeServiceContainer(ServiceContainer):
         *,
         clock: ClockPort | None = None,
         authenticator: AuthenticatorPort | None = None,
+        brief_agent: BriefCoachAgentPort | None = None,
     ) -> None:
         super().__init__(
             clock=clock if clock is not None else SystemUtcClock(),
@@ -862,6 +1097,7 @@ class FakeServiceContainer(ServiceContainer):
             brief_repo=InMemoryBriefRepository(),
             proposal_repo=InMemoryMemoryProposalRepository(),
             memory_repo=InMemoryMemoryRepository(),
-            brief_agent=FakeBriefCoachAgent(),
+            brief_agent=brief_agent if brief_agent is not None else FakeBriefCoachAgent(),
             proposal_agent=FakeMemoryProposalAgent(),
+            idempotency_repo=InMemoryWorkflowIdempotencyRepository(),
         )

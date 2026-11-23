@@ -8,6 +8,8 @@ from typing import Annotated, Self
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.domain.models import (
+    BriefWorkflowDiagnostics,
+    BriefWorkflowResult,
     Contact,
     ConversationQuestion,
     Meeting,
@@ -18,6 +20,8 @@ from app.domain.models import (
     TimeBoxedAgendaItem,
 )
 from app.domain.types import (
+    BriefWorkflowOperation,
+    BriefWorkflowTerminalState,
     ConsentStatus,
     ContextSummaryText,
     EntityId,
@@ -282,6 +286,57 @@ class ConversationQuestionResponse(_ResponseModel):
         )
 
 
+class BriefWorkflowDiagnosticsResponse(_ResponseModel):
+    """Structured workflow execution metadata returned alongside preparation briefs."""
+
+    request_id: str = Field(description="Request correlation identifier.")
+    trace_id: str = Field(description="Distributed trace identifier.")
+    operation: BriefWorkflowOperation = Field(
+        description="Workflow operation ('generate' or 'revise').",
+    )
+    terminal_state: BriefWorkflowTerminalState = Field(
+        description="Explicit workflow terminal state.",
+    )
+    attempt_count: int = Field(ge=0, description="Synthesis attempts executed (0 on replay).")
+    regeneration_count: int = Field(
+        ge=0,
+        le=1,
+        description="Corrective regenerations triggered (at most 1).",
+    )
+    model_invocations: int = Field(ge=0, description="Total LLM calls executed for this request.")
+    tool_invocations: int = Field(ge=0, description="Total ADK tool calls executed.")
+    replayed: bool = Field(description="True when served from idempotency deduplication store.")
+    quality_passed: bool = Field(description="True when deterministic quality checks passed.")
+    degraded_sources: list[str] = Field(
+        default_factory=list,
+        description="Optional context/tool sources that degraded gracefully.",
+    )
+    previous_version: int | None = Field(
+        default=None,
+        description="Prior brief version preserved in history before refinement.",
+    )
+
+    @classmethod
+    def from_domain(
+        cls,
+        diagnostics: BriefWorkflowDiagnostics,
+    ) -> BriefWorkflowDiagnosticsResponse:
+        return cls(
+            request_id=diagnostics.request_id,
+            trace_id=diagnostics.trace_id,
+            operation=diagnostics.operation,
+            terminal_state=diagnostics.terminal_state,
+            attempt_count=diagnostics.attempt_count,
+            regeneration_count=diagnostics.regeneration_count,
+            model_invocations=diagnostics.model_invocations,
+            tool_invocations=diagnostics.tool_invocations,
+            replayed=diagnostics.replayed,
+            quality_passed=diagnostics.quality_passed,
+            degraded_sources=list(diagnostics.degraded_sources),
+            previous_version=diagnostics.previous_version,
+        )
+
+
 class PreparationBriefResponse(_ResponseModel):
     """Serialized ``PreparationBrief`` returned by brief endpoints."""
 
@@ -312,9 +367,18 @@ class PreparationBriefResponse(_ResponseModel):
     version: int = Field(description="Optimistic concurrency version.")
     created_at: datetime = Field(description="UTC creation timestamp.")
     updated_at: datetime = Field(description="UTC last-updated timestamp.")
+    workflow: BriefWorkflowDiagnosticsResponse | None = Field(
+        default=None,
+        description="Workflow execution diagnostics when produced by generate or revise.",
+    )
 
     @classmethod
-    def from_domain(cls, brief: PreparationBrief) -> PreparationBriefResponse:
+    def from_domain(
+        cls,
+        brief: PreparationBrief,
+        *,
+        diagnostics: BriefWorkflowDiagnostics | None = None,
+    ) -> PreparationBriefResponse:
         return cls(
             id=brief.id,
             meeting_id=brief.meeting_id,
@@ -336,7 +400,25 @@ class PreparationBriefResponse(_ResponseModel):
             version=brief.version,
             created_at=brief.created_at,
             updated_at=brief.updated_at,
+            workflow=(
+                BriefWorkflowDiagnosticsResponse.from_domain(diagnostics)
+                if diagnostics is not None
+                else None
+            ),
         )
+
+    @classmethod
+    def from_workflow_result(cls, result: BriefWorkflowResult) -> PreparationBriefResponse:
+        return cls.from_domain(result.brief, diagnostics=result.diagnostics)
+
+
+class BriefRevisionListResponse(_ResponseModel):
+    """Immutable revision history collection for ``GET /api/v1/briefs/{id}/revisions``."""
+
+    items: list[PreparationBriefResponse] = Field(
+        description="Ordered immutable revisions of the preparation brief.",
+    )
+    total: int = Field(ge=0, description="Total number of saved revisions.")
 
 
 class MemorySourceResponse(_ResponseModel):

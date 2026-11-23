@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from app.domain.models import BriefWorkflowDiagnostics
+
 
 class BrewDomainError(Exception):
     """Base error for domain rule violations and operational domain failures."""
@@ -11,6 +16,7 @@ class BrewDomainError(Exception):
         self.code = code
         self.message = message
         self.recoverable = recoverable
+        self.workflow_diagnostics: BriefWorkflowDiagnostics | None = None
 
 
 class InvalidConfigurationError(BrewDomainError):
@@ -97,3 +103,42 @@ class PersistenceOperationError(BrewDomainError):
         message: str = "Persistence backend failed to complete the operation.",
     ) -> None:
         super().__init__(code="PERSISTENCE_UNAVAILABLE", message=message, recoverable=False)
+
+
+class ModelTimeoutError(BrewDomainError):
+    """Raised when Gemini / ADK model inference exceeds the configured request deadline."""
+
+    def __init__(
+        self,
+        message: str = "The coaching model timed out before completing the preparation brief.",
+    ) -> None:
+        super().__init__(code="MODEL_TIMEOUT", message=message, recoverable=False)
+
+
+class ModelExecutionError(BrewDomainError):
+    """Raised when Gemini / ADK model execution fails or exceeds invocation safeguards."""
+
+    def __init__(
+        self,
+        message: str = "The coaching model encountered an execution failure.",
+        *,
+        code: str = "MODEL_EXECUTION_ERROR",
+    ) -> None:
+        super().__init__(code=code, message=message, recoverable=False)
+
+
+class ModelOutputValidationError(BrewDomainError):
+    """Raised when model output fails strict schema or deterministic brief quality checks."""
+
+    def __init__(
+        self,
+        message: str = "Generated preparation brief failed schema or quality validation.",
+        *,
+        violations: tuple[str, ...] = (),
+    ) -> None:
+        self.violations = violations
+        super().__init__(
+            code="MODEL_OUTPUT_VALIDATION_ERROR",
+            message=message,
+            recoverable=True,
+        )

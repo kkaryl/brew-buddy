@@ -11,6 +11,8 @@ from app.domain.errors import ConflictError, DomainValidationError
 from app.domain.types import (
     AgendaDescriptionText,
     AgendaTitleText,
+    BriefWorkflowOperation,
+    BriefWorkflowTerminalState,
     ConsentStatus,
     ContextSummaryText,
     EntityId,
@@ -62,7 +64,7 @@ class UserPreferences(_ImmutableDomainModel):
     owner_user_id: EntityId
     default_tone: MeetingTone = MeetingTone.WARM_CASUAL
     default_duration_minutes: MeetingDurationMinutes = 30
-    preferred_question_count: Annotated[int, Field(ge=1, le=15)] = 4
+    preferred_question_count: Annotated[int, Field(ge=1, le=15)] = 6
     communication_style_notes: MemoryBodyText | None = None
     focus_areas: list[ShortTagText] = Field(default_factory=list, max_length=10)
     created_at: UtcDatetime
@@ -465,3 +467,41 @@ class BriefPreparationContext(_ImmutableDomainModel):
             *(item.memory_id for item in self.preference_memories),
             *(item.memory_id for item in self.contact_memories),
         ]
+
+
+class BriefWorkflowDiagnostics(_ImmutableDomainModel):
+    """Structured execution diagnostics and safeguard telemetry for a brief workflow run."""
+
+    request_id: EntityId
+    trace_id: EntityId
+    operation: BriefWorkflowOperation
+    terminal_state: BriefWorkflowTerminalState
+    attempt_count: Annotated[int, Field(ge=0, le=5)] = 1
+    regeneration_count: Annotated[int, Field(ge=0, le=1)] = 0
+    model_invocations: Annotated[int, Field(ge=0, le=50)] = 0
+    tool_invocations: Annotated[int, Field(ge=0, le=100)] = 0
+    replayed: bool = False
+    quality_passed: bool = True
+    degraded_sources: list[ShortTagText] = Field(default_factory=list, max_length=20)
+    previous_version: VersionNumber | None = None
+
+
+class BriefWorkflowResult(_ImmutableDomainModel):
+    """Structured workflow outcome combining the persisted brief, meeting, and diagnostics."""
+
+    brief: PreparationBrief
+    meeting: Meeting
+    diagnostics: BriefWorkflowDiagnostics
+
+
+class WorkflowIdempotencyRecord(_ImmutableDomainModel):
+    """Durable deduplication record binding a caller idempotency key to a persisted brief."""
+
+    owner_user_id: EntityId
+    operation: BriefWorkflowOperation
+    idempotency_key: EntityId
+    payload_fingerprint: Annotated[str, Field(min_length=8, max_length=128)]
+    brief_id: EntityId
+    brief_version: VersionNumber
+    meeting_id: EntityId
+    created_at: UtcDatetime

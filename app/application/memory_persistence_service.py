@@ -104,7 +104,9 @@ class MemoryPersistenceService:
                     owner_user_id=uid,
                     default_tone=default_tone or MeetingTone.WARM_CASUAL,
                     default_duration_minutes=default_duration_minutes or 30,
-                    preferred_question_count=preferred_question_count or 4,
+                    preferred_question_count=(
+                        preferred_question_count if preferred_question_count is not None else 6
+                    ),
                     communication_style_notes=communication_style_notes,
                     focus_areas=focus_areas or [],
                     created_at=now,

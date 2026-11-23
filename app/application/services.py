@@ -7,6 +7,10 @@ from datetime import datetime
 
 from pydantic import ValidationError
 
+from app.application.brief_workflow import (
+    BriefWorkflowSafeguardConfig,
+    MeetingPreparationWorkflow,
+)
 from app.application.memory_persistence_service import (
     MemoryPersistenceService,
     translate_pydantic_error,
@@ -15,11 +19,11 @@ from app.application.memory_retrieval_service import MemoryRetrievalService
 from app.domain.errors import (
     AuthorizationError,
     EntityNotFoundError,
-    VersionConflictError,
 )
 from app.domain.health import ClockPort
 from app.domain.models import (
     AuthenticatedPrincipal,
+    BriefWorkflowResult,
     Contact,
     Meeting,
     Memory,
@@ -32,11 +36,11 @@ from app.domain.ports import (
     ContactRepository,
     IdGeneratorPort,
     MeetingRepository,
+    WorkflowIdempotencyRepository,
 )
 from app.domain.types import (
     ConsentStatus,
     MeetingPurpose,
-    MeetingStatus,
     MeetingTone,
     MemoryScope,
     MemorySourceType,
@@ -155,6 +159,8 @@ class BriefService:
         brief_agent: BriefCoachAgentPort,
         clock: ClockPort,
         id_generator: IdGeneratorPort,
+        idempotency_repo: WorkflowIdempotencyRepository | None = None,
+        safeguards: BriefWorkflowSafeguardConfig | None = None,
     ) -> None:
         self._meeting_repo = meeting_repo
         self._brief_repo = brief_repo
@@ -163,6 +169,61 @@ class BriefService:
         self._brief_agent = brief_agent
         self._clock = clock
         self._id_generator = id_generator
+        self._workflow = MeetingPreparationWorkflow(
+            preferences_repo=memory_retrieval.preferences_repo,
+            contact_repo=memory_retrieval.contact_repo,
+            meeting_repo=meeting_repo,
+            brief_repo=brief_repo,
+            memory_repo=memory_retrieval.memory_repo,
+            memory_persistence=memory_persistence,
+            brief_agent=brief_agent,
+            clock=clock,
+            id_generator=id_generator,
+            idempotency_repo=idempotency_repo,
+            safeguards=safeguards,
+            context_budget=memory_retrieval.default_budget,
+        )
+
+    @property
+    def workflow(self) -> MeetingPreparationWorkflow:
+        """Return the underlying 9-step ``MeetingPreparationWorkflow`` orchestrator."""
+        return self._workflow
+
+    async def generate_brief_workflow(
+        self,
+        *,
+        principal: AuthenticatedPrincipal,
+        contact_id: str,
+        purpose: MeetingPurpose,
+        tone: MeetingTone,
+        meeting_objective: str,
+        duration_minutes: int,
+        scheduled_at: datetime | None = None,
+        meeting_notes: str | None = None,
+        preferred_question_count: int | None = None,
+        communication_style_notes: str | None = None,
+        focus_areas: list[str] | None = None,
+        idempotency_key: str | None = None,
+        request_id: str | None = None,
+        trace_id: str | None = None,
+    ) -> BriefWorkflowResult:
+        """Execute the full 9-step generation workflow and return structured diagnostics."""
+        return await self._workflow.execute_generation(
+            principal=principal,
+            contact_id=contact_id,
+            purpose=purpose,
+            tone=tone,
+            meeting_objective=meeting_objective,
+            duration_minutes=duration_minutes,
+            scheduled_at=scheduled_at,
+            meeting_notes=meeting_notes,
+            preferred_question_count=preferred_question_count,
+            communication_style_notes=communication_style_notes,
+            focus_areas=focus_areas,
+            idempotency_key=idempotency_key,
+            request_id=request_id,
+            trace_id=trace_id,
+        )
 
     async def generate_brief(
         self,
@@ -178,91 +239,28 @@ class BriefService:
         preferred_question_count: int | None = None,
         communication_style_notes: str | None = None,
         focus_areas: list[str] | None = None,
+        idempotency_key: str | None = None,
+        request_id: str | None = None,
+        trace_id: str | None = None,
     ) -> PreparationBrief:
         """Assemble bounded user-scoped context, create a meeting, and synthesize a brief."""
-        has_preference_overrides = (
-            preferred_question_count is not None
-            or communication_style_notes is not None
-            or focus_areas is not None
-        )
-        if has_preference_overrides:
-            # Verify contact ownership first so unauthorized contact probes fail before writes.
-            await self._memory_retrieval.build_brief_context(
-                principal=principal,
-                contact_id=contact_id,
-                purpose=purpose,
-                objective=meeting_objective,
-            )
-            await self._memory_persistence.upsert_user_preferences(
-                principal=principal,
-                preferred_question_count=preferred_question_count,
-                communication_style_notes=communication_style_notes,
-                focus_areas=focus_areas,
-            )
-
-        context = await self._memory_retrieval.build_brief_context(
+        result = await self.generate_brief_workflow(
             principal=principal,
             contact_id=contact_id,
             purpose=purpose,
-            objective=meeting_objective,
+            tone=tone,
+            meeting_objective=meeting_objective,
+            duration_minutes=duration_minutes,
+            scheduled_at=scheduled_at,
+            meeting_notes=meeting_notes,
+            preferred_question_count=preferred_question_count,
+            communication_style_notes=communication_style_notes,
+            focus_areas=focus_areas,
+            idempotency_key=idempotency_key,
+            request_id=request_id,
+            trace_id=trace_id,
         )
-
-        now = self._clock.now_utc()
-        meeting_id = self._id_generator.new_id("mtg")
-        brief_id = self._id_generator.new_id("brf")
-
-        try:
-            meeting = Meeting(
-                id=meeting_id,
-                owner_user_id=principal.user_id,
-                contact_id=context.contact.id,
-                purpose=purpose,
-                tone=tone,
-                objective=meeting_objective,
-                duration_minutes=duration_minutes,
-                scheduled_at=scheduled_at,
-                notes=meeting_notes,
-                status=MeetingStatus.PREPARING,
-                latest_brief_id=brief_id,
-                created_at=now,
-                updated_at=now,
-                version=1,
-            )
-        except ValidationError as exc:
-            raise translate_pydantic_error(exc) from exc
-
-        generated = await self._brief_agent.generate_brief(
-            meeting=meeting,
-            context=context,
-        )
-
-        try:
-            brief = PreparationBrief(
-                id=brief_id,
-                owner_user_id=principal.user_id,
-                meeting_id=meeting.id,
-                contact_id=context.contact.id,
-                duration_minutes=meeting.duration_minutes,
-                tone=meeting.tone,
-                contact_context=generated.contact_context,
-                meeting_objective=generated.meeting_objective,
-                conversation_openers=generated.conversation_openers,
-                time_boxed_agenda=generated.time_boxed_agenda,
-                suggested_questions=generated.suggested_questions,
-                suggested_follow_up_topics=generated.suggested_follow_up_topics,
-                referenced_memory_ids=generated.referenced_memory_ids,
-                revision_summary=generated.revision_summary,
-                version=1,
-                created_at=now,
-                updated_at=now,
-            )
-        except ValidationError as exc:
-            raise translate_pydantic_error(exc) from exc
-
-        await self._meeting_repo.save(meeting)
-        saved_brief = await self._brief_repo.save(brief)
-        logger.info("Preparation brief generated", extra={"event_type": "brief.generated"})
-        return saved_brief
+        return result.brief
 
     async def get_brief(
         self,
@@ -278,6 +276,42 @@ class BriefService:
             raise EntityNotFoundError(entity_name="PreparationBrief", entity_id=brief_id)
         return brief
 
+    async def list_brief_revisions(
+        self,
+        *,
+        principal: AuthenticatedPrincipal,
+        brief_id: str,
+    ) -> list[PreparationBrief]:
+        """List all immutable historical revisions for an owned preparation brief."""
+        await self.get_brief(principal=principal, brief_id=brief_id)
+        return await self._brief_repo.list_revisions(principal.user_id, brief_id)
+
+    async def revise_brief_workflow(
+        self,
+        *,
+        principal: AuthenticatedPrincipal,
+        brief_id: str,
+        instructions: str,
+        expected_version: int,
+        duration_minutes: int | None = None,
+        tone: MeetingTone | None = None,
+        idempotency_key: str | None = None,
+        request_id: str | None = None,
+        trace_id: str | None = None,
+    ) -> BriefWorkflowResult:
+        """Execute the full 9-step refinement workflow and return structured diagnostics."""
+        return await self._workflow.execute_refinement(
+            principal=principal,
+            brief_id=brief_id,
+            instructions=instructions,
+            expected_version=expected_version,
+            duration_minutes=duration_minutes,
+            tone=tone,
+            idempotency_key=idempotency_key,
+            request_id=request_id,
+            trace_id=trace_id,
+        )
+
     async def revise_brief(
         self,
         *,
@@ -287,99 +321,23 @@ class BriefService:
         expected_version: int,
         duration_minutes: int | None = None,
         tone: MeetingTone | None = None,
+        idempotency_key: str | None = None,
+        request_id: str | None = None,
+        trace_id: str | None = None,
     ) -> PreparationBrief:
         """Revise an existing preparation brief enforcing optimistic version control."""
-        current_brief = await self.get_brief(principal=principal, brief_id=brief_id)
-        if current_brief.version != expected_version:
-            raise VersionConflictError(
-                entity_name="PreparationBrief",
-                entity_id=brief_id,
-                expected_version=expected_version,
-                actual_version=current_brief.version,
-            )
-
-        meeting = await self._meeting_repo.get_for_owner(
-            principal.user_id,
-            current_brief.meeting_id,
-        )
-        if meeting is None:
-            raise EntityNotFoundError(
-                entity_name="Meeting",
-                entity_id=current_brief.meeting_id,
-            )
-
-        target_duration = (
-            duration_minutes if duration_minutes is not None else current_brief.duration_minutes
-        )
-        target_tone = tone if tone is not None else current_brief.tone
-
-        context = await self._memory_retrieval.build_brief_context(
+        result = await self.revise_brief_workflow(
             principal=principal,
-            contact_id=current_brief.contact_id,
-            purpose=meeting.purpose,
-            objective=current_brief.meeting_objective,
-            exclude_meeting_id=meeting.id,
-        )
-
-        revised_content = await self._brief_agent.revise_brief(
-            current_brief=current_brief,
-            meeting=meeting,
-            context=context,
+            brief_id=brief_id,
             instructions=instructions,
-            target_duration_minutes=target_duration,
-            target_tone=target_tone,
-        )
-
-        now = max(self._clock.now_utc(), current_brief.created_at)
-        try:
-            revised_brief = PreparationBrief(
-                id=current_brief.id,
-                owner_user_id=current_brief.owner_user_id,
-                meeting_id=current_brief.meeting_id,
-                contact_id=current_brief.contact_id,
-                duration_minutes=target_duration,
-                tone=target_tone,
-                contact_context=revised_content.contact_context,
-                meeting_objective=revised_content.meeting_objective,
-                conversation_openers=revised_content.conversation_openers,
-                time_boxed_agenda=revised_content.time_boxed_agenda,
-                suggested_questions=revised_content.suggested_questions,
-                suggested_follow_up_topics=revised_content.suggested_follow_up_topics,
-                referenced_memory_ids=revised_content.referenced_memory_ids,
-                revision_summary=revised_content.revision_summary or instructions,
-                version=current_brief.version + 1,
-                created_at=current_brief.created_at,
-                updated_at=now,
-            )
-        except ValidationError as exc:
-            raise translate_pydantic_error(exc) from exc
-
-        saved_brief = await self._brief_repo.save(
-            revised_brief,
             expected_version=expected_version,
+            duration_minutes=duration_minutes,
+            tone=tone,
+            idempotency_key=idempotency_key,
+            request_id=request_id,
+            trace_id=trace_id,
         )
-
-        if target_duration != meeting.duration_minutes or target_tone != meeting.tone:
-            updated_meeting = Meeting(
-                id=meeting.id,
-                owner_user_id=meeting.owner_user_id,
-                contact_id=meeting.contact_id,
-                purpose=meeting.purpose,
-                tone=target_tone,
-                objective=revised_brief.meeting_objective,
-                duration_minutes=target_duration,
-                scheduled_at=meeting.scheduled_at,
-                notes=meeting.notes,
-                status=meeting.status,
-                latest_brief_id=saved_brief.id,
-                created_at=meeting.created_at,
-                updated_at=max(now, meeting.created_at),
-                version=meeting.version + 1,
-            )
-            await self._meeting_repo.save(updated_meeting, expected_version=meeting.version)
-
-        logger.info("Preparation brief revised", extra={"event_type": "brief.revised"})
-        return saved_brief
+        return result.brief
 
 
 class MemoryService:
