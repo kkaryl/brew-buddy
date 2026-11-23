@@ -108,8 +108,8 @@ Brew is organized around seven sequential, repeatable user journey stages:
 
 ## 7. Quality & Evaluation Metrics
 
-- **Offline Agent Evaluation (`agents-cli eval`)**:
-  - **Constraint Adherence**: Time-boxed sections sum to requested `duration_minutes`; tone matches requested archetype.
-  - **Grounding & Hallucination Zero-Tolerance**: Zero fabricated counterpart employer history, schools, or biographical facts not present in input or approved memories.
-  - **Memory Utilization**: Returning-session eval cases accurately reflect previously approved user preferences and counterpart takeaways.
-  - **Guardrail Resilience**: Adversarial/injection inputs and PII-heavy post-meeting notes are safely handled and scrubbed.
+- **4-Layer Test Pyramid & Automated Agent Evaluation (`pytest`, `Vitest`, `agents-cli eval`)**:
+  - **Unit & Contract Layer (`tests/unit/`)**: Pure domain invariants, SSN/email/phone PII scrubbing, 7-family prompt-injection sanitization, ADK tool schemas, plugin budgets, and deployment mock/fixture lockouts.
+  - **Integration Layer (`tests/integration/`)**: Full 13-route FastAPI OpenAPI v1 verification, live Cloud Firestore Emulator persistence, multi-turn ADK `FirestoreSessionService` event continuity, and cross-tenant `401`/`403`/`422` authorization bounds.
+  - **120-Scenario Agent Evaluation Suite (`tests/eval/datasets/brew-comprehensive-dataset.json`)**: 8 scenarios across each of 15 representative categories (first-time networking, Senior EM, potential mentor, customer discovery, returning contact, casual peer, 15-minute short chat, preference personalization, cross-session memory recall, conflicting memory, missing info, unsupported person claims, untrusted profile / prompt injection, tool failure, and follow-up preparation), graded via deterministic `coaching_guardrail_compliance` & `tool_trajectory_contract` metrics plus `brew_coaching_rubric_judge` and `custom_response_quality` LLM-as-judge rubrics.
+  - **Frontend Experience Layer (`web/src/*.test.tsx`)**: End-to-end counterpart/brief journeys, deferred loading/timeout/degraded-source states, HITL memory approval/supersession/deletion, and immutable `v1 -> v2 -> v3` revision interactions.

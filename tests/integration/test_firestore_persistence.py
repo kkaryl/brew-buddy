@@ -1080,3 +1080,294 @@ async def test_real_cross_session_memory_lifecycle_with_distinct_firestore_sessi
 
         final_active = await memory_svc_2.list_memories(principal=alice)
         assert [m.id for m in final_active] == [new_pref_mem.id]
+
+
+@pytest.mark.asyncio
+async def test_adk_runner_multi_turn_firestore_session_persistence_and_user_isolation(
+    firestore_emulator_env: str,
+) -> None:
+    """Verify multi-turn ADK Runner persistence across fresh FirestoreSessionService instances."""
+    del firestore_emulator_env
+    project_id = f"brew-adk-multiturn-{int(time.time() * 1000)}"
+    alice = AuthenticatedPrincipal(user_id="usr_alice_ses", display_name="Alice")
+    bob = AuthenticatedPrincipal(user_id="usr_bob_ses", display_name="Bob")
+    session_id = "ses_persisted_coach_turns_01"
+    root_collection = "adk-session-multiturn"
+    shared_clock = AdvancingEmulatorClock()
+
+    # Turn 1: Runner #1 on Firestore client_a executes a tool call and persists session history
+    raw_client_a = create_firestore_async_client(project=project_id)
+    with contextlib.closing(raw_client_a) as client_a:
+        contact_svc = ContactService(
+            contact_repo=FirestoreContactRepository(client_a),
+            clock=shared_clock,
+            id_generator=SequentialIdGenerator(),
+        )
+        maya = await contact_svc.create_contact(
+            principal=alice,
+            name="Maya Lin",
+            title="Principal SRE",
+            organization="CloudScale",
+            context_notes="Leads multi-region incident reviews.",
+        )
+
+        settings_a = AppSettings(
+            environment="test",
+            persistence_backend="firestore",
+            session_backend="firestore",
+            google_cloud_project=project_id,
+            adk_firestore_root_collection=root_collection,
+            otel_to_cloud=False,
+        )
+        deps_a = CoachingToolDependencies(
+            preferences_reader=FirestoreUserPreferencesRepository(client_a),
+            contact_reader=FirestoreContactRepository(client_a),
+            meeting_reader=FirestoreMeetingRepository(client_a),
+            memory_reader=FirestoreMemoryRepository(client_a),
+            proposal_stager=FirestoreMemoryProposalRepository(client_a),
+            proposal_agent=FakeMemoryProposalAgent(),
+            clock=shared_clock,
+            id_generator=UuidIdGenerator(),
+        )
+        llm_turn_1 = _ScriptedEmulatorLlm(
+            [
+                LlmResponse(
+                    content=genai_types.Content(
+                        role="model",
+                        parts=[
+                            genai_types.Part(
+                                function_call=genai_types.FunctionCall(
+                                    id="fc_turn1_contact",
+                                    name="get_contact_context",
+                                    args={"contact_id": maya.id},
+                                )
+                            )
+                        ],
+                    )
+                ),
+                LlmResponse(
+                    content=genai_types.Content(
+                        role="model",
+                        parts=[
+                            genai_types.Part.from_text(
+                                text="Loaded Maya Lin's SRE profile for your 20-minute prep."
+                            )
+                        ],
+                    )
+                ),
+            ]
+        )
+        agent_a = build_conversation_coach_agent(
+            settings_a,
+            tool_dependencies=deps_a,
+            model_override=llm_turn_1,
+        )
+        app_a = build_adk_app(
+            settings_a,
+            tool_dependencies=deps_a,
+            root_agent_override=agent_a,
+        )
+        session_svc_a = create_adk_firestore_session_service(
+            client=client_a,
+            project=project_id,
+            root_collection=root_collection,
+        )
+        await session_svc_a.create_session(
+            app_name="app",
+            user_id=alice.user_id,
+            session_id=session_id,
+            state={"preferred_duration": 20},
+        )
+        runner_a = Runner(app=app_a, session_service=session_svc_a)
+        turn_1_events = [
+            ev
+            async for ev in runner_a.run_async(
+                user_id=alice.user_id,
+                session_id=session_id,
+                new_message=genai_types.Content(
+                    role="user",
+                    parts=[genai_types.Part.from_text(text=f"Prep me to meet {maya.id}.")],
+                ),
+            )
+        ]
+        assert any(
+            part.text and "Maya Lin" in part.text
+            for ev in turn_1_events
+            if ev.content and ev.content.parts
+            for part in ev.content.parts
+        )
+
+    # Turn 2: Brand-new Firestore client_b + Runner #2 resumes the persisted session
+    raw_client_b = create_firestore_async_client(project=project_id)
+    with contextlib.closing(raw_client_b) as client_b:
+        session_svc_b = create_adk_firestore_session_service(
+            client=client_b,
+            project=project_id,
+            root_collection=root_collection,
+        )
+
+        # Cross-user session bound: Bob cannot load Alice's ADK session
+        bob_lookup = await session_svc_b.get_session(
+            app_name="app",
+            user_id=bob.user_id,
+            session_id=session_id,
+        )
+        assert bob_lookup is None
+
+        reloaded = await session_svc_b.get_session(
+            app_name="app",
+            user_id=alice.user_id,
+            session_id=session_id,
+        )
+        assert reloaded is not None
+        assert reloaded.state.get("preferred_duration") == 20
+        assert len(reloaded.events) >= 3
+
+        deps_b = CoachingToolDependencies(
+            preferences_reader=FirestoreUserPreferencesRepository(client_b),
+            contact_reader=FirestoreContactRepository(client_b),
+            meeting_reader=FirestoreMeetingRepository(client_b),
+            memory_reader=FirestoreMemoryRepository(client_b),
+            proposal_stager=FirestoreMemoryProposalRepository(client_b),
+            proposal_agent=FakeMemoryProposalAgent(),
+            clock=shared_clock,
+            id_generator=UuidIdGenerator(),
+        )
+        llm_turn_2 = _ScriptedEmulatorLlm(
+            [
+                LlmResponse(
+                    content=genai_types.Content(
+                        role="model",
+                        parts=[
+                            genai_types.Part.from_text(
+                                text="Trimmed your Maya Lin agenda to 15 minutes as requested."
+                            )
+                        ],
+                    )
+                )
+            ]
+        )
+        settings_b = AppSettings(
+            environment="test",
+            persistence_backend="firestore",
+            session_backend="firestore",
+            google_cloud_project=project_id,
+            adk_firestore_root_collection=root_collection,
+            otel_to_cloud=False,
+        )
+        agent_b = build_conversation_coach_agent(
+            settings_b,
+            tool_dependencies=deps_b,
+            model_override=llm_turn_2,
+        )
+        app_b = build_adk_app(
+            settings_b,
+            tool_dependencies=deps_b,
+            root_agent_override=agent_b,
+        )
+        runner_b = Runner(app=app_b, session_service=session_svc_b)
+        turn_2_events = [
+            ev
+            async for ev in runner_b.run_async(
+                user_id=alice.user_id,
+                session_id=session_id,
+                new_message=genai_types.Content(
+                    role="user",
+                    parts=[genai_types.Part.from_text(text="Shorten our chat to 15 minutes.")],
+                ),
+            )
+        ]
+        assert len(turn_2_events) >= 1
+        assert len(llm_turn_2._requests) == 1
+        # Confirm Turn 1 persisted history was included in Turn 2's LLM request contents
+        prior_text_blob = " ".join(
+            part.text
+            for content in (llm_turn_2._requests[0].contents or [])
+            for part in (content.parts or [])
+            if part.text
+        )
+        assert "Loaded Maya Lin's SRE profile" in prior_text_blob
+
+
+def test_firestore_emulator_idempotency_and_cross_tenant_authorization_bounds(
+    firestore_emulator_env: str,
+    tmp_path: Path,
+) -> None:
+    """Verify Firestore workflow idempotency replay and cross-tenant 403 bounds over HTTP."""
+    del firestore_emulator_env
+    project_id = f"brew-fs-auth-idem-{int(time.time() * 1000)}"
+    alice_tok = "fs-alice-token"
+    bob_tok = "fs-bob-token"
+    auth = FakeAuthenticator(
+        {
+            alice_tok: AuthenticatedPrincipal(user_id="usr_fs_alice", display_name="Alice"),
+            bob_tok: AuthenticatedPrincipal(user_id="usr_fs_bob", display_name="Bob"),
+        }
+    )
+    settings = AppSettings(
+        environment="test",
+        persistence_backend="firestore",
+        session_backend="in_memory",
+        google_cloud_project=project_id,
+        otel_to_cloud=False,
+        web_dist_dir=tmp_path / "no-dist",
+    )
+    container = build_firestore_service_container(
+        settings,
+        clock=AdvancingEmulatorClock(),
+        authenticator=auth,
+        brief_agent=FakeBriefCoachAgent(),
+        proposal_agent=FakeMemoryProposalAgent(),
+    )
+
+    with TestClient(create_app(settings, service_container=container)) as client:
+        alice_h = {"Authorization": f"Bearer {alice_tok}"}
+        bob_h = {"Authorization": f"Bearer {bob_tok}"}
+
+        c_resp = client.post(
+            "/api/v1/contacts",
+            headers=alice_h,
+            json={"name": "Dr. Samir Patel", "organization": "Helios Labs"},
+        )
+        assert c_resp.status_code == 201
+        contact_id = c_resp.json()["id"]
+
+        # Idempotent brief generation persisted in FirestoreWorkflowIdempotencyRepository
+        gen_payload = {
+            "contact_id": contact_id,
+            "purpose": "mentorship",
+            "meeting_objective": "Discuss staff-level technical roadmap scope.",
+            "duration_minutes": 30,
+        }
+        first_gen = client.post(
+            "/api/v1/briefs/generate",
+            headers={**alice_h, "Idempotency-Key": "idem_fs_gen_001"},
+            json=gen_payload,
+        )
+        second_gen = client.post(
+            "/api/v1/briefs/generate",
+            headers={**alice_h, "Idempotency-Key": "idem_fs_gen_001"},
+            json=gen_payload,
+        )
+        assert first_gen.status_code == 201
+        assert second_gen.status_code == 201
+        assert first_gen.json()["id"] == second_gen.json()["id"]
+        assert second_gen.json()["workflow"]["replayed"] is True
+
+        brief_id = first_gen.json()["id"]
+
+        # Cross-tenant Bob receives 403 FORBIDDEN against Firestore-persisted resources
+        assert client.get(f"/api/v1/briefs/{brief_id}", headers=bob_h).status_code == 403
+        assert client.get(f"/api/v1/briefs/{brief_id}/revisions", headers=bob_h).status_code == 403
+        assert (
+            client.post(
+                f"/api/v1/briefs/{brief_id}/revise",
+                headers=bob_h,
+                json={"instructions": "Trim to 15 minutes", "expected_version": 1},
+            ).status_code
+            == 403
+        )
+        assert (
+            client.get(f"/api/v1/meetings?contact_id={contact_id}", headers=bob_h).status_code
+            == 403
+        )

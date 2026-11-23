@@ -108,7 +108,7 @@ exclude = [".venv/**", "web/**"]
 
 [tool.codespell]
 ignore-words-list = "rouge"
-skip = "./locust_env/*,uv.lock,.venv,./web,**/package-lock.json,**/node_modules/*"
+skip = "./locust_env/*,uv.lock,.venv,./web,./artifacts,**/package-lock.json,**/node_modules/*"
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

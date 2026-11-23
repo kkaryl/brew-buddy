@@ -1,4 +1,4 @@
-.PHONY: install dev lint typecheck test build check
+.PHONY: install dev lint typecheck test build check eval-deterministic eval-smoke eval
 
 install:
 	uv sync
@@ -22,5 +22,14 @@ test:
 
 build:
 	npm --prefix web run build
+
+eval-deterministic:
+	uv run python -m tests.eval.run_eval_suite --mode deterministic-adk --subset comprehensive --grade-via-cli
+
+eval-smoke:
+	uv run python -m tests.eval.run_eval_suite --mode live-agents-cli --subset smoke
+
+eval:
+	uv run python -m tests.eval.run_eval_suite --mode live-agents-cli --subset comprehensive
 
 check: lint typecheck test build

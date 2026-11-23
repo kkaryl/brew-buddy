@@ -23,7 +23,28 @@ def _client() -> genai.Client:
     """Return one cached GenAI client per grading worker thread."""
     client: genai.Client | None = getattr(_local, "client", None)
     if client is None:
-        client = genai.Client()
+        api_key = (os.getenv("GEMINI_API_KEY") or "").strip()
+        use_enterprise = os.getenv("GOOGLE_GENAI_USE_ENTERPRISE", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+        }
+        use_vertex = os.getenv("GOOGLE_GENAI_USE_VERTEXAI", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+        }
+        if not api_key and (use_enterprise or use_vertex or os.getenv("GOOGLE_CLOUD_PROJECT")):
+            kwargs: dict[str, Any] = {
+                "vertexai": True,
+                "location": os.getenv("GOOGLE_CLOUD_LOCATION", "global"),
+            }
+            project = (os.getenv("GOOGLE_CLOUD_PROJECT") or "").strip()
+            if project:
+                kwargs["project"] = project
+            client = genai.Client(**kwargs)
+        else:
+            client = genai.Client()
         _local.client = client
     return client
 

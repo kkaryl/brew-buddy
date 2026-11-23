@@ -1,16 +1,29 @@
 metrics_to_run:
+  - coaching_guardrail_compliance
+  - tool_trajectory_contract
+  - brew_coaching_rubric_judge
   - custom_response_quality
+  - agent_turn_count
 
-# Fail `agents-cli eval run` (exit 1) when a metric's mean score drops below
-# its threshold. Set it once you know the bar this agent must meet.
-# thresholds:
-#   custom_response_quality: 4  # the judge scores 1-5
+thresholds:
+  coaching_guardrail_compliance: 0.95
+  tool_trajectory_contract: 0.90
+  brew_coaching_rubric_judge: 4.0
+  custom_response_quality: 4.0
 
 custom_metrics:
-  # Default: local LLM-as-judge (see response_quality.py). Runs in-process via
-  # google-genai on Gemini platform (ADC) or Google AI Studio (GEMINI_API_KEY).
+  - name: coaching_guardrail_compliance
+    custom_function_file: guardrail_compliance.py
+
+  - name: tool_trajectory_contract
+    custom_function_file: trajectory_contract.py
+
+  - name: brew_coaching_rubric_judge
+    custom_function_file: brew_coaching_judge.py
+
   - name: custom_response_quality
     custom_function_file: response_quality.py
+
   - name: agent_turn_count
     custom_function: |
       def evaluate(instance):

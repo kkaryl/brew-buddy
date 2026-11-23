@@ -225,6 +225,6 @@ All domain Firestore documents are strictly partitioned per authenticated user (
 - **Secrets Management**: Zero hardcoded API keys or credentials. Runtime configuration resolves secrets exclusively via Google Cloud Secret Manager and Workload Identity / Application Default Credentials (ADC).
 - **Infrastructure as Code (`infra/terraform/`)**: Declaratively provisions Firestore database & composite indexes, Cloud Run / Agent Runtime services, least-privilege IAM service accounts, Secret Manager secret containers, and Cloud Trace/Logging sinks.
 - **CI/CD Pipeline (GitHub Actions / Cloud Build)**:
-  1. **Static & Lint Checks**: `uv run ruff check .`, `uv run ruff format --check .`, `uv run mypy src`, frontend `eslint` + `tsc --noEmit`, `terraform fmt -check` & `terraform validate`.
-  2. **Deterministic Tests**: `uv run pytest` (unit + integration) and frontend `npm test -- --run` (`Vitest`).
-  3. **Agent Behavioral Evaluation**: `agents-cli eval run` against golden coffee-chat, mentorship, networking, and customer-discovery scenarios with enforced pass thresholds.
+  1. **Static & Lint Checks**: `uv run ruff check .`, `uv run ruff format --check .`, `uv run mypy app tests/unit tests/integration`, `uv run codespell`, frontend `eslint` + `tsc --noEmit`, `terraform fmt -check` & `terraform validate`.
+  2. **Deterministic Tests**: `uv run pytest` (107 unit, integration, authorization-boundary, and Cloud Firestore Emulator tests) and frontend `Vitest` (`web/src/App.test.tsx`, `web/src/TestPyramidJourneys.test.tsx`).
+  3. **Agent Behavioral & Trajectory Evaluation**: `make eval-deterministic`, `make eval-smoke`, and `make eval` (`tests/eval/run_eval_suite.py` + `agents-cli eval`) grading the 120-scenario `brew-comprehensive-dataset.json` across all 15 coaching, personalization, memory, grounding, prompt-injection, and tool-failure categories.

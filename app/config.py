@@ -174,6 +174,10 @@ class AppSettings(BaseSettings):
         le=86400,
         validation_alias="BREW_MOCK_SESSION_TTL_SECONDS",
     )
+    seed_eval_fixtures: bool = Field(
+        default=False,
+        validation_alias="BREW_SEED_EVAL_FIXTURES",
+    )
 
     @field_validator("gemini_model")
     @classmethod
@@ -204,6 +208,12 @@ class AppSettings(BaseSettings):
         if self.auth_mode == "local_mock" and self.is_deployed_environment:
             msg = (
                 "BREW_AUTH_MODE='local_mock' cannot be enabled in staging, production, "
+                "or Cloud Run deployments."
+            )
+            raise ValueError(msg)
+        if self.seed_eval_fixtures and self.is_deployed_environment:
+            msg = (
+                "BREW_SEED_EVAL_FIXTURES cannot be enabled in staging, production, "
                 "or Cloud Run deployments."
             )
             raise ValueError(msg)

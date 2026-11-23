@@ -68,11 +68,11 @@ class SanitizedTextResult:
 
 
 def redact_pii_text(text: str) -> tuple[str, bool]:
-    """Deterministically redact email addresses, phone numbers, and SSNs."""
+    """Deterministically redact email addresses, SSNs, and phone numbers."""
     after_email = _EMAIL_RE.sub("[REDACTED_EMAIL]", text)
-    after_phone = _PHONE_RE.sub("[REDACTED_PHONE]", after_email)
-    after_ssn = _SSN_RE.sub("[REDACTED_SSN]", after_phone)
-    return after_ssn, (after_ssn != text)
+    after_ssn = _SSN_RE.sub("[REDACTED_SSN]", after_email)
+    after_phone = _PHONE_RE.sub("[REDACTED_PHONE]", after_ssn)
+    return after_phone, (after_phone != text)
 
 
 def contains_prompt_injection(text: str) -> bool:

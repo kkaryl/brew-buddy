@@ -155,6 +155,10 @@ def build_service_container(
 
     container = FakeServiceContainer()
     container.authenticator = build_runtime_authenticator(settings, clock=container.clock)
+    if settings.seed_eval_fixtures:
+        from app.infrastructure.eval_fixtures import populate_in_memory_eval_fixtures
+
+        populate_in_memory_eval_fixtures(container)
     if _should_use_adk_memory_extractor(settings):
         container.proposal_agent = AdkMemoryProposalAdapter(settings=settings)
     if _should_use_adk_brief_coach(settings):

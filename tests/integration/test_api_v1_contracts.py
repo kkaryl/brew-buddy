@@ -73,13 +73,17 @@ def test_openapi_contract_contains_all_required_v1_endpoints_and_matches_committ
     tmp_path: Path,
 ) -> None:
     expected_operations = {
+        "/api/v1/auth/me": {"get"},
         "/api/v1/briefs/generate": {"post"},
         "/api/v1/briefs/{id}/revise": {"post"},
+        "/api/v1/briefs/{id}/revisions": {"get"},
         "/api/v1/briefs/{id}": {"get"},
         "/api/v1/contacts": {"get", "post"},
         "/api/v1/meetings": {"get"},
         "/api/v1/memories/propose": {"post"},
+        "/api/v1/memories/proposals": {"get"},
         "/api/v1/memories/{id}/approve": {"post"},
+        "/api/v1/memories/{id}/reject": {"post"},
         "/api/v1/memories": {"get"},
         "/api/v1/memories/{id}": {"patch", "delete"},
     }
@@ -644,3 +648,96 @@ def test_invalid_inputs_missing_records_authorization_and_version_conflicts(
         )
         assert stale_delete.status_code == 409
         _assert_error_envelope(stale_delete.json(), expected_code="VERSION_CONFLICT")
+
+
+def test_memory_and_proposal_query_filters_and_auth_principal_endpoint(tmp_path: Path) -> None:
+    with _build_client(tmp_path) as client:
+        alice_headers = _auth_headers(ALICE_TOKEN, request_id="req_filters_001")
+
+        me_resp = client.get("/api/v1/auth/me", headers=alice_headers)
+        assert me_resp.status_code == 200
+        assert me_resp.json()["user_id"] == "usr_alice"
+        assert me_resp.json()["auth_provider"] == "local_mock"
+
+        contact_a = client.post(
+            "/api/v1/contacts",
+            headers=alice_headers,
+            json={"name": "Maya Lin", "organization": "CloudScale"},
+        ).json()["id"]
+        contact_b = client.post(
+            "/api/v1/contacts",
+            headers=alice_headers,
+            json={"name": "Jordan Kim", "organization": "Northstar"},
+        ).json()["id"]
+
+        prop_a = client.post(
+            "/api/v1/memories/propose",
+            headers=alice_headers,
+            json={
+                "notes": (
+                    "Maya shared game-day dependency lessons. "
+                    "I prefer having informal conversations with engineers."
+                ),
+                "contact_id": contact_a,
+            },
+        ).json()["proposals"]
+        assert len(prop_a) == 2
+
+        prop_b = client.post(
+            "/api/v1/memories/propose",
+            headers=alice_headers,
+            json={
+                "notes": "Jordan explained Kafka partition rebalancing steps.",
+                "contact_id": contact_b,
+            },
+        ).json()["proposals"]
+        assert len(prop_b) == 1
+
+        # Filter proposals by contact_id and status
+        maya_pending = client.get(
+            f"/api/v1/memories/proposals?status=pending&contact_id={contact_a}",
+            headers=alice_headers,
+        ).json()
+        assert maya_pending["total"] == 1
+        assert maya_pending["proposals"][0]["contact_id"] == contact_a
+
+        # Approve all 3 (1 contact_a, 1 user_preference, 1 contact_b), then revoke contact_b
+        approved_ids: list[str] = []
+        for item in [*prop_a, *prop_b]:
+            res = client.post(
+                f"/api/v1/memories/{item['id']}/approve",
+                headers=alice_headers,
+                json={"expected_version": 1},
+            )
+            assert res.status_code == 200
+            approved_ids.append(res.json()["id"])
+
+        revoke_resp = client.patch(
+            f"/api/v1/memories/{approved_ids[-1]}",
+            headers=alice_headers,
+            json={"expected_version": 1, "consent_status": "revoked"},
+        )
+        assert revoke_resp.status_code == 200
+
+        # Active list excludes revoked by default, includes when include_revoked=true
+        active_only = client.get("/api/v1/memories", headers=alice_headers).json()
+        assert active_only["total"] == 2
+        with_revoked = client.get(
+            "/api/v1/memories?include_revoked=true",
+            headers=alice_headers,
+        ).json()
+        assert with_revoked["total"] == 3
+
+        pref_only = client.get(
+            "/api/v1/memories?scope=user_preference",
+            headers=alice_headers,
+        ).json()
+        assert pref_only["total"] == 1
+        assert pref_only["items"][0]["scope"] == "user_preference"
+
+        contact_a_only = client.get(
+            f"/api/v1/memories?scope=contact&contact_id={contact_a}",
+            headers=alice_headers,
+        ).json()
+        assert contact_a_only["total"] == 1
+        assert contact_a_only["items"][0]["contact_id"] == contact_a

@@ -207,6 +207,21 @@ This document records significant architectural and technical decisions for **Br
   - *Positive:* Zero secrets or developer tokens in `web/src/`, impossible to accidentally enable mock identities in production, full keyboard/screen-reader accessibility (`0` axe/a11y violations), and deterministic coverage via `tests/unit/test_auth_security.py`, `Vitest` + React Testing Library (`web/src/App.test.tsx`), and live headless Chrome desktop/mobile verification.
   - *Trade-off:* Browser Google Sign-In requires `GOOGLE_OAUTH_CLIENT_ID` (and optional `FIREBASE_PROJECT_ID` / `FIREBASE_WEB_API_KEY`) environment variables injected at deployment time.
 
+---
+
+## ADR-016: Four-Layer Test Pyramid & 120-Scenario ADK / `agents-cli eval` Harness
+
+- **Date:** 2026-11-23
+- **Status:** Accepted
+- **Context:** Evaluating an agentic relationship coach requires separating deterministic software invariants (schemas, PII redaction ordering, optimistic locking, per-user authorization boundaries, Firestore session persistence, and UI state transitions) from non-deterministic LLM coaching quality across diverse interpersonal archetypes, conflicting memories, prompt-injection attacks, and downstream tool failures.
+- **Decision:**
+  1. Enforce deterministic unit (`tests/unit/`) and integration (`tests/integration/`) suites covering all 5 ADK tool schemas, exception translations, `ConversationCoachGuardrailPlugin` / `WorkflowSafeguardPlugin` caps, 13 `/api/v1/*` OpenAPI contracts, cross-tenant `401`/`403`/`422` authorization bounds (`test_authorization_boundaries.py`), and multi-turn ADK `FirestoreSessionService` persistence on the live Cloud Firestore Emulator (`test_firestore_persistence.py`), paired with 11 Vitest + React Testing Library user-journey, loading/error, memory governance, and revision tests (`web/src/App.test.tsx`, `web/src/TestPyramidJourneys.test.tsx`).
+  2. Author a canonical **120-scenario** `EvaluationDataset` (`tests/eval/datasets/brew-comprehensive-dataset.json`, 8 scenarios x 15 categories, mixing single-turn Shape A `prompt` and multi-turn Shape B `agent_data.turns` continuation cases) plus a 15-scenario stratified subset (`brew-stratified-smoke-dataset.json`), backed by isolated non-production evaluation fixtures and simulated `TIMEOUT`/`SERVICE_UNAVAILABLE`/`FORBIDDEN` repository wrappers (`app/infrastructure/eval_fixtures.py`, hard-blocked in staging/production/Cloud Run via `AppSettings`).
+  3. Grade traces through `agents-cli eval` (`tests/eval/eval_config.yaml` and `tests/eval/run_eval_suite.py`) combining self-contained deterministic `CodeExecutionMetric`s (`guardrail_compliance.py`, `trajectory_contract.py`) with thread-safe Gemini LLM-as-judge evaluators (`brew_coaching_judge.py`, `response_quality.py`).
+- **Consequences:**
+  - *Positive:* Zero brittle raw-LLM-prose assertions in `pytest`, fast (<15s) offline deterministic trajectory/guardrail verification across all 120 scenarios, and reproducible live Gemini rubric scoring via `make eval-smoke` and `make eval`.
+  - *Trade-off:* `custom_function_file` evaluators executed by `agents-cli eval grade` run in isolated `exec()` module namespaces and therefore remain self-contained stdlib/`google-genai` modules without relative package imports.
+
 
 
 
