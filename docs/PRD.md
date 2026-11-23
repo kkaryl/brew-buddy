@@ -62,7 +62,7 @@ Brew is organized around seven sequential, repeatable user journey stages:
 - Post-meeting note capture with non-blocking asynchronous candidate memory generation.
 - Human-in-the-Loop (HITL) memory review queue (approve, edit before approving, or reject).
 - Cross-session persistence in Firestore and memory-informed preparation in subsequent sessions.
-- Full AgentOps instrumentation: OpenTelemetry + Cloud Trace, structured JSON intent/outcome logging, active PII redaction, ADK safety/policy plugins, and automated offline evaluation via `agents-cli eval`.
+- Full AgentOps instrumentation: OpenTelemetry + Cloud Trace, structured JSON intent/outcome logging, active PII redaction, ADK safety/policy plugins (`ConversationCoachGuardrailPlugin`), capability-restricted ADK coaching tools (`get_user_preferences`, `get_contact_context`, `get_meeting_history`, `suggest_memory_candidates`) on `conversation_coach`, and automated offline evaluation via `agents-cli eval`.
 
 ### 4.2 Explicit Non-Goals (Out of Scope)
 1. **No Live Call Recording or Bot Joining**: Brew does not join Zoom, Google Meet, or Microsoft Teams calls, nor does it record or transcribe live audio streams.

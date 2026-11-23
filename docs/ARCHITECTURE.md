@@ -61,11 +61,11 @@ flowchart TB
 
 | Source Package | Allowed Internal Imports | Forbidden Imports |
 | :--- | :--- | :--- |
-| `app.domain` | Python stdlib, `pydantic` (pure value/schema types only) | `fastapi`, `google.adk`, `google.cloud.*`, `app.api`, `app.agent`, `app.tools`, `app.infrastructure` |
-| `app.application` | `app.domain` | `fastapi`, `google.adk`, `google.cloud.*` (uses `domain` ports instead) |
-| `app.tools` / `app.agent` | `app.domain`, `app.application`, `app.config`, `google.adk`, `google.genai`, `pydantic` | `fastapi`, direct `google.cloud.firestore` client calls (tools invoke injected ports) |
+| `app.domain` | Python stdlib, `pydantic` (pure value/schema types only) | `fastapi`, `google.adk`, `google.cloud.*`, `app.api`, `app.agent`, `app.tools`, `app.plugins`, `app.infrastructure` |
+| `app.application` | `app.domain` | `fastapi`, `google.adk`, `google.cloud.*`, `app.api`, `app.agent`, `app.tools`, `app.plugins`, `app.infrastructure` |
+| `app.tools` / `app.plugins` / `app.agent` | `app.domain`, `app.application`, `app.config`, `google.adk`, `google.genai`, `opentelemetry.*`, `pydantic` | `fastapi`, direct `google.cloud.*` client calls (tools invoke capability-restricted ports) |
 | `app.infrastructure` | `app.domain`, `app.application`, `google.cloud.*`, `opentelemetry.*` | `fastapi` |
-| `app.api` / `app.fast_api_app` | `app.domain`, `app.application`, `app.agent`, `app.infrastructure`, `app.config`, `fastapi` | None (composition root) |
+| `app.api` / `app.fast_api_app` | `app.domain`, `app.application`, `app.agent`, `app.tools`, `app.plugins`, `app.infrastructure`, `app.config`, `fastapi` | None (composition root) |
 
 ---
 
@@ -179,11 +179,13 @@ sequenceDiagram
 - **Sliding Window + Structured Summary Compaction**: During multi-turn natural-language brief refinement, Brew retains the active `PreparationBrief` state plus the most recent $N$ verbatim turns, compacting older refinement turns into a concise `RefinementHistorySummary` once token or turn thresholds are exceeded.
 - **Bounded Memory Injection**: When starting a new session, only top-ranked approved memories for the target counterpart and active global user preferences (bounded by a strict token budget) are injected into the prompt context.
 
-### 4.4 Tool Interface & Guided Error Contract
-Every ADK tool exposed to an `LlmAgent`:
-1. Uses a specific action name (`retrieve_counterpart_memories`, `retrieve_user_coaching_preferences`, `validate_brief_timebox`, `stage_candidate_memories_for_approval`).
-2. Declares Pydantic-validated typed parameters and return schemas.
-3. Never raises unhandled operational exceptions into the LLM loop; on recoverable failures (e.g., invalid filter, timebox mismatch, transient Firestore timeout), returns a structured `ToolResult` with `status="error"`, `error_code`, and `recovery_instruction` guiding the model on its next step.
+### 4.4 Tool Interface, Security Isolation, & Guided Error Contract
+Every ADK tool exposed to `conversation_coach` (`app/tools/coaching_tools.py`):
+1. Uses a specific action name (`get_user_preferences`, `get_contact_context`, `get_meeting_history`, `suggest_memory_candidates`).
+2. Resolves caller identity strictly from `ToolContext.user_id`—no tool schema accepts `user_id` or `owner_user_id`, and `ConversationCoachGuardrailPlugin` (`app/plugins/coach_guardrails.py`) blocks any injected identity-override keys with `IDENTITY_OVERRIDE_FORBIDDEN`.
+3. Operates strictly through capability-restricted read/staging facades (`ReadOnlyPreferencesFacade`, `ReadOnlyContactFacade`, `ReadOnlyMeetingFacade`, `ReadOnlyApprovedMemoryFacade`, `PendingProposalOnlyFacade` in `app/application/coaching_service.py`) so the agent never holds unrestricted database write, delete, or approval handles.
+4. Enforces `asyncio.wait_for` I/O timeouts, OpenTelemetry spans (`coach.tool.*`), PII redaction, and prompt-injection clause stripping (`app/application/untrusted_data.py`), tagging all returned payloads with `data_trust_level="untrusted_user_data"`.
+5. Never raises unhandled operational exceptions into the LLM loop; on recoverable failures (validation error, missing entity, cross-user `FORBIDDEN`, timeout, or backend outage), returns a typed response with `status="error"`, `error.code`, `error.retryable`, and `error.recovery_instruction`.
 
 ---
 

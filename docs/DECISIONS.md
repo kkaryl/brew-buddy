@@ -148,3 +148,18 @@ This document records significant architectural and technical decisions for **Br
   - *Positive:* End-to-end non-blocking async I/O; physical per-user document isolation verified against the Cloud Firestore Emulator (`tests/integration/test_firestore_persistence.py`); bounded prompt context with full `MemorySource` provenance.
   - *Trade-off:* Integration tests exercising real Firestore transactions and session events require a running Cloud Firestore Emulator.
 
+---
+
+## ADR-012: Least-Privilege `conversation_coach` ADK Tools, Caller-ID Isolation, and Untrusted-Note Sanitization
+
+- **Date:** 2026-11-22
+- **Status:** Accepted
+- **Context:** Exposing persistence-backed tools (`get_user_preferences`, `get_contact_context`, `get_meeting_history`, `suggest_memory_candidates`) to an LLM introduces three security risks: (1) horizontal privilege escalation if the model can specify or override `user_id` in tool parameters, (2) accidental or adversarial mutation/deletion of durable records if tools hold full repository objects, and (3) indirect prompt injection embedded inside saved meeting notes or contact notes steering subsequent tool calls or responses.
+- **Decision:**
+  1. Resolve authenticated caller identity exclusively from `ToolContext.user_id` (`resolve_authenticated_principal` in `app/tools/coaching_tools.py`), omitting all user-identity fields from tool schemas and blocking any injected identity keys at the runner level in `ConversationCoachGuardrailPlugin` (`IDENTITY_OVERRIDE_FORBIDDEN`).
+  2. Wrap injected repositories in capability-restricted facades (`ReadOnlyPreferencesFacade`, `ReadOnlyContactFacade`, `ReadOnlyMeetingFacade`, `ReadOnlyApprovedMemoryFacade`, `PendingProposalOnlyFacade` in `app/application/coaching_service.py`) so `conversation_coach` cannot write/delete contacts, meetings, preferences, or approved memories, and `suggest_memory_candidates` can only insert `PENDING` proposals.
+  3. Run deterministic PII scrubbing and prompt-injection clause neutralization (`app/application/untrusted_data.py`) across all retrieved notes/memories and candidate extractions, tag tool outputs with `data_trust_level="untrusted_user_data"`, and append untrusted-data boundary reminders in `ConversationCoachGuardrailPlugin.before_model_callback`.
+- **Consequences:**
+  - *Positive:* Defense-in-depth isolation against cross-user lookups, caller-ID spoofing, silent memory promotion, and stored prompt injection inside meeting notes—all deterministically verified in `tests/unit/test_conversation_coach.py`.
+  - *Trade-off:* Every new coaching tool must define explicit Pydantic input/output contracts, narrow port facades, and `TypedDict` return annotations compatible with Vertex AI JSON schemas.
+

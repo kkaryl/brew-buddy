@@ -26,6 +26,11 @@ FORBIDDEN_APPLICATION_INTERNAL_PREFIXES = (
     "app.api",
     "app.agent",
     "app.tools",
+    "app.plugins",
+)
+FORBIDDEN_AGENT_AND_TOOLS_PREFIXES = (
+    "fastapi",
+    "google.cloud",
 )
 
 
@@ -66,6 +71,20 @@ def test_domain_and_application_inward_dependency_direction() -> None:
         for mod in _imported_modules(py_file):
             assert not mod.startswith(FORBIDDEN_APPLICATION_INTERNAL_PREFIXES), (
                 f"Outer-layer import '{mod}' found in {py_file.relative_to(REPO_ROOT)}"
+            )
+
+
+def test_agent_tools_and_plugins_do_not_import_fastapi_or_raw_cloud_clients() -> None:
+    target_files = [
+        REPO_ROOT / "app" / "agent.py",
+        *list((REPO_ROOT / "app" / "tools").rglob("*.py")),
+        *list((REPO_ROOT / "app" / "plugins").rglob("*.py")),
+    ]
+    for py_file in target_files:
+        for mod in _imported_modules(py_file):
+            assert not mod.startswith(FORBIDDEN_AGENT_AND_TOOLS_PREFIXES), (
+                f"Forbidden direct transport/cloud import '{mod}' in "
+                f"{py_file.relative_to(REPO_ROOT)}"
             )
 
 

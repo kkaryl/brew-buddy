@@ -39,7 +39,7 @@ def test_health_and_adk_a2a_surfaces(tmp_path: Path) -> None:
         card_resp = client.get("/a2a/app/.well-known/agent-card.json")
         assert card_resp.status_code == 200
         card = card_resp.json()
-        assert card["name"] == "brew"
+        assert card["name"] == "conversation_coach"
         assert "supportedInterfaces" in card
 
 

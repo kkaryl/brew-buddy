@@ -195,6 +195,68 @@ class MemoryRepository(Protocol):
         """Delete an approved memory under ``owner_user_id`` enforcing version checks."""
 
 
+class UserPreferencesReaderPort(Protocol):
+    """Least-privilege read-only port exposing only caller-owned user preferences."""
+
+    async def get_by_owner(self, owner_user_id: str) -> UserPreferences | None:
+        """Return saved preferences for ``owner_user_id``, or ``None`` if unset."""
+
+
+class ContactReaderPort(Protocol):
+    """Least-privilege read-only port exposing only caller-owned contact lookups."""
+
+    async def get_for_owner(self, owner_user_id: str, contact_id: str) -> Contact | None:
+        """Fetch ``contact_id`` strictly under ``owner_user_id``."""
+
+    async def exists_for_any_owner(self, contact_id: str) -> bool:
+        """Return ``True`` if ``contact_id`` exists under any user partition."""
+
+
+class MeetingReaderPort(Protocol):
+    """Least-privilege read-only port exposing only caller-owned meeting lookups."""
+
+    async def get_for_owner(self, owner_user_id: str, meeting_id: str) -> Meeting | None:
+        """Fetch ``meeting_id`` strictly under ``owner_user_id``."""
+
+    async def exists_for_any_owner(self, meeting_id: str) -> bool:
+        """Return ``True`` if ``meeting_id`` exists under any user partition."""
+
+    async def list_by_owner(
+        self,
+        owner_user_id: str,
+        *,
+        contact_id: str | None = None,
+    ) -> list[Meeting]:
+        """List meetings belonging to ``owner_user_id``, optionally filtered by ``contact_id``."""
+
+
+class ApprovedMemoryReaderPort(Protocol):
+    """Least-privilege read-only port exposing only consented caller-owned memories."""
+
+    async def list_by_owner(
+        self,
+        owner_user_id: str,
+        *,
+        scope: MemoryScope | None = None,
+        contact_id: str | None = None,
+        memory_type: MemoryType | None = None,
+        include_revoked: bool = False,
+    ) -> list[Memory]:
+        """List approved memories belonging to ``owner_user_id`` matching optional filters."""
+
+
+class PendingMemoryProposalStagerPort(Protocol):
+    """Least-privilege write port restricted exclusively to staging pending proposals."""
+
+    async def save(
+        self,
+        proposal: MemoryProposal,
+        *,
+        expected_version: int | None = None,
+    ) -> MemoryProposal:
+        """Persist a newly staged ``PENDING`` memory proposal."""
+
+
 class GeneratedBriefContent(BaseModel):
     """Validated structured output returned by the brief coaching agent port."""
 

@@ -1,17 +1,36 @@
 {
   "eval_cases": [
     {
-      "eval_case_id": "greeting",
+      "eval_case_id": "coffee_chat_preparation",
       "prompt": {
         "role": "user",
-        "parts": [{"text": "Hello Brew, what is your current status?"}]
+        "parts": [
+          {
+            "text": "I have a 20-minute warm casual coffee chat tomorrow with a Principal SRE named Maya Lin to learn how her team approaches multi-region incident reviews. Suggest 3 thoughtful open-ended questions and distinguish what we know as facts from your coaching suggestions."
+          }
+        ]
       }
     },
     {
-      "eval_case_id": "service_readiness",
+      "eval_case_id": "missing_essential_context_clarification",
       "prompt": {
         "role": "user",
-        "parts": [{"text": "Can you check whether the Brew backend service is healthy and which Gemini model is configured?"}]
+        "parts": [
+          {
+            "text": "Help me prepare for my meeting later today."
+          }
+        ]
+      }
+    },
+    {
+      "eval_case_id": "unowned_or_missing_contact_honesty",
+      "prompt": {
+        "role": "user",
+        "parts": [
+          {
+            "text": "Look up saved context for contact_id 'cnt_does_not_exist' and prepare a 15-minute networking agenda without making up any details about them."
+          }
+        ]
       }
     }
   ]
