@@ -28,7 +28,8 @@ class _ExpiredAdcCredentials(Credentials):
     """Test credential double simulating an expired Cloudtop ADC RAPT session."""
 
     def __init__(self) -> None:
-        super().__init__()
+        init_fn: Any = super().__init__
+        init_fn()
         self.token = None
 
     @property
@@ -37,7 +38,8 @@ class _ExpiredAdcCredentials(Credentials):
 
     def refresh(self, request: Any) -> None:
         del request
-        raise RefreshError(
+        err_cls: Any = RefreshError
+        raise err_cls(
             "Reauthentication is needed. Please run "
             "`gcloud auth application-default login` to reauthenticate."
         )

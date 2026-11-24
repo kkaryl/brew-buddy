@@ -88,6 +88,7 @@ brew/
 │   ├── PRD.md                       # Product scope, user journey, non-goals
 │   ├── ARCHITECTURE.md              # System architecture & boundaries
 │   ├── DESIGN.md                    # Playful Social Club design tokens, components, & SVG art direction
+│   ├── OBSERVABILITY.md             # OpenTelemetry, Cloud Trace, privacy, & log correlation runbooks
 │   ├── DECISIONS.md                 # Architectural Decision Records (ADRs)
 │   └── openapi.json                 # Generated OpenAPI 3.1 HTTP API contract
 ├── app/
@@ -218,14 +219,17 @@ All domain Firestore documents are strictly partitioned per authenticated user (
 
 ## 6. Observability, Tracing, and Privacy Pipeline
 
+See [`docs/OBSERVABILITY.md`](OBSERVABILITY.md) for complete operational runbooks, span hierarchies, Cloud Trace filters, and log correlation queries.
+
 1. **Distributed Tracing (OpenTelemetry + Cloud Trace)**:
-   - Incoming HTTP requests initialize or propagate W3C `traceparent` headers.
-   - Child spans wrap use-case execution, ADK workflow stages, individual Gemini model calls (recording model name, latency, input/output token counts), tool invocations, PII redaction, and Firestore operations.
-2. **Structured JSON Logging & Intent-vs-Outcome Capture**:
-   - All logs emit single-line JSON structured for Cloud Logging (`severity`, `message`, `logging.googleapis.com/trace`, `logging.googleapis.com/spanId`, `session_id`, `event_type`).
-   - `BrewGuardrailPlugin` emits paired `agent.tool.intent` (before execution, with scrubbed intended arguments) and `agent.tool.outcome` (after execution, with status, duration, and scrubbed outcome summary) events.
-3. **Active PII Redaction**:
-   - A `PiiRedactor` port (backed by Google Cloud Sensitive Data Protection / DLP API with a deterministic local regex/pattern fallback so redaction fails closed even offline) scrubs emails, phone numbers, SSNs/IDs, and street addresses **before** log emission and **before** candidate/approved memory storage.
+   - Incoming HTTP requests extract W3C `traceparent` or Google Cloud `X-Cloud-Trace-Context` headers, open a root `SpanKind.SERVER` span (`{METHOD} {ROUTE}`), and return `X-Request-ID` + `X-Trace-ID` headers.
+   - Non-duplicating child spans cover workflow orchestration (`brew.workflow.*`), pre-brief context & memory retrieval (`brew.context.retrieve`, `brew.memory.retrieve`), ADK built-in spans (`invoke_workflow`, `invoke_agent`, `generate_content` with token usage, `execute_tool` enriched with Brew error classifications), deterministic schema/quality validation (`brew.output.validate`), single corrective regeneration (`brew.workflow.corrective_regeneration`), HITL memory approval (`brew.memory.propose`, `brew.memory.approve`), and Firestore operations (`firestore.<collection>.<op>`).
+2. **Privacy-by-Default Telemetry Lockdown**:
+   - Prompt/response content capture (`OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=NO_CONTENT`, `ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS=false`, `TelemetryConfig(capture_message_content=ContentCapturingMode.NO_CONTENT)`) and completion upload hooks (`OTEL_INSTRUMENTATION_GENAI_COMPLETION_HOOK`) are disabled by default unless explicitly authorized via `BREW_TELEMETRY_CAPTURE_CONTENT=true` / `BREW_TELEMETRY_UPLOAD_COMPLETIONS=true`.
+   - `FORBIDDEN_TELEMETRY_KEYS` and `scrub_sensitive_telemetry_text` (`app/application/telemetry.py`) prevent raw contact notes, private biographies, prompts, credentials, JWTs, API keys, emails, SSNs, and phone numbers from entering span attributes or logs.
+3. **Structured JSON Logging & Intent-vs-Outcome Capture**:
+   - All `app.*` and `google_adk.*` logs emit single-line JSON structured for Cloud Logging (`severity`, `message`, `logging.googleapis.com/trace`, `logging.googleapis.com/spanId`, `logging.googleapis.com/trace_sampled`, `trace_id`, `span_id`, `request_id`, `event_type`, `error_type`, `error_code`, `error_classification`).
+   - `ConversationCoachGuardrailPlugin` and `WorkflowSafeguardPlugin` emit paired `*.intent` and `*.outcome` events across agent invocations, Gemini calls (including token counts), and tool calls.
 
 ---
 

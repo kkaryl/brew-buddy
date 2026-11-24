@@ -7,6 +7,12 @@ from dataclasses import dataclass
 
 from pydantic import ValidationError
 
+from app.application.telemetry import (
+    ATTR_MEMORY_RETRIEVED_COUNT,
+    ATTR_MEMORY_SAVED_COUNT,
+    SpanOutcomeTracker,
+    brew_span,
+)
 from app.application.untrusted_data import (
     contains_prompt_injection,
     sanitize_untrusted_text,
@@ -180,6 +186,33 @@ class MemoryPersistenceService:
         brief_id: str | None = None,
     ) -> MemoryProposalBatchResult:
         """Extract PII-scrubbed, attributed candidate memories and stage for human review."""
+        with brew_span(
+            "brew.memory.propose",
+            operation_name="memory.propose",
+            tracer_name=__name__,
+        ) as tracker:
+            result = await self._propose_memories_batch_impl(
+                principal=principal,
+                notes=notes,
+                source_type=source_type,
+                meeting_id=meeting_id,
+                contact_id=contact_id,
+                brief_id=brief_id,
+                tracker=tracker,
+            )
+            return result
+
+    async def _propose_memories_batch_impl(
+        self,
+        *,
+        principal: AuthenticatedPrincipal,
+        notes: str,
+        source_type: MemorySourceType,
+        meeting_id: str | None,
+        contact_id: str | None,
+        brief_id: str | None,
+        tracker: SpanOutcomeTracker,
+    ) -> MemoryProposalBatchResult:
         uid = principal.user_id
 
         meeting: Meeting | None = None
@@ -234,9 +267,20 @@ class MemoryPersistenceService:
 
         if not safe_segments:
             if filtered_sensitive > 0:
+                tracker.set_attributes(
+                    {
+                        ATTR_MEMORY_RETRIEVED_COUNT: 0,
+                        ATTR_MEMORY_SAVED_COUNT: 0,
+                        "brew.memory.filtered_sensitive_count": filtered_sensitive,
+                    }
+                )
                 logger.info(
                     "All note segments filtered as sensitive or speculative assumptions",
-                    extra={"event_type": "memory.proposals_filtered_sensitive"},
+                    extra={
+                        "event_type": "memory.proposals_filtered_sensitive",
+                        "operation_name": "memory.propose",
+                        "memory_saved_count": 0,
+                    },
                 )
                 return MemoryProposalBatchResult(
                     proposals=[],
@@ -370,9 +414,23 @@ class MemoryPersistenceService:
                 )
             )
 
+        tracker.set_attributes(
+            {
+                ATTR_MEMORY_RETRIEVED_COUNT: len(existing_memories),
+                ATTR_MEMORY_SAVED_COUNT: len(saved_proposals),
+                "brew.memory.skipped_duplicates": skipped_duplicates,
+                "brew.memory.filtered_sensitive_count": filtered_sensitive,
+            }
+        )
         logger.info(
             "Memory proposals staged for human review",
-            extra={"event_type": "memory.proposals_created"},
+            extra={
+                "event_type": "memory.proposals_created",
+                "operation_name": "memory.propose",
+                "memory_retrieved_count": len(existing_memories),
+                "memory_saved_count": len(saved_proposals),
+                "result_status": "ok",
+            },
         )
         return MemoryProposalBatchResult(
             proposals=saved_proposals,
@@ -435,6 +493,32 @@ class MemoryPersistenceService:
         supersedes_memory_id: str | None = None,
     ) -> Memory:
         """Promote a pending proposal into durable approved ``memories`` storage."""
+        with brew_span(
+            "brew.memory.approve",
+            operation_name="memory.approve",
+            tracer_name=__name__,
+        ) as tracker:
+            return await self._approve_proposal_impl(
+                principal=principal,
+                proposal_id=proposal_id,
+                expected_version=expected_version,
+                edited_text=edited_text,
+                memory_type=memory_type,
+                supersedes_memory_id=supersedes_memory_id,
+                tracker=tracker,
+            )
+
+    async def _approve_proposal_impl(
+        self,
+        *,
+        principal: AuthenticatedPrincipal,
+        proposal_id: str,
+        expected_version: int,
+        edited_text: str | None,
+        memory_type: MemoryType | None,
+        supersedes_memory_id: str | None,
+        tracker: SpanOutcomeTracker,
+    ) -> Memory:
         uid = principal.user_id
         proposal = await self._proposal_repo.get_for_owner(uid, proposal_id)
         if proposal is None:
@@ -558,9 +642,22 @@ class MemoryPersistenceService:
                 reviewed_at=now,
             )
             await self._proposal_repo.save(reviewed_dup, expected_version=expected_version)
+            tracker.set_attributes(
+                {
+                    ATTR_MEMORY_RETRIEVED_COUNT: len(active_existing),
+                    ATTR_MEMORY_SAVED_COUNT: 0,
+                    "brew.memory.deduplicated": True,
+                }
+            )
             logger.info(
                 "Memory proposal deduplicated into existing active memory",
-                extra={"event_type": "memory.deduplicated"},
+                extra={
+                    "event_type": "memory.deduplicated",
+                    "operation_name": "memory.approve",
+                    "memory_retrieved_count": len(active_existing),
+                    "memory_saved_count": 0,
+                    "result_status": "deduplicated",
+                },
             )
             return existing_active_mem
 
@@ -626,9 +723,24 @@ class MemoryPersistenceService:
             )
 
         saved_memory = await self._memory_repo.save(memory)
+        tracker.set_attributes(
+            {
+                ATTR_MEMORY_RETRIEVED_COUNT: len(active_existing),
+                ATTR_MEMORY_SAVED_COUNT: 1,
+                "brew.memory.superseded": target_supersede_memory is not None,
+                "brew.memory.scope": saved_memory.scope.value,
+                "brew.memory.type": saved_memory.memory_type.value,
+            }
+        )
         logger.info(
             "Memory proposal approved and persisted",
-            extra={"event_type": "memory.approved"},
+            extra={
+                "event_type": "memory.approved",
+                "operation_name": "memory.approve",
+                "memory_retrieved_count": len(active_existing),
+                "memory_saved_count": 1,
+                "result_status": "ok",
+            },
         )
         return saved_memory
 

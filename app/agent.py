@@ -147,7 +147,12 @@ def build_adk_app(
         # Must remain "app" to match the `app/` package directory for ADK & agents-cli eval.
         name="app",
         root_agent=coach_agent,
-        plugins=[ConversationCoachGuardrailPlugin()],
+        plugins=[
+            ConversationCoachGuardrailPlugin(
+                agent_version=CONVERSATION_COACH_VERSION,
+                model_name=resolved.gemini_model,
+            )
+        ],
         events_compaction_config=EventsCompactionConfig(
             token_threshold=24000,
             event_retention_size=6,
@@ -162,7 +167,12 @@ root_agent: Agent = conversation_coach
 app: App = App(
     name="app",
     root_agent=root_agent,
-    plugins=[ConversationCoachGuardrailPlugin()],
+    plugins=[
+        ConversationCoachGuardrailPlugin(
+            agent_version=CONVERSATION_COACH_VERSION,
+            model_name=get_settings().gemini_model,
+        )
+    ],
     events_compaction_config=EventsCompactionConfig(
         token_threshold=24000,
         event_retention_size=6,

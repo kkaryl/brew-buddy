@@ -26,6 +26,20 @@ from app.application.memory_retrieval_service import (
     _memory_relevance_key,
     _tokenize_keywords,
 )
+from app.application.telemetry import (
+    ATTR_INPUT_TOKENS,
+    ATTR_MEMORY_RETRIEVED_COUNT,
+    ATTR_MEMORY_SAVED_COUNT,
+    ATTR_OUTPUT_TOKENS,
+    ATTR_REGENERATION_ATTEMPT,
+    ATTR_REGENERATION_COUNT,
+    ATTR_TOTAL_TOKENS,
+    ATTR_VALIDATION_PASSED,
+    ATTR_VALIDATION_STAGE,
+    ATTR_VALIDATION_VIOLATION_COUNT,
+    brew_span,
+    classify_telemetry_error,
+)
 from app.application.untrusted_data import sanitize_untrusted_text
 from app.domain.brief_quality import (
     BriefQualityPolicy,
@@ -144,6 +158,10 @@ class _WorkflowRunCounters:
     regeneration_count: int = 0
     model_invocations: int = 0
     tool_invocations: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+    memories_retrieved: int = 0
 
 
 def _compute_payload_fingerprint(payload: dict[str, object]) -> str:
@@ -283,175 +301,203 @@ class MeetingPreparationWorkflow:
         exclude_meeting_id: str | None = None,
     ) -> BriefPreparationContext:
         """Step 3: Retrieve preferences, history, and approved memories with bounded budget."""
-        uid = principal.user_id
-        safe_contact = _sanitize_contact_for_context(contact)
+        with brew_span(
+            "brew.context.retrieve",
+            operation_name="context.retrieve",
+            tracer_name=__name__,
+        ) as ctx_tracker:
+            uid = principal.user_id
+            safe_contact = _sanitize_contact_for_context(contact)
 
-        empty_pref_memories: list[Memory] = []
-        empty_meetings: list[Meeting] = []
-        empty_contact_memories: list[Memory] = []
-        (
-            user_preferences,
-            raw_pref_memories,
-            raw_meetings,
-            raw_contact_memories,
-        ) = await asyncio.gather(
-            self._call_optional_context_source(
-                "user_preferences",
-                lambda: self._preferences_repo.get_by_owner(uid),
-                fallback=None,
-                degraded_sources=degraded_sources,
-            ),
-            self._call_optional_context_source(
-                "preference_memories",
-                lambda: self._memory_repo.list_by_owner(
-                    uid,
-                    scope=MemoryScope.USER_PREFERENCE,
-                    include_revoked=False,
+            empty_pref_memories: list[Memory] = []
+            empty_meetings: list[Meeting] = []
+            empty_contact_memories: list[Memory] = []
+            (
+                user_preferences,
+                raw_pref_memories,
+                raw_meetings,
+                raw_contact_memories,
+            ) = await asyncio.gather(
+                self._call_optional_context_source(
+                    "user_preferences",
+                    lambda: self._preferences_repo.get_by_owner(uid),
+                    fallback=None,
+                    degraded_sources=degraded_sources,
                 ),
-                fallback=empty_pref_memories,
-                degraded_sources=degraded_sources,
-            ),
-            self._call_optional_context_source(
-                "meeting_history",
-                lambda: self._meeting_repo.list_by_owner(uid, contact_id=contact.id),
-                fallback=empty_meetings,
-                degraded_sources=degraded_sources,
-            ),
-            self._call_optional_context_source(
-                "contact_memories",
-                lambda: self._memory_repo.list_by_owner(
-                    uid,
-                    scope=MemoryScope.CONTACT,
-                    contact_id=contact.id,
-                    include_revoked=False,
+                self._call_optional_context_source(
+                    "preference_memories",
+                    lambda: self._memory_repo.list_by_owner(
+                        uid,
+                        scope=MemoryScope.USER_PREFERENCE,
+                        include_revoked=False,
+                    ),
+                    fallback=empty_pref_memories,
+                    degraded_sources=degraded_sources,
                 ),
-                fallback=empty_contact_memories,
-                degraded_sources=degraded_sources,
-            ),
-        )
-
-        if user_preferences is not None and user_preferences.owner_user_id != uid:
-            user_preferences = None
-
-        objective_tokens = _tokenize_keywords(objective)
-
-        eligible_meetings = [
-            mtg
-            for mtg in raw_meetings
-            if mtg.owner_user_id == uid
-            and mtg.contact_id == contact.id
-            and mtg.status is not MeetingStatus.CANCELLED
-            and (exclude_meeting_id is None or mtg.id != exclude_meeting_id)
-        ]
-        ranked_meetings = sorted(
-            eligible_meetings,
-            key=lambda mtg: _meeting_relevance_key(
-                mtg,
-                target_purpose=purpose,
-                objective_tokens=objective_tokens,
-            ),
-            reverse=True,
-        )
-
-        eligible_pref_memories = [
-            _sanitize_memory_for_context(mem)
-            for mem in raw_pref_memories
-            if mem.owner_user_id == uid
-            and mem.is_active
-            and mem.scope is MemoryScope.USER_PREFERENCE
-        ]
-        ranked_pref_memories = sorted(
-            eligible_pref_memories,
-            key=lambda mem: _memory_relevance_key(mem, objective_tokens=objective_tokens),
-            reverse=True,
-        )
-
-        eligible_contact_memories = [
-            _sanitize_memory_for_context(mem)
-            for mem in raw_contact_memories
-            if mem.owner_user_id == uid
-            and mem.is_active
-            and mem.scope is MemoryScope.CONTACT
-            and mem.contact_id == contact.id
-        ]
-        ranked_contact_memories = sorted(
-            eligible_contact_memories,
-            key=lambda mem: _memory_relevance_key(mem, objective_tokens=objective_tokens),
-            reverse=True,
-        )
-
-        budget = self._context_budget
-        running_chars = min(
-            _estimate_contact_and_prefs_chars(safe_contact, user_preferences),
-            budget.max_total_chars,
-        )
-        was_truncated = False
-
-        selected_pref_items: list[ProvenanceMemoryItem] = []
-        for mem in ranked_pref_memories:
-            if len(selected_pref_items) >= budget.max_preference_memories:
-                was_truncated = True
-                break
-            item = ProvenanceMemoryItem.from_memory(mem)
-            cost = _estimate_memory_item_chars(item)
-            if running_chars + cost > budget.max_total_chars:
-                was_truncated = True
-                continue
-            selected_pref_items.append(item)
-            running_chars += cost
-
-        selected_contact_items: list[ProvenanceMemoryItem] = []
-        for mem in ranked_contact_memories:
-            if len(selected_contact_items) >= budget.max_contact_memories:
-                was_truncated = True
-                break
-            item = ProvenanceMemoryItem.from_memory(mem)
-            cost = _estimate_memory_item_chars(item)
-            if running_chars + cost > budget.max_total_chars:
-                was_truncated = True
-                continue
-            selected_contact_items.append(item)
-            running_chars += cost
-
-        selected_meetings: list[RecentMeetingSummary] = []
-        for mtg in ranked_meetings:
-            if len(selected_meetings) >= budget.max_recent_meetings:
-                was_truncated = True
-                break
-            raw_excerpt = mtg.notes[:280] if mtg.notes else None
-            safe_excerpt: str | None = None
-            if raw_excerpt:
-                cleaned_notes = sanitize_untrusted_text(raw_excerpt, max_chars=280).text
-                safe_excerpt = cleaned_notes or None
-            summary = RecentMeetingSummary(
-                meeting_id=mtg.id,
-                purpose=mtg.purpose,
-                tone=mtg.tone,
-                objective=mtg.objective,
-                duration_minutes=mtg.duration_minutes,
-                scheduled_at=mtg.scheduled_at,
-                status=mtg.status,
-                notes_excerpt=safe_excerpt,
-                updated_at=mtg.updated_at,
+                self._call_optional_context_source(
+                    "meeting_history",
+                    lambda: self._meeting_repo.list_by_owner(uid, contact_id=contact.id),
+                    fallback=empty_meetings,
+                    degraded_sources=degraded_sources,
+                ),
+                self._call_optional_context_source(
+                    "contact_memories",
+                    lambda: self._memory_repo.list_by_owner(
+                        uid,
+                        scope=MemoryScope.CONTACT,
+                        contact_id=contact.id,
+                        include_revoked=False,
+                    ),
+                    fallback=empty_contact_memories,
+                    degraded_sources=degraded_sources,
+                ),
             )
-            cost = _estimate_meeting_summary_chars(summary)
-            if running_chars + cost > budget.max_total_chars:
-                was_truncated = True
-                continue
-            selected_meetings.append(summary)
-            running_chars += cost
 
-        return BriefPreparationContext(
-            owner_user_id=uid,
-            contact=safe_contact,
-            user_preferences=user_preferences,
-            preference_memories=selected_pref_items,
-            contact_memories=selected_contact_items,
-            recent_meetings=selected_meetings,
-            budget=budget,
-            total_context_chars=running_chars,
-            was_truncated=was_truncated,
-        )
+            if user_preferences is not None and user_preferences.owner_user_id != uid:
+                user_preferences = None
+
+            objective_tokens = _tokenize_keywords(objective)
+
+            eligible_meetings = [
+                mtg
+                for mtg in raw_meetings
+                if mtg.owner_user_id == uid
+                and mtg.contact_id == contact.id
+                and mtg.status is not MeetingStatus.CANCELLED
+                and (exclude_meeting_id is None or mtg.id != exclude_meeting_id)
+            ]
+            ranked_meetings = sorted(
+                eligible_meetings,
+                key=lambda mtg: _meeting_relevance_key(
+                    mtg,
+                    target_purpose=purpose,
+                    objective_tokens=objective_tokens,
+                ),
+                reverse=True,
+            )
+
+            eligible_pref_memories = [
+                _sanitize_memory_for_context(mem)
+                for mem in raw_pref_memories
+                if mem.owner_user_id == uid
+                and mem.is_active
+                and mem.scope is MemoryScope.USER_PREFERENCE
+            ]
+            ranked_pref_memories = sorted(
+                eligible_pref_memories,
+                key=lambda mem: _memory_relevance_key(mem, objective_tokens=objective_tokens),
+                reverse=True,
+            )
+
+            eligible_contact_memories = [
+                _sanitize_memory_for_context(mem)
+                for mem in raw_contact_memories
+                if mem.owner_user_id == uid
+                and mem.is_active
+                and mem.scope is MemoryScope.CONTACT
+                and mem.contact_id == contact.id
+            ]
+            ranked_contact_memories = sorted(
+                eligible_contact_memories,
+                key=lambda mem: _memory_relevance_key(mem, objective_tokens=objective_tokens),
+                reverse=True,
+            )
+
+            budget = self._context_budget
+            running_chars = min(
+                _estimate_contact_and_prefs_chars(safe_contact, user_preferences),
+                budget.max_total_chars,
+            )
+            was_truncated = False
+
+            selected_pref_items: list[ProvenanceMemoryItem] = []
+            for mem in ranked_pref_memories:
+                if len(selected_pref_items) >= budget.max_preference_memories:
+                    was_truncated = True
+                    break
+                item = ProvenanceMemoryItem.from_memory(mem)
+                cost = _estimate_memory_item_chars(item)
+                if running_chars + cost > budget.max_total_chars:
+                    was_truncated = True
+                    continue
+                selected_pref_items.append(item)
+                running_chars += cost
+
+            selected_contact_items: list[ProvenanceMemoryItem] = []
+            for mem in ranked_contact_memories:
+                if len(selected_contact_items) >= budget.max_contact_memories:
+                    was_truncated = True
+                    break
+                item = ProvenanceMemoryItem.from_memory(mem)
+                cost = _estimate_memory_item_chars(item)
+                if running_chars + cost > budget.max_total_chars:
+                    was_truncated = True
+                    continue
+                selected_contact_items.append(item)
+                running_chars += cost
+
+            selected_meetings: list[RecentMeetingSummary] = []
+            for mtg in ranked_meetings:
+                if len(selected_meetings) >= budget.max_recent_meetings:
+                    was_truncated = True
+                    break
+                raw_excerpt = mtg.notes[:280] if mtg.notes else None
+                safe_excerpt: str | None = None
+                if raw_excerpt:
+                    cleaned_notes = sanitize_untrusted_text(raw_excerpt, max_chars=280).text
+                    safe_excerpt = cleaned_notes or None
+                summary = RecentMeetingSummary(
+                    meeting_id=mtg.id,
+                    purpose=mtg.purpose,
+                    tone=mtg.tone,
+                    objective=mtg.objective,
+                    duration_minutes=mtg.duration_minutes,
+                    scheduled_at=mtg.scheduled_at,
+                    status=mtg.status,
+                    notes_excerpt=safe_excerpt,
+                    updated_at=mtg.updated_at,
+                )
+                cost = _estimate_meeting_summary_chars(summary)
+                if running_chars + cost > budget.max_total_chars:
+                    was_truncated = True
+                    continue
+                selected_meetings.append(summary)
+                running_chars += cost
+
+            retrieved_memories = len(selected_pref_items) + len(selected_contact_items)
+            ctx_tracker.set_attributes(
+                {
+                    ATTR_MEMORY_RETRIEVED_COUNT: retrieved_memories,
+                    "brew.context.preference_memories_count": len(selected_pref_items),
+                    "brew.context.contact_memories_count": len(selected_contact_items),
+                    "brew.context.recent_meetings_count": len(selected_meetings),
+                    "brew.context.truncated": was_truncated,
+                    "brew.context.degraded_sources_count": len(degraded_sources),
+                }
+            )
+            if degraded_sources:
+                ctx_tracker.mark_degraded("CONTEXT_SOURCE_DEGRADED")
+
+            logger.info(
+                "Retrieved pre-brief context and memories",
+                extra={
+                    "event_type": "workflow.context.retrieved",
+                    "operation_name": "context.retrieve",
+                    "memory_retrieved_count": retrieved_memories,
+                    "result_status": ctx_tracker.status,
+                },
+            )
+            return BriefPreparationContext(
+                owner_user_id=uid,
+                contact=safe_contact,
+                user_preferences=user_preferences,
+                preference_memories=selected_pref_items,
+                contact_memories=selected_contact_items,
+                recent_meetings=selected_meetings,
+                budget=budget,
+                total_context_chars=running_chars,
+                was_truncated=was_truncated,
+            )
 
     def _attach_failure_diagnostics(
         self,
@@ -487,8 +533,15 @@ class MeetingPreparationWorkflow:
             f"Brief workflow terminated with state={terminal_state.value} ({exc.code})",
             extra={
                 "event_type": "workflow.brief.failed",
+                "operation_name": f"workflow.{operation.value}_brief",
                 "request_id": request_id,
                 "trace_id": trace_id,
+                "result_status": "error",
+                "error_type": type(exc).__name__,
+                "error_code": exc.code,
+                "error_classification": classify_telemetry_error(exc),
+                "attempt_count": attempt_count,
+                "regeneration_count": regeneration_count,
             },
         )
         return exc
@@ -617,90 +670,167 @@ class MeetingPreparationWorkflow:
                 max_tool_retries=self._safeguards.max_tool_retries,
             )
 
-            try:
-                generated_raw = await invoke_attempt(feedback, attempt_metrics)
-            except ModelOutputValidationError as exc:
-                last_violations = list(exc.violations) or [exc.message]
-                if attempt < max_attempts:
-                    counters.regeneration_count += 1
-                    feedback = last_violations
-                    logger.info(
-                        "Triggering single corrective regeneration after schema validation error",
-                        extra={"event_type": "workflow.brief.corrective_regeneration"},
-                    )
-                    continue
-                raise ModelOutputValidationError(
-                    "Model output failed strict schema validation after corrective regeneration.",
-                    violations=tuple(last_violations),
-                ) from exc
-            finally:
-                counters.model_invocations += attempt_metrics.model_invocations
-                counters.tool_invocations += attempt_metrics.tool_invocations
-                for tool_name in attempt_metrics.degraded_tools:
-                    if tool_name not in degraded_sources:
-                        degraded_sources.append(tool_name)
+            async def _execute_single_attempt(
+                active_attempt: int,
+                active_feedback: list[str] | None,
+                metrics: BriefAttemptMetrics,
+            ) -> tuple[PreparationBrief | None, list[str], BaseException | None]:
+                try:
+                    generated_raw = await invoke_attempt(active_feedback, metrics)
+                except ModelOutputValidationError as exc:
+                    violations = list(exc.violations) or [exc.message]
+                    return None, violations, exc
+                finally:
+                    counters.model_invocations += metrics.model_invocations
+                    counters.tool_invocations += metrics.tool_invocations
+                    counters.input_tokens += metrics.input_tokens
+                    counters.output_tokens += metrics.output_tokens
+                    counters.total_tokens += metrics.total_tokens
+                    for tool_name in metrics.degraded_tools:
+                        if tool_name not in degraded_sources:
+                            degraded_sources.append(tool_name)
 
-            # Step 5: Strict Pydantic & domain schema validation
-            try:
-                validated_content = GeneratedBriefContent.model_validate(
-                    generated_raw.model_dump()
-                    if isinstance(generated_raw, GeneratedBriefContent)
-                    else generated_raw
-                )
-                if operation is BriefWorkflowOperation.REVISE and current_brief is not None:
-                    validated_content = self._preserve_refinement_defaults(
-                        revised=validated_content,
-                        current_brief=current_brief,
+                with brew_span(
+                    "brew.output.validate",
+                    operation_name="output.validate",
+                    tracer_name=__name__,
+                    agent_name="conversation_coach",
+                    agent_version="1.0.0",
+                    attributes={
+                        ATTR_VALIDATION_STAGE: "domain_and_quality",
+                        ATTR_REGENERATION_ATTEMPT: active_attempt - 1,
+                    },
+                ) as val_tracker:
+                    try:
+                        validated_content = GeneratedBriefContent.model_validate(
+                            generated_raw.model_dump()
+                            if isinstance(generated_raw, GeneratedBriefContent)
+                            else generated_raw
+                        )
+                        if operation is BriefWorkflowOperation.REVISE and current_brief is not None:
+                            validated_content = self._preserve_refinement_defaults(
+                                revised=validated_content,
+                                current_brief=current_brief,
+                                context=context,
+                                instructions=refinement_instructions or "",
+                            )
+                        candidate_brief = build_candidate_brief(validated_content)
+                    except ValidationError as exc:
+                        violations = [
+                            f"[SCHEMA_INVALID] {'.'.join(str(p) for p in err.get('loc', ()))}: "
+                            f"{err.get('msg', 'Invalid field')}"
+                            for err in exc.errors()
+                        ]
+                        val_tracker.set_attributes(
+                            {
+                                ATTR_VALIDATION_PASSED: False,
+                                ATTR_VALIDATION_VIOLATION_COUNT: len(violations),
+                            }
+                        )
+                        val_tracker.mark_error(
+                            "OUTPUT_VALIDATION_ERROR",
+                            error_code="MODEL_OUTPUT_VALIDATION_ERROR",
+                            error_type=type(exc).__name__,
+                        )
+                        return None, violations, exc
+
+                    quality_report = evaluate_brief_quality(
+                        validated_content,
+                        meeting=meeting,
                         context=context,
-                        instructions=refinement_instructions or "",
+                        target_duration_minutes=target_duration_minutes,
+                        target_tone=target_tone,
+                        policy=quality_policy,
+                        current_brief=current_brief,
+                        refinement=refinement,
+                        refinement_instructions=refinement_instructions,
                     )
-                candidate_brief = build_candidate_brief(validated_content)
-            except ValidationError as exc:
-                last_violations = [
-                    f"[SCHEMA_INVALID] {'.'.join(str(p) for p in err.get('loc', ()))}: "
-                    f"{err.get('msg', 'Invalid field')}"
-                    for err in exc.errors()
-                ]
-                if attempt < max_attempts:
-                    counters.regeneration_count += 1
-                    feedback = last_violations
-                    logger.info(
-                        "Triggering single corrective regeneration after domain invariant failure",
-                        extra={"event_type": "workflow.brief.corrective_regeneration"},
+                    if quality_report.passed:
+                        val_tracker.set_attributes(
+                            {
+                                ATTR_VALIDATION_PASSED: True,
+                                ATTR_VALIDATION_VIOLATION_COUNT: 0,
+                            }
+                        )
+                        return candidate_brief, [], None
+
+                    violations = quality_report.formatted_feedback()
+                    val_tracker.set_attributes(
+                        {
+                            ATTR_VALIDATION_PASSED: False,
+                            ATTR_VALIDATION_VIOLATION_COUNT: len(violations),
+                        }
                     )
-                    continue
-                raise ModelOutputValidationError(
-                    "Generated preparation brief failed strict schema validation after "
-                    "corrective regeneration.",
-                    violations=tuple(last_violations),
-                ) from exc
+                    val_tracker.mark_error(
+                        "OUTPUT_VALIDATION_ERROR",
+                        error_code="MODEL_OUTPUT_VALIDATION_ERROR",
+                        error_type="BriefQualityViolation",
+                    )
+                    return None, violations, None
 
-            # Step 6: Deterministic quality checks
-            quality_report = evaluate_brief_quality(
-                validated_content,
-                meeting=meeting,
-                context=context,
-                target_duration_minutes=target_duration_minutes,
-                target_tone=target_tone,
-                policy=quality_policy,
-                current_brief=current_brief,
-                refinement=refinement,
-                refinement_instructions=refinement_instructions,
-            )
-            if quality_report.passed:
-                return candidate_brief
+            if attempt > 1:
+                with brew_span(
+                    "brew.workflow.corrective_regeneration",
+                    operation_name="workflow.corrective_regeneration",
+                    tracer_name=__name__,
+                    agent_name="conversation_coach",
+                    agent_version="1.0.0",
+                    attributes={
+                        ATTR_REGENERATION_ATTEMPT: attempt - 1,
+                        "brew.validation.prior_violation_count": len(feedback or ()),
+                    },
+                ) as regen_tracker:
+                    candidate, last_violations, cause = await _execute_single_attempt(
+                        attempt,
+                        feedback,
+                        attempt_metrics,
+                    )
+                    if candidate is not None:
+                        regen_tracker.status = "repaired"
+                        return candidate
+                    regen_tracker.mark_error(
+                        "OUTPUT_VALIDATION_ERROR",
+                        error_code="MODEL_OUTPUT_VALIDATION_ERROR",
+                        error_type=(
+                            type(cause).__name__ if cause is not None else "BriefQualityViolation"
+                        ),
+                    )
+            else:
+                candidate, last_violations, cause = await _execute_single_attempt(
+                    attempt,
+                    feedback,
+                    attempt_metrics,
+                )
+                if candidate is not None:
+                    return candidate
 
-            # Step 7: Perform at most ONE corrective regeneration if needed
-            last_violations = quality_report.formatted_feedback()
             if attempt < max_attempts:
                 counters.regeneration_count += 1
                 feedback = last_violations
                 logger.info(
-                    "Triggering single corrective regeneration after quality check failure",
-                    extra={"event_type": "workflow.brief.corrective_regeneration"},
+                    "Triggering single corrective regeneration after output validation failure",
+                    extra={
+                        "event_type": "workflow.brief.corrective_regeneration",
+                        "operation_name": "workflow.corrective_regeneration",
+                        "agent_name": "conversation_coach",
+                        "attempt_count": attempt,
+                        "regeneration_count": counters.regeneration_count,
+                        "error_classification": "OUTPUT_VALIDATION_ERROR",
+                    },
                 )
                 continue
 
+            if isinstance(cause, ModelOutputValidationError):
+                raise ModelOutputValidationError(
+                    "Model output failed strict schema validation after corrective regeneration.",
+                    violations=tuple(last_violations),
+                ) from cause
+            if isinstance(cause, ValidationError):
+                raise ModelOutputValidationError(
+                    "Generated preparation brief failed strict schema validation after "
+                    "corrective regeneration.",
+                    violations=tuple(last_violations),
+                ) from cause
             raise ModelOutputValidationError(
                 "Generated preparation brief failed deterministic quality checks after "
                 "corrective regeneration.",
@@ -766,7 +896,16 @@ class MeetingPreparationWorkflow:
         trace_id: str | None = None,
     ) -> BriefWorkflowResult:
         """Execute Brew's end-to-end 9-step initial brief generation workflow."""
-        with bind_workflow_correlation(request_id=request_id, trace_id=trace_id) as corr:
+        with (
+            bind_workflow_correlation(request_id=request_id, trace_id=trace_id) as corr,
+            brew_span(
+                "brew.workflow.generate_brief",
+                operation_name="workflow.generate_brief",
+                tracer_name=__name__,
+                agent_name="conversation_coach",
+                agent_version="1.0.0",
+            ) as wf_tracker,
+        ):
             counters = _WorkflowRunCounters()
             degraded_sources: list[str] = []
 
@@ -847,6 +986,9 @@ class MeetingPreparationWorkflow:
                         objective=validated_in.meeting_objective,
                         degraded_sources=degraded_sources,
                     )
+                    counters.memories_retrieved = len(context.preference_memories) + len(
+                        context.contact_memories
+                    )
 
                     now = self._clock.now_utc()
                     meeting_id = self._id_generator.new_id("mtg")
@@ -921,27 +1063,50 @@ class MeetingPreparationWorkflow:
                     )
 
                     # Step 8: Persist versioned meeting and preparation brief (with snapshot)
-                    saved_meeting = await self._meeting_repo.save(meeting)
-                    saved_brief = await self._brief_repo.save(validated_brief)
+                    with brew_span(
+                        "brew.persistence.save_brief_artifacts",
+                        operation_name="persistence.save_brief_artifacts",
+                        tracer_name=__name__,
+                        is_persistence=True,
+                    ):
+                        saved_meeting = await self._meeting_repo.save(meeting)
+                        saved_brief = await self._brief_repo.save(validated_brief)
 
-                    if dedup_key and self._idempotency_repo is not None:
-                        await self._idempotency_repo.save(
-                            WorkflowIdempotencyRecord(
-                                owner_user_id=principal.user_id,
-                                operation=BriefWorkflowOperation.GENERATE,
-                                idempotency_key=dedup_key,
-                                payload_fingerprint=fingerprint,
-                                brief_id=saved_brief.id,
-                                brief_version=saved_brief.version,
-                                meeting_id=saved_meeting.id,
-                                created_at=now,
+                        if dedup_key and self._idempotency_repo is not None:
+                            await self._idempotency_repo.save(
+                                WorkflowIdempotencyRecord(
+                                    owner_user_id=principal.user_id,
+                                    operation=BriefWorkflowOperation.GENERATE,
+                                    idempotency_key=dedup_key,
+                                    payload_fingerprint=fingerprint,
+                                    brief_id=saved_brief.id,
+                                    brief_version=saved_brief.version,
+                                    meeting_id=saved_meeting.id,
+                                    created_at=now,
+                                )
                             )
-                        )
 
                     terminal_state = (
                         BriefWorkflowTerminalState.COMPLETED_REPAIRED
                         if counters.regeneration_count > 0
                         else BriefWorkflowTerminalState.COMPLETED
+                    )
+                    wf_tracker.status = terminal_state.value
+                    wf_tracker.set_attributes(
+                        {
+                            ATTR_MEMORY_RETRIEVED_COUNT: counters.memories_retrieved,
+                            ATTR_MEMORY_SAVED_COUNT: 0,
+                            ATTR_REGENERATION_COUNT: counters.regeneration_count,
+                            ATTR_INPUT_TOKENS: (
+                                counters.input_tokens if counters.input_tokens > 0 else None
+                            ),
+                            ATTR_OUTPUT_TOKENS: (
+                                counters.output_tokens if counters.output_tokens > 0 else None
+                            ),
+                            ATTR_TOTAL_TOKENS: (
+                                counters.total_tokens if counters.total_tokens > 0 else None
+                            ),
+                        }
                     )
                     diagnostics = BriefWorkflowDiagnostics(
                         request_id=corr.request_id,
@@ -961,8 +1126,25 @@ class MeetingPreparationWorkflow:
                         f"Preparation brief generated (state={terminal_state.value})",
                         extra={
                             "event_type": "brief.generated",
+                            "operation_name": "workflow.generate_brief",
                             "request_id": corr.request_id,
                             "trace_id": corr.trace_id,
+                            "agent_name": "conversation_coach",
+                            "agent_version": "1.0.0",
+                            "result_status": terminal_state.value,
+                            "memory_retrieved_count": counters.memories_retrieved,
+                            "memory_saved_count": 0,
+                            "attempt_count": counters.attempt_count,
+                            "regeneration_count": counters.regeneration_count,
+                            "input_tokens": (
+                                counters.input_tokens if counters.input_tokens > 0 else None
+                            ),
+                            "output_tokens": (
+                                counters.output_tokens if counters.output_tokens > 0 else None
+                            ),
+                            "total_tokens": (
+                                counters.total_tokens if counters.total_tokens > 0 else None
+                            ),
                         },
                     )
                     # Step 9: Return structured workflow result
@@ -1002,7 +1184,16 @@ class MeetingPreparationWorkflow:
         trace_id: str | None = None,
     ) -> BriefWorkflowResult:
         """Execute Brew's end-to-end 9-step brief refinement workflow."""
-        with bind_workflow_correlation(request_id=request_id, trace_id=trace_id) as corr:
+        with (
+            bind_workflow_correlation(request_id=request_id, trace_id=trace_id) as corr,
+            brew_span(
+                "brew.workflow.revise_brief",
+                operation_name="workflow.revise_brief",
+                tracer_name=__name__,
+                agent_name="conversation_coach",
+                agent_version="1.0.0",
+            ) as wf_tracker,
+        ):
             counters = _WorkflowRunCounters()
             degraded_sources: list[str] = []
             previous_version: int | None = None
@@ -1108,6 +1299,9 @@ class MeetingPreparationWorkflow:
                         degraded_sources=degraded_sources,
                         exclude_meeting_id=meeting.id,
                     )
+                    counters.memories_retrieved = len(context.preference_memories) + len(
+                        context.contact_memories
+                    )
 
                     explicit_q_count = (
                         context.user_preferences.preferred_question_count
@@ -1167,56 +1361,79 @@ class MeetingPreparationWorkflow:
                     )
 
                     # Step 8: Persist new version (archiving previous revision immutably)
-                    saved_brief = await self._brief_repo.save(
-                        revised_brief,
-                        expected_version=validated_in.expected_version,
-                    )
-
-                    saved_meeting = meeting
-                    if (
-                        target_duration != meeting.duration_minutes
-                        or target_tone != meeting.tone
-                        or revised_brief.meeting_objective != meeting.objective
+                    with brew_span(
+                        "brew.persistence.save_brief_artifacts",
+                        operation_name="persistence.save_brief_artifacts",
+                        tracer_name=__name__,
+                        is_persistence=True,
                     ):
-                        updated_meeting = Meeting(
-                            id=meeting.id,
-                            owner_user_id=meeting.owner_user_id,
-                            contact_id=meeting.contact_id,
-                            purpose=meeting.purpose,
-                            tone=target_tone,
-                            objective=revised_brief.meeting_objective,
-                            duration_minutes=target_duration,
-                            scheduled_at=meeting.scheduled_at,
-                            notes=meeting.notes,
-                            status=meeting.status,
-                            latest_brief_id=saved_brief.id,
-                            created_at=meeting.created_at,
-                            updated_at=max(now, meeting.created_at),
-                            version=meeting.version + 1,
-                        )
-                        saved_meeting = await self._meeting_repo.save(
-                            updated_meeting,
-                            expected_version=meeting.version,
+                        saved_brief = await self._brief_repo.save(
+                            revised_brief,
+                            expected_version=validated_in.expected_version,
                         )
 
-                    if dedup_key and self._idempotency_repo is not None:
-                        await self._idempotency_repo.save(
-                            WorkflowIdempotencyRecord(
-                                owner_user_id=principal.user_id,
-                                operation=BriefWorkflowOperation.REVISE,
-                                idempotency_key=dedup_key,
-                                payload_fingerprint=fingerprint,
-                                brief_id=saved_brief.id,
-                                brief_version=saved_brief.version,
-                                meeting_id=saved_meeting.id,
-                                created_at=now,
+                        saved_meeting = meeting
+                        if (
+                            target_duration != meeting.duration_minutes
+                            or target_tone != meeting.tone
+                            or revised_brief.meeting_objective != meeting.objective
+                        ):
+                            updated_meeting = Meeting(
+                                id=meeting.id,
+                                owner_user_id=meeting.owner_user_id,
+                                contact_id=meeting.contact_id,
+                                purpose=meeting.purpose,
+                                tone=target_tone,
+                                objective=revised_brief.meeting_objective,
+                                duration_minutes=target_duration,
+                                scheduled_at=meeting.scheduled_at,
+                                notes=meeting.notes,
+                                status=meeting.status,
+                                latest_brief_id=saved_brief.id,
+                                created_at=meeting.created_at,
+                                updated_at=max(now, meeting.created_at),
+                                version=meeting.version + 1,
                             )
-                        )
+                            saved_meeting = await self._meeting_repo.save(
+                                updated_meeting,
+                                expected_version=meeting.version,
+                            )
+
+                        if dedup_key and self._idempotency_repo is not None:
+                            await self._idempotency_repo.save(
+                                WorkflowIdempotencyRecord(
+                                    owner_user_id=principal.user_id,
+                                    operation=BriefWorkflowOperation.REVISE,
+                                    idempotency_key=dedup_key,
+                                    payload_fingerprint=fingerprint,
+                                    brief_id=saved_brief.id,
+                                    brief_version=saved_brief.version,
+                                    meeting_id=saved_meeting.id,
+                                    created_at=now,
+                                )
+                            )
 
                     terminal_state = (
                         BriefWorkflowTerminalState.COMPLETED_REPAIRED
                         if counters.regeneration_count > 0
                         else BriefWorkflowTerminalState.COMPLETED
+                    )
+                    wf_tracker.status = terminal_state.value
+                    wf_tracker.set_attributes(
+                        {
+                            ATTR_MEMORY_RETRIEVED_COUNT: counters.memories_retrieved,
+                            ATTR_MEMORY_SAVED_COUNT: 0,
+                            ATTR_REGENERATION_COUNT: counters.regeneration_count,
+                            ATTR_INPUT_TOKENS: (
+                                counters.input_tokens if counters.input_tokens > 0 else None
+                            ),
+                            ATTR_OUTPUT_TOKENS: (
+                                counters.output_tokens if counters.output_tokens > 0 else None
+                            ),
+                            ATTR_TOTAL_TOKENS: (
+                                counters.total_tokens if counters.total_tokens > 0 else None
+                            ),
+                        }
                     )
                     diagnostics = BriefWorkflowDiagnostics(
                         request_id=corr.request_id,
@@ -1237,8 +1454,25 @@ class MeetingPreparationWorkflow:
                         f"(state={terminal_state.value})",
                         extra={
                             "event_type": "brief.revised",
+                            "operation_name": "workflow.revise_brief",
                             "request_id": corr.request_id,
                             "trace_id": corr.trace_id,
+                            "agent_name": "conversation_coach",
+                            "agent_version": "1.0.0",
+                            "result_status": terminal_state.value,
+                            "memory_retrieved_count": counters.memories_retrieved,
+                            "memory_saved_count": 0,
+                            "attempt_count": counters.attempt_count,
+                            "regeneration_count": counters.regeneration_count,
+                            "input_tokens": (
+                                counters.input_tokens if counters.input_tokens > 0 else None
+                            ),
+                            "output_tokens": (
+                                counters.output_tokens if counters.output_tokens > 0 else None
+                            ),
+                            "total_tokens": (
+                                counters.total_tokens if counters.total_tokens > 0 else None
+                            ),
                         },
                     )
                     # Step 9: Return structured workflow result

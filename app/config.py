@@ -77,6 +77,18 @@ class AppSettings(BaseSettings):
         validation_alias="ALLOW_ORIGINS",
     )
     otel_to_cloud: bool | None = Field(default=None, validation_alias="OTEL_TO_CLOUD")
+    cloud_trace_enabled: bool | None = Field(
+        default=None,
+        validation_alias="BREW_CLOUD_TRACE_ENABLED",
+    )
+    telemetry_capture_content: bool = Field(
+        default=False,
+        validation_alias="BREW_TELEMETRY_CAPTURE_CONTENT",
+    )
+    telemetry_upload_completions: bool = Field(
+        default=False,
+        validation_alias="BREW_TELEMETRY_UPLOAD_COMPLETIONS",
+    )
     enable_adk_web_ui: bool = Field(default=False, validation_alias="ENABLE_ADK_WEB_UI")
 
     http_timeout_seconds: float = Field(
@@ -282,6 +294,21 @@ class AppSettings(BaseSettings):
             os.environ.get("K_SERVICE")
             or os.environ.get("GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY")
         )
+
+    @property
+    def cloud_trace_export_enabled(self) -> bool:
+        """Return True when Google Cloud Trace span export is enabled."""
+        if self.cloud_trace_enabled is not None:
+            return self.cloud_trace_enabled
+        return self.otel_enabled
+
+    @property
+    def resolved_gcp_project_for_telemetry(self) -> str | None:
+        """Return configured GCP project ID when set to a non-placeholder value."""
+        gcp = (self.google_cloud_project or "").strip()
+        if gcp and gcp != "your-gcp-project-id":
+            return gcp
+        return None
 
 
 @functools.lru_cache(maxsize=1)

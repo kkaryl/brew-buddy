@@ -6,6 +6,7 @@ import asyncio
 import logging
 import re
 
+from app.application.telemetry import ATTR_MEMORY_RETRIEVED_COUNT, brew_span
 from app.domain.errors import (
     AuthorizationError,
     DomainValidationError,
@@ -157,160 +158,178 @@ class MemoryRetrievalService:
         budget: ContextBudget | None = None,
     ) -> BriefPreparationContext:
         """Execute the 5-step retrieval workflow strictly scoped to ``principal.user_id``."""
-        active_budget = budget or self._default_budget
-        uid = principal.user_id
+        with brew_span(
+            "brew.memory.retrieve_context",
+            operation_name="memory.retrieve_context",
+            tracer_name=__name__,
+        ) as tracker:
+            active_budget = budget or self._default_budget
+            uid = principal.user_id
 
-        # 1. Load approved user preferences (structured profile + consented preference memories)
-        user_preferences, raw_preference_memories = await asyncio.gather(
-            self._preferences_repo.get_by_owner(uid),
-            self._memory_repo.list_by_owner(
-                uid,
-                scope=MemoryScope.USER_PREFERENCE,
-                include_revoked=False,
-            ),
-        )
-        if user_preferences is not None and user_preferences.owner_user_id != uid:
-            user_preferences = None
-
-        # 2. Load the selected contact profile (strictly enforcing caller ownership)
-        contact = await self._contact_repo.get_for_owner(uid, contact_id)
-        if contact is None:
-            if await self._contact_repo.exists_for_any_owner(contact_id):
-                raise AuthorizationError()
-            raise EntityNotFoundError(entity_name="Contact", entity_id=contact_id)
-
-        # 3 & 4. Retrieve contact's recent relevant meetings and approved contact memories
-        raw_meetings, raw_contact_memories = await asyncio.gather(
-            self._meeting_repo.list_by_owner(uid, contact_id=contact.id),
-            self._memory_repo.list_by_owner(
-                uid,
-                scope=MemoryScope.CONTACT,
-                contact_id=contact.id,
-                include_revoked=False,
-            ),
-        )
-
-        objective_tokens = _tokenize_keywords(objective)
-
-        eligible_meetings = [
-            mtg
-            for mtg in raw_meetings
-            if mtg.owner_user_id == uid
-            and mtg.contact_id == contact.id
-            and mtg.status is not MeetingStatus.CANCELLED
-            and (exclude_meeting_id is None or mtg.id != exclude_meeting_id)
-        ]
-        ranked_meetings = sorted(
-            eligible_meetings,
-            key=lambda mtg: _meeting_relevance_key(
-                mtg,
-                target_purpose=purpose,
-                objective_tokens=objective_tokens,
-            ),
-            reverse=True,
-        )
-
-        eligible_pref_memories = [
-            mem
-            for mem in raw_preference_memories
-            if mem.owner_user_id == uid
-            and mem.is_active
-            and mem.scope is MemoryScope.USER_PREFERENCE
-        ]
-        ranked_pref_memories = sorted(
-            eligible_pref_memories,
-            key=lambda mem: _memory_relevance_key(mem, objective_tokens=objective_tokens),
-            reverse=True,
-        )
-
-        eligible_contact_memories = [
-            mem
-            for mem in raw_contact_memories
-            if mem.owner_user_id == uid
-            and mem.is_active
-            and mem.scope is MemoryScope.CONTACT
-            and mem.contact_id == contact.id
-        ]
-        ranked_contact_memories = sorted(
-            eligible_contact_memories,
-            key=lambda mem: _memory_relevance_key(mem, objective_tokens=objective_tokens),
-            reverse=True,
-        )
-
-        # 5. Build a bounded, provenance-aware context object
-        base_chars = min(
-            _estimate_contact_and_prefs_chars(contact, user_preferences),
-            active_budget.max_total_chars,
-        )
-        running_chars = base_chars
-        was_truncated = False
-
-        selected_pref_items: list[ProvenanceMemoryItem] = []
-        for mem in ranked_pref_memories:
-            if len(selected_pref_items) >= active_budget.max_preference_memories:
-                was_truncated = True
-                break
-            candidate_item = ProvenanceMemoryItem.from_memory(mem)
-            cost = _estimate_memory_item_chars(candidate_item)
-            if running_chars + cost > active_budget.max_total_chars:
-                was_truncated = True
-                continue
-            selected_pref_items.append(candidate_item)
-            running_chars += cost
-
-        selected_contact_items: list[ProvenanceMemoryItem] = []
-        for mem in ranked_contact_memories:
-            if len(selected_contact_items) >= active_budget.max_contact_memories:
-                was_truncated = True
-                break
-            candidate_item = ProvenanceMemoryItem.from_memory(mem)
-            cost = _estimate_memory_item_chars(candidate_item)
-            if running_chars + cost > active_budget.max_total_chars:
-                was_truncated = True
-                continue
-            selected_contact_items.append(candidate_item)
-            running_chars += cost
-
-        selected_meetings: list[RecentMeetingSummary] = []
-        for mtg in ranked_meetings:
-            if len(selected_meetings) >= active_budget.max_recent_meetings:
-                was_truncated = True
-                break
-            excerpt = mtg.notes[:280] if mtg.notes else None
-            summary = RecentMeetingSummary(
-                meeting_id=mtg.id,
-                purpose=mtg.purpose,
-                tone=mtg.tone,
-                objective=mtg.objective,
-                duration_minutes=mtg.duration_minutes,
-                scheduled_at=mtg.scheduled_at,
-                status=mtg.status,
-                notes_excerpt=excerpt,
-                updated_at=mtg.updated_at,
+            # 1. Load approved user preferences (structured profile + consented preference memories)
+            user_preferences, raw_preference_memories = await asyncio.gather(
+                self._preferences_repo.get_by_owner(uid),
+                self._memory_repo.list_by_owner(
+                    uid,
+                    scope=MemoryScope.USER_PREFERENCE,
+                    include_revoked=False,
+                ),
             )
-            cost = _estimate_meeting_summary_chars(summary)
-            if running_chars + cost > active_budget.max_total_chars:
-                was_truncated = True
-                continue
-            selected_meetings.append(summary)
-            running_chars += cost
+            if user_preferences is not None and user_preferences.owner_user_id != uid:
+                user_preferences = None
 
-        context = BriefPreparationContext(
-            owner_user_id=uid,
-            contact=contact,
-            user_preferences=user_preferences,
-            preference_memories=selected_pref_items,
-            contact_memories=selected_contact_items,
-            recent_meetings=selected_meetings,
-            budget=active_budget,
-            total_context_chars=running_chars,
-            was_truncated=was_truncated,
-        )
-        logger.info(
-            "Assembled bounded brief preparation context",
-            extra={"event_type": "memory.context_assembled"},
-        )
-        return context
+            # 2. Load the selected contact profile (strictly enforcing caller ownership)
+            contact = await self._contact_repo.get_for_owner(uid, contact_id)
+            if contact is None:
+                if await self._contact_repo.exists_for_any_owner(contact_id):
+                    raise AuthorizationError()
+                raise EntityNotFoundError(entity_name="Contact", entity_id=contact_id)
+
+            # 3 & 4. Retrieve contact's recent relevant meetings and approved contact memories
+            raw_meetings, raw_contact_memories = await asyncio.gather(
+                self._meeting_repo.list_by_owner(uid, contact_id=contact.id),
+                self._memory_repo.list_by_owner(
+                    uid,
+                    scope=MemoryScope.CONTACT,
+                    contact_id=contact.id,
+                    include_revoked=False,
+                ),
+            )
+
+            objective_tokens = _tokenize_keywords(objective)
+
+            eligible_meetings = [
+                mtg
+                for mtg in raw_meetings
+                if mtg.owner_user_id == uid
+                and mtg.contact_id == contact.id
+                and mtg.status is not MeetingStatus.CANCELLED
+                and (exclude_meeting_id is None or mtg.id != exclude_meeting_id)
+            ]
+            ranked_meetings = sorted(
+                eligible_meetings,
+                key=lambda mtg: _meeting_relevance_key(
+                    mtg,
+                    target_purpose=purpose,
+                    objective_tokens=objective_tokens,
+                ),
+                reverse=True,
+            )
+
+            eligible_pref_memories = [
+                mem
+                for mem in raw_preference_memories
+                if mem.owner_user_id == uid
+                and mem.is_active
+                and mem.scope is MemoryScope.USER_PREFERENCE
+            ]
+            ranked_pref_memories = sorted(
+                eligible_pref_memories,
+                key=lambda mem: _memory_relevance_key(mem, objective_tokens=objective_tokens),
+                reverse=True,
+            )
+
+            eligible_contact_memories = [
+                mem
+                for mem in raw_contact_memories
+                if mem.owner_user_id == uid
+                and mem.is_active
+                and mem.scope is MemoryScope.CONTACT
+                and mem.contact_id == contact.id
+            ]
+            ranked_contact_memories = sorted(
+                eligible_contact_memories,
+                key=lambda mem: _memory_relevance_key(mem, objective_tokens=objective_tokens),
+                reverse=True,
+            )
+
+            # 5. Build a bounded, provenance-aware context object
+            base_chars = min(
+                _estimate_contact_and_prefs_chars(contact, user_preferences),
+                active_budget.max_total_chars,
+            )
+            running_chars = base_chars
+            was_truncated = False
+
+            selected_pref_items: list[ProvenanceMemoryItem] = []
+            for mem in ranked_pref_memories:
+                if len(selected_pref_items) >= active_budget.max_preference_memories:
+                    was_truncated = True
+                    break
+                candidate_item = ProvenanceMemoryItem.from_memory(mem)
+                cost = _estimate_memory_item_chars(candidate_item)
+                if running_chars + cost > active_budget.max_total_chars:
+                    was_truncated = True
+                    continue
+                selected_pref_items.append(candidate_item)
+                running_chars += cost
+
+            selected_contact_items: list[ProvenanceMemoryItem] = []
+            for mem in ranked_contact_memories:
+                if len(selected_contact_items) >= active_budget.max_contact_memories:
+                    was_truncated = True
+                    break
+                candidate_item = ProvenanceMemoryItem.from_memory(mem)
+                cost = _estimate_memory_item_chars(candidate_item)
+                if running_chars + cost > active_budget.max_total_chars:
+                    was_truncated = True
+                    continue
+                selected_contact_items.append(candidate_item)
+                running_chars += cost
+
+            selected_meetings: list[RecentMeetingSummary] = []
+            for mtg in ranked_meetings:
+                if len(selected_meetings) >= active_budget.max_recent_meetings:
+                    was_truncated = True
+                    break
+                excerpt = mtg.notes[:280] if mtg.notes else None
+                summary = RecentMeetingSummary(
+                    meeting_id=mtg.id,
+                    purpose=mtg.purpose,
+                    tone=mtg.tone,
+                    objective=mtg.objective,
+                    duration_minutes=mtg.duration_minutes,
+                    scheduled_at=mtg.scheduled_at,
+                    status=mtg.status,
+                    notes_excerpt=excerpt,
+                    updated_at=mtg.updated_at,
+                )
+                cost = _estimate_meeting_summary_chars(summary)
+                if running_chars + cost > active_budget.max_total_chars:
+                    was_truncated = True
+                    continue
+                selected_meetings.append(summary)
+                running_chars += cost
+
+            retrieved_count = len(selected_pref_items) + len(selected_contact_items)
+            tracker.set_attributes(
+                {
+                    ATTR_MEMORY_RETRIEVED_COUNT: retrieved_count,
+                    "brew.context.recent_meetings_count": len(selected_meetings),
+                    "brew.context.truncated": was_truncated,
+                }
+            )
+            context = BriefPreparationContext(
+                owner_user_id=uid,
+                contact=contact,
+                user_preferences=user_preferences,
+                preference_memories=selected_pref_items,
+                contact_memories=selected_contact_items,
+                recent_meetings=selected_meetings,
+                budget=active_budget,
+                total_context_chars=running_chars,
+                was_truncated=was_truncated,
+            )
+            logger.info(
+                "Assembled bounded brief preparation context",
+                extra={
+                    "event_type": "memory.context_assembled",
+                    "operation_name": "memory.retrieve_context",
+                    "memory_retrieved_count": retrieved_count,
+                    "result_status": "ok",
+                },
+            )
+            return context
 
     async def list_memories(
         self,
@@ -323,23 +342,40 @@ class MemoryRetrievalService:
         include_superseded: bool = False,
     ) -> list[Memory]:
         """List approved memories strictly owned by ``principal``."""
-        if scope is MemoryScope.USER_PREFERENCE and contact_id is not None:
-            raise DomainValidationError(
-                "contact_id filter cannot be combined with scope='user_preference'."
-            )
-        if contact_id is not None:
-            contact = await self._contact_repo.get_for_owner(principal.user_id, contact_id)
-            if contact is None:
-                if await self._contact_repo.exists_for_any_owner(contact_id):
-                    raise AuthorizationError()
-                raise EntityNotFoundError(entity_name="Contact", entity_id=contact_id)
+        with brew_span(
+            "brew.memory.retrieve",
+            operation_name="memory.retrieve",
+            tracer_name=__name__,
+        ) as tracker:
+            if scope is MemoryScope.USER_PREFERENCE and contact_id is not None:
+                raise DomainValidationError(
+                    "contact_id filter cannot be combined with scope='user_preference'."
+                )
+            if contact_id is not None:
+                contact = await self._contact_repo.get_for_owner(principal.user_id, contact_id)
+                if contact is None:
+                    if await self._contact_repo.exists_for_any_owner(contact_id):
+                        raise AuthorizationError()
+                    raise EntityNotFoundError(entity_name="Contact", entity_id=contact_id)
 
-        records = await self._memory_repo.list_by_owner(
-            principal.user_id,
-            scope=scope,
-            contact_id=contact_id,
-            memory_type=memory_type,
-            include_revoked=include_revoked,
-            include_superseded=include_superseded,
-        )
-        return [mem for mem in records if mem.owner_user_id == principal.user_id]
+            records = await self._memory_repo.list_by_owner(
+                principal.user_id,
+                scope=scope,
+                contact_id=contact_id,
+                memory_type=memory_type,
+                include_revoked=include_revoked,
+                include_superseded=include_superseded,
+            )
+            results = [mem for mem in records if mem.owner_user_id == principal.user_id]
+            tracker.status = "empty" if not results else "ok"
+            tracker.set_attribute(ATTR_MEMORY_RETRIEVED_COUNT, len(results))
+            logger.info(
+                f"Retrieved {len(results)} approved memories",
+                extra={
+                    "event_type": "memory.retrieved",
+                    "operation_name": "memory.retrieve",
+                    "memory_retrieved_count": len(results),
+                    "result_status": tracker.status,
+                },
+            )
+            return results

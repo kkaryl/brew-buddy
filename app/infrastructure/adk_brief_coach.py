@@ -20,6 +20,15 @@ from opentelemetry import trace
 from pydantic import ValidationError
 
 from app.application.correlation import resolve_or_create_correlation
+from app.application.telemetry import (
+    ATTR_INPUT_TOKENS,
+    ATTR_OUTPUT_TOKENS,
+    ATTR_TOTAL_TOKENS,
+    ATTR_VALIDATION_PASSED,
+    ATTR_VALIDATION_STAGE,
+    ATTR_VALIDATION_VIOLATION_COUNT,
+    brew_span,
+)
 from app.config import AppSettings, get_settings
 from app.domain.errors import (
     BrewDomainError,
@@ -34,6 +43,7 @@ from app.domain.models import (
 )
 from app.domain.ports import BriefAttemptMetrics, GeneratedBriefContent
 from app.domain.types import MeetingDurationMinutes, MeetingTone
+from app.infrastructure.observability import build_adk_telemetry_config
 from app.plugins.coach_guardrails import ConversationCoachGuardrailPlugin
 from app.plugins.workflow_safeguards import WorkflowSafeguardPlugin
 from app.tools.coaching_tools import CoachingToolDependencies, build_coaching_tools
@@ -301,6 +311,8 @@ class AdkConversationCoachBriefAdapter:
         span_name: str,
         attempt_metrics: BriefAttemptMetrics | None,
     ) -> GeneratedBriefContent:
+        from app.agent import CONVERSATION_COACH_VERSION
+
         corr = resolve_or_create_correlation()
         metrics = attempt_metrics if attempt_metrics is not None else BriefAttemptMetrics()
 
@@ -311,14 +323,21 @@ class AdkConversationCoachBriefAdapter:
             )
 
         coach_agent = self._build_workflow_agent()
+        resolved_model_name = (
+            getattr(coach_agent.model, "model", None) or self._settings.gemini_model
+        )
         safeguard_plugin = WorkflowSafeguardPlugin(
             attempt_metrics=metrics,
             max_total_tool_calls=self._max_total_tool_calls,
         )
+        guardrail_plugin = ConversationCoachGuardrailPlugin(
+            agent_version=CONVERSATION_COACH_VERSION,
+            model_name=str(resolved_model_name),
+        )
         adk_app = App(
             name="app",
             root_agent=coach_agent,
-            plugins=[ConversationCoachGuardrailPlugin(), safeguard_plugin],
+            plugins=[guardrail_plugin, safeguard_plugin],
         )
         session_service = InMemorySessionService()
         runner = Runner(
@@ -327,7 +346,10 @@ class AdkConversationCoachBriefAdapter:
             auto_create_session=True,
         )
         session_id = f"wf_{corr.request_id}_{uuid.uuid4().hex[:8]}"
-        run_config = RunConfig(max_llm_calls=metrics.remaining_model_budget)
+        run_config = RunConfig(
+            max_llm_calls=metrics.remaining_model_budget,
+            telemetry=build_adk_telemetry_config(self._settings),
+        )
 
         async def _collect_final_text() -> str:
             final_text_chunks: list[str] = []
@@ -364,11 +386,14 @@ class AdkConversationCoachBriefAdapter:
                 )
             return final_text_chunks[-1] if final_text_chunks else ""
 
-        with _tracer.start_as_current_span(span_name) as span:
-            span.set_attribute("brew.request_id", corr.request_id)
-            span.set_attribute("brew.trace_id", corr.trace_id)
-            span.set_attribute("brew.agent_name", coach_agent.name)
-
+        with brew_span(
+            span_name,
+            operation_name=span_name,
+            tracer_name=__name__,
+            agent_name=coach_agent.name,
+            agent_version=CONVERSATION_COACH_VERSION,
+            model_name=str(resolved_model_name),
+        ) as turn_tracker:
             try:
                 raw_text = await asyncio.wait_for(
                     _collect_final_text(),
@@ -379,9 +404,16 @@ class AdkConversationCoachBriefAdapter:
                     f"ADK conversation_coach timed out after {self._model_timeout_seconds}s",
                     extra={
                         "event_type": "workflow.model.timeout",
+                        "operation_name": span_name,
                         "agent_name": coach_agent.name,
+                        "agent_version": CONVERSATION_COACH_VERSION,
+                        "model_name": str(resolved_model_name),
                         "request_id": corr.request_id,
                         "trace_id": corr.trace_id,
+                        "result_status": "error",
+                        "error_type": type(exc).__name__,
+                        "error_code": "MODEL_TIMEOUT",
+                        "error_classification": "MODEL_TIMEOUT",
                     },
                 )
                 raise ModelTimeoutError() from exc
@@ -408,50 +440,108 @@ class AdkConversationCoachBriefAdapter:
                     "ADK conversation_coach failed during brief execution",
                     extra={
                         "event_type": "workflow.model.error",
+                        "operation_name": span_name,
                         "agent_name": coach_agent.name,
+                        "agent_version": CONVERSATION_COACH_VERSION,
+                        "model_name": str(resolved_model_name),
                         "request_id": corr.request_id,
                         "trace_id": corr.trace_id,
+                        "result_status": "error",
+                        "error_type": type(exc).__name__,
+                        "error_code": "MODEL_EXECUTION_ERROR",
+                        "error_classification": "MODEL_EXECUTION_ERROR",
                     },
                 )
                 raise ModelExecutionError(
                     "The coaching model encountered an unexpected execution failure."
                 ) from exc
+            finally:
+                if metrics.total_tokens > 0 or metrics.input_tokens > 0:
+                    turn_tracker.set_attributes(
+                        {
+                            ATTR_INPUT_TOKENS: metrics.input_tokens,
+                            ATTR_OUTPUT_TOKENS: metrics.output_tokens,
+                            ATTR_TOTAL_TOKENS: metrics.total_tokens,
+                        }
+                    )
 
-        cleaned_json = _strip_optional_json_fences(raw_text)
-        if not cleaned_json:
-            raise ModelOutputValidationError(
-                "Model returned an empty response instead of a JSON preparation brief.",
-                violations=(
-                    "[EMPTY_OUTPUT] Model returned empty text; output must be valid JSON.",
-                ),
-            )
+            with brew_span(
+                "brew.output.validate",
+                operation_name="output.validate",
+                tracer_name=__name__,
+                agent_name=coach_agent.name,
+                agent_version=CONVERSATION_COACH_VERSION,
+                model_name=str(resolved_model_name),
+                attributes={ATTR_VALIDATION_STAGE: "json_schema"},
+            ) as val_tracker:
+                cleaned_json = _strip_optional_json_fences(raw_text)
+                if not cleaned_json:
+                    val_tracker.set_attributes(
+                        {
+                            ATTR_VALIDATION_PASSED: False,
+                            ATTR_VALIDATION_VIOLATION_COUNT: 1,
+                        }
+                    )
+                    raise ModelOutputValidationError(
+                        "Model returned an empty response instead of a JSON preparation brief.",
+                        violations=(
+                            "[EMPTY_OUTPUT] Model returned empty text; output must be valid JSON.",
+                        ),
+                    )
 
-        try:
-            parsed_obj = json.loads(cleaned_json)
-        except json.JSONDecodeError as exc:
-            raise ModelOutputValidationError(
-                "Model output was not valid JSON.",
-                violations=(f"[INVALID_JSON] Output could not be parsed as JSON ({exc.msg}).",),
-            ) from exc
+                try:
+                    parsed_obj = json.loads(cleaned_json)
+                except json.JSONDecodeError as exc:
+                    val_tracker.set_attributes(
+                        {
+                            ATTR_VALIDATION_PASSED: False,
+                            ATTR_VALIDATION_VIOLATION_COUNT: 1,
+                        }
+                    )
+                    raise ModelOutputValidationError(
+                        "Model output was not valid JSON.",
+                        violations=(
+                            f"[INVALID_JSON] Output could not be parsed as JSON ({exc.msg}).",
+                        ),
+                    ) from exc
 
-        if not isinstance(parsed_obj, dict):
-            raise ModelOutputValidationError(
-                "Model JSON output must be a top-level object.",
-                violations=("[INVALID_JSON_ROOT] Expected a JSON object at top level.",),
-            )
+                if not isinstance(parsed_obj, dict):
+                    val_tracker.set_attributes(
+                        {
+                            ATTR_VALIDATION_PASSED: False,
+                            ATTR_VALIDATION_VIOLATION_COUNT: 1,
+                        }
+                    )
+                    raise ModelOutputValidationError(
+                        "Model JSON output must be a top-level object.",
+                        violations=("[INVALID_JSON_ROOT] Expected a JSON object at top level.",),
+                    )
 
-        try:
-            return GeneratedBriefContent.model_validate(parsed_obj)
-        except ValidationError as exc:
-            formatted = tuple(
-                f"[SCHEMA_INVALID] {'.'.join(str(p) for p in err.get('loc', ()))}: "
-                f"{err.get('msg', 'Invalid field')}"
-                for err in exc.errors()
-            )
-            raise ModelOutputValidationError(
-                "Model JSON output failed strict GeneratedBriefContent schema validation.",
-                violations=formatted,
-            ) from exc
+                try:
+                    validated = GeneratedBriefContent.model_validate(parsed_obj)
+                    val_tracker.set_attributes(
+                        {
+                            ATTR_VALIDATION_PASSED: True,
+                            ATTR_VALIDATION_VIOLATION_COUNT: 0,
+                        }
+                    )
+                    return validated
+                except ValidationError as exc:
+                    formatted = tuple(
+                        f"[SCHEMA_INVALID] {'.'.join(str(p) for p in err.get('loc', ()))}: "
+                        f"{err.get('msg', 'Invalid field')}"
+                        for err in exc.errors()
+                    )
+                    val_tracker.set_attributes(
+                        {
+                            ATTR_VALIDATION_PASSED: False,
+                            ATTR_VALIDATION_VIOLATION_COUNT: len(formatted),
+                        }
+                    )
+                    raise ModelOutputValidationError(
+                        "Model JSON output failed strict GeneratedBriefContent schema validation.",
+                        violations=formatted,
+                    ) from exc
 
     async def generate_brief(
         self,

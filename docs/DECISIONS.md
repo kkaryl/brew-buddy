@@ -253,7 +253,19 @@ This document records significant architectural and technical decisions for **Br
   - *Positive:* One-click preparation from calendar slots, calm 2-card Pocket Glance during live chats, unified counterpart + keepsake folios, zero backend breaking changes, and `93.7%` to `96.4%` desktop visual similarity against approved v2 mockups.
   - *Trade-off:* Client-side starred question selections and imported `.ics` events are scoped to browser `localStorage` per user rather than synced across devices via Firestore.
 
+---
 
+## ADR-019: Production OpenTelemetry + Google Cloud Trace Hierarchy, Non-Duplicating ADK Enrichment, and Telemetry Privacy Lockdown
 
-
+- **Date:** 2026-11-24
+- **Status:** Accepted
+- **Context:** Production troubleshooting across multi-step agentic preparation workflows requires correlated end-to-end traces (HTTP request -> workflow -> context/memory retrieval -> ADK agent -> tool calls -> Gemini calls -> output validation -> optional corrective regeneration -> Firestore persistence) and Cloud Logging trace-linked JSON logs, without duplicating spans already emitted by `google-adk` or leaking raw contact notes, private biographies, credentials, or prompts into telemetry backends.
+- **Decision:**
+  1. Preserve `get_fast_api_app(..., otel_to_cloud=resolved_settings.otel_enabled)` from the `agents-cli` scaffold while installing an outer HTTP `SpanKind.SERVER` middleware (`app/fast_api_app.py`) extracting W3C `traceparent` and `X-Cloud-Trace-Context` headers, propagating `WorkflowCorrelation`, and returning `X-Request-ID` + `X-Trace-ID`.
+  2. Enrich ADK's native `invoke_agent`, `generate_content`, and `execute_tool` spans in place via `ConversationCoachGuardrailPlugin`, `WorkflowSafeguardPlugin`, and `_tool_telemetry_scope` (avoiding duplicate custom `coach.tool.*` child spans inside ADK `Runner` turns while explicitly marking operational tool errors `StatusCode.ERROR` with `brew.error.classification`), and add Brew spans for workflow orchestration (`brew.workflow.*`), context/memory retrieval (`brew.context.retrieve`, `brew.memory.retrieve`), validation (`brew.output.validate`), single repair (`brew.workflow.corrective_regeneration`), HITL memory approval (`brew.memory.propose`, `brew.memory.approve`), and Firestore operations (`firestore.*`).
+  3. Enforce fail-closed telemetry privacy (`enforce_telemetry_privacy_defaults` and `build_adk_telemetry_config` in `app/infrastructure/observability.py`, plus `FORBIDDEN_TELEMETRY_KEYS` and `scrub_sensitive_telemetry_text` in `app/application/telemetry.py`), defaulting `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=NO_CONTENT`, `ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS=false`, and stripping `OTEL_INSTRUMENTATION_GENAI_COMPLETION_HOOK` unless explicitly authorized via `BREW_TELEMETRY_CAPTURE_CONTENT` / `BREW_TELEMETRY_UPLOAD_COMPLETIONS`.
+  4. Stamp `logging.googleapis.com/trace`, `logging.googleapis.com/spanId`, `logging.googleapis.com/trace_sampled`, `trace_id`, `span_id`, and typed error classifications onto structured JSON logs via `TraceContextLogFilter` + `StructuredJsonFormatter`, documented in [`docs/OBSERVABILITY.md`](OBSERVABILITY.md) and verified in `tests/unit/test_observability_tracing.py`.
+- **Consequences:**
+  - *Positive:* Complete single-trace waterfall visibility in Google Cloud Trace, one-click Trace-to-Logs correlation in Cloud Logging, immediate visibility into expensive token usage and recovered tool timeouts, and verifiable zero-leakage privacy defaults.
+  - *Trade-off:* Engineers needing full prompt/response inspection during controlled staging audits must explicitly opt in via `BREW_TELEMETRY_CAPTURE_CONTENT=true`.
 

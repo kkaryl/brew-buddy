@@ -20,6 +20,16 @@ from opentelemetry import trace
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.application.correlation import resolve_or_create_correlation
+from app.application.telemetry import (
+    ATTR_INPUT_TOKENS,
+    ATTR_OUTPUT_TOKENS,
+    ATTR_REGENERATION_ATTEMPT,
+    ATTR_TOTAL_TOKENS,
+    ATTR_VALIDATION_PASSED,
+    ATTR_VALIDATION_STAGE,
+    ATTR_VALIDATION_VIOLATION_COUNT,
+    brew_span,
+)
 from app.config import AppSettings, get_settings
 from app.domain.errors import (
     BrewDomainError,
@@ -30,6 +40,7 @@ from app.domain.errors import (
 from app.domain.models import Contact, Meeting, Memory
 from app.domain.ports import BriefAttemptMetrics, ProposedMemoryCandidate
 from app.domain.types import MemoryScope, MemoryType
+from app.infrastructure.observability import build_adk_telemetry_config
 from app.plugins.coach_guardrails import ConversationCoachGuardrailPlugin
 from app.plugins.workflow_safeguards import WorkflowSafeguardPlugin
 
@@ -37,6 +48,7 @@ logger = logging.getLogger(__name__)
 _tracer = trace.get_tracer(__name__)
 
 MEMORY_EXTRACTOR_AGENT_NAME = "memory_candidate_extractor"
+MEMORY_EXTRACTOR_AGENT_VERSION = "1.0.0"
 _JSON_FENCE_RE = re.compile(r"^\s*```(?:json)?\s*(.*?)\s*```\s*$", re.DOTALL | re.IGNORECASE)
 
 MEMORY_EXTRACTOR_INSTRUCTION = """\
@@ -165,14 +177,21 @@ class AdkMemoryProposalAdapter:
         corr = resolve_or_create_correlation()
         metrics = BriefAttemptMetrics(remaining_model_budget=2, max_tool_retries=0)
         extractor_agent = self._build_extractor_agent()
+        resolved_model_name = (
+            getattr(extractor_agent.model, "model", None) or self._settings.gemini_model
+        )
         safeguard_plugin = WorkflowSafeguardPlugin(
             attempt_metrics=metrics,
             max_total_tool_calls=0,
         )
+        guardrail_plugin = ConversationCoachGuardrailPlugin(
+            agent_version=MEMORY_EXTRACTOR_AGENT_VERSION,
+            model_name=str(resolved_model_name),
+        )
         adk_app = App(
             name="app",
             root_agent=extractor_agent,
-            plugins=[ConversationCoachGuardrailPlugin(), safeguard_plugin],
+            plugins=[guardrail_plugin, safeguard_plugin],
         )
         runner = Runner(
             app=adk_app,
@@ -180,6 +199,10 @@ class AdkMemoryProposalAdapter:
             auto_create_session=True,
         )
         session_id = f"mem_ext_{corr.request_id}_{uuid.uuid4().hex[:8]}"
+        run_config = RunConfig(
+            max_llm_calls=2,
+            telemetry=build_adk_telemetry_config(self._settings),
+        )
 
         async def _collect_text() -> str:
             chunks: list[str] = []
@@ -190,7 +213,7 @@ class AdkMemoryProposalAdapter:
                     role="user",
                     parts=[types.Part.from_text(text=prompt)],
                 ),
-                run_config=RunConfig(max_llm_calls=2),
+                run_config=run_config,
             ):
                 if getattr(event, "error_message", None):
                     raise ModelExecutionError(
@@ -202,10 +225,14 @@ class AdkMemoryProposalAdapter:
                         chunks.append("\n".join(parts_text))
             return chunks[-1] if chunks else ""
 
-        with _tracer.start_as_current_span("coach.memory.extract_candidates") as span:
-            span.set_attribute("brew.request_id", corr.request_id)
-            span.set_attribute("brew.trace_id", corr.trace_id)
-            span.set_attribute("brew.agent_name", MEMORY_EXTRACTOR_AGENT_NAME)
+        with brew_span(
+            "coach.memory.extract_candidates",
+            operation_name="memory.extract_candidates",
+            tracer_name=__name__,
+            agent_name=MEMORY_EXTRACTOR_AGENT_NAME,
+            agent_version=MEMORY_EXTRACTOR_AGENT_VERSION,
+            model_name=str(resolved_model_name),
+        ) as ext_tracker:
             try:
                 raw_text = await asyncio.wait_for(
                     _collect_text(),
@@ -223,22 +250,58 @@ class AdkMemoryProposalAdapter:
                 raise ModelExecutionError(
                     "The memory extraction model encountered an execution failure."
                 ) from exc
+            finally:
+                if metrics.total_tokens > 0 or metrics.input_tokens > 0:
+                    ext_tracker.set_attributes(
+                        {
+                            ATTR_INPUT_TOKENS: metrics.input_tokens,
+                            ATTR_OUTPUT_TOKENS: metrics.output_tokens,
+                            ATTR_TOTAL_TOKENS: metrics.total_tokens,
+                        }
+                    )
 
-        cleaned = _strip_optional_json_fences(raw_text)
-        if not cleaned:
-            raise ModelOutputValidationError(
-                "Memory extractor returned an empty response.",
-                violations=("[EMPTY_OUTPUT] Expected JSON object with `candidates` list.",),
-            )
+            with brew_span(
+                "brew.output.validate",
+                operation_name="output.validate",
+                tracer_name=__name__,
+                agent_name=MEMORY_EXTRACTOR_AGENT_NAME,
+                agent_version=MEMORY_EXTRACTOR_AGENT_VERSION,
+                model_name=str(resolved_model_name),
+                attributes={ATTR_VALIDATION_STAGE: "memory_candidates_schema"},
+            ) as val_tracker:
+                cleaned = _strip_optional_json_fences(raw_text)
+                if not cleaned:
+                    val_tracker.set_attributes(
+                        {
+                            ATTR_VALIDATION_PASSED: False,
+                            ATTR_VALIDATION_VIOLATION_COUNT: 1,
+                        }
+                    )
+                    raise ModelOutputValidationError(
+                        "Memory extractor returned an empty response.",
+                        violations=("[EMPTY_OUTPUT] Expected JSON object with `candidates` list.",),
+                    )
 
-        try:
-            parsed = json.loads(cleaned)
-            batch = _ExtractedCandidateBatch.model_validate(parsed)
-        except (json.JSONDecodeError, ValidationError) as exc:
-            raise ModelOutputValidationError(
-                "Memory extractor returned invalid candidate JSON.",
-                violations=(str(exc),),
-            ) from exc
+                try:
+                    parsed = json.loads(cleaned)
+                    batch = _ExtractedCandidateBatch.model_validate(parsed)
+                    val_tracker.set_attributes(
+                        {
+                            ATTR_VALIDATION_PASSED: True,
+                            ATTR_VALIDATION_VIOLATION_COUNT: 0,
+                        }
+                    )
+                except (json.JSONDecodeError, ValidationError) as exc:
+                    val_tracker.set_attributes(
+                        {
+                            ATTR_VALIDATION_PASSED: False,
+                            ATTR_VALIDATION_VIOLATION_COUNT: 1,
+                        }
+                    )
+                    raise ModelOutputValidationError(
+                        "Memory extractor returned invalid candidate JSON.",
+                        violations=(str(exc),),
+                    ) from exc
 
         results: list[ProposedMemoryCandidate] = []
         for item in batch.candidates:
@@ -313,12 +376,21 @@ class AdkMemoryProposalAdapter:
         try:
             candidates = await self._invoke_once(user_id=user_id, prompt=base_prompt)
         except ModelOutputValidationError as exc:
-            repair_prompt = (
-                f"{base_prompt}\n\n[CORRECTIVE REGENERATION REQUIRED]\n"
-                "Your previous output failed JSON schema validation: "
-                f"{'; '.join(exc.violations)}. Return ONLY valid JSON with `candidates`."
-            )
-            candidates = await self._invoke_once(user_id=user_id, prompt=repair_prompt)
+            with brew_span(
+                "brew.workflow.corrective_regeneration",
+                operation_name="workflow.corrective_regeneration",
+                tracer_name=__name__,
+                agent_name=MEMORY_EXTRACTOR_AGENT_NAME,
+                agent_version=MEMORY_EXTRACTOR_AGENT_VERSION,
+                attributes={ATTR_REGENERATION_ATTEMPT: 1},
+            ) as repair_tracker:
+                repair_prompt = (
+                    f"{base_prompt}\n\n[CORRECTIVE REGENERATION REQUIRED]\n"
+                    "Your previous output failed JSON schema validation: "
+                    f"{'; '.join(exc.violations)}. Return ONLY valid JSON with `candidates`."
+                )
+                candidates = await self._invoke_once(user_id=user_id, prompt=repair_prompt)
+                repair_tracker.status = "repaired"
 
         # Normalize contact_id binding when contact context was supplied
         normalized: list[ProposedMemoryCandidate] = []

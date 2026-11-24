@@ -8,6 +8,7 @@ import threading
 import uuid
 from collections.abc import Mapping, Sequence
 
+from app.application.telemetry import brew_span
 from app.domain.brief_quality import parse_refinement_overrides
 from app.domain.errors import (
     AuthenticationError,
@@ -629,8 +630,16 @@ class FakeBriefCoachAgent:
         attempt_metrics: BriefAttemptMetrics | None = None,
     ) -> GeneratedBriefContent:
         del corrective_feedback
-        if attempt_metrics is not None:
-            attempt_metrics.model_invocations += 1
+        with brew_span(
+            "brew.agent.invoke",
+            operation_name="agent.invoke",
+            tracer_name=__name__,
+            agent_name="conversation_coach",
+            agent_version="1.0.0",
+            model_name="fake-deterministic-coach",
+        ):
+            if attempt_metrics is not None:
+                attempt_metrics.model_invocations += 1
 
         contact = context.contact
         user_preferences = context.user_preferences
@@ -749,8 +758,16 @@ class FakeBriefCoachAgent:
         attempt_metrics: BriefAttemptMetrics | None = None,
     ) -> GeneratedBriefContent:
         del corrective_feedback
-        if attempt_metrics is not None:
-            attempt_metrics.model_invocations += 1
+        with brew_span(
+            "brew.agent.invoke",
+            operation_name="agent.invoke",
+            tracer_name=__name__,
+            agent_name="conversation_coach",
+            agent_version="1.0.0",
+            model_name="fake-deterministic-coach",
+        ):
+            if attempt_metrics is not None:
+                attempt_metrics.model_invocations += 1
 
         contact = context.contact
         cleaned_instruction = scrub_basic_pii(instructions.strip())
@@ -971,6 +988,29 @@ class FakeMemoryProposalAgent:
     )
 
     async def propose_memories(
+        self,
+        *,
+        notes: str,
+        meeting: Meeting | None,
+        contact: Contact | None,
+        existing_memories: Sequence[Memory],
+    ) -> list[ProposedMemoryCandidate]:
+        with brew_span(
+            "brew.agent.invoke",
+            operation_name="agent.invoke",
+            tracer_name=__name__,
+            agent_name="memory_candidate_extractor",
+            agent_version="1.0.0",
+            model_name="fake-deterministic-extractor",
+        ):
+            return await self._propose_memories_impl(
+                notes=notes,
+                meeting=meeting,
+                contact=contact,
+                existing_memories=existing_memories,
+            )
+
+    async def _propose_memories_impl(
         self,
         *,
         notes: str,

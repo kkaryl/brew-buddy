@@ -28,6 +28,12 @@ from google.cloud.firestore_v1.base_query import FieldFilter
 from opentelemetry import trace
 from pydantic import BaseModel
 
+from app.application.telemetry import (
+    ATTR_MEMORY_RETRIEVED_COUNT,
+    ATTR_MEMORY_SAVED_COUNT,
+    brew_span,
+    set_safe_span_attribute,
+)
 from app.domain.errors import (
     BrewDomainError,
     ConflictError,
@@ -134,22 +140,52 @@ async def _ensure_client_credentials_valid(
     )
 
 
+def _infer_collection_from_span_name(span_name: str) -> str:
+    parts = span_name.split(".")
+    return parts[1] if len(parts) >= 2 else "unknown"
+
+
 async def _run_firestore_op[T](
     span_name: str,
     coro: Awaitable[T],
     *,
     timeout_seconds: float,
     client: firestore.AsyncClient | None = None,
+    extra_attributes: dict[str, object] | None = None,
 ) -> T:
-    """Execute an async Firestore operation with an OTel span and explicit timeout."""
-    with _tracer.start_as_current_span(span_name):
+    """Execute an async Firestore operation with a correlated OTel span and explicit timeout."""
+    collection = _infer_collection_from_span_name(span_name)
+    attrs: dict[str, object] = {
+        "db.system": "firestore",
+        "brew.persistence.collection": collection,
+    }
+    if extra_attributes:
+        attrs.update(extra_attributes)
+
+    with brew_span(
+        span_name,
+        operation_name=span_name,
+        tracer_name=__name__,
+        is_persistence=True,
+        attributes=attrs,
+    ) as tracker:
         try:
             await _ensure_client_credentials_valid(client, timeout_seconds=timeout_seconds)
         except GoogleAuthError as exc:
             _close_unawaited(coro)
+            tracker.mark_error(
+                "PERSISTENCE_AUTH_ERROR",
+                error_code="PERSISTENCE_UNAVAILABLE",
+                error_type=type(exc).__name__,
+            )
             raise PersistenceOperationError(_format_firestore_auth_error(exc)) from exc
         except TimeoutError as exc:
             _close_unawaited(coro)
+            tracker.mark_error(
+                "PERSISTENCE_TIMEOUT",
+                error_code="PERSISTENCE_UNAVAILABLE",
+                error_type=type(exc).__name__,
+            )
             raise PersistenceOperationError(
                 f"Firestore credential refresh for '{span_name}' timed out."
             ) from exc
@@ -159,12 +195,27 @@ async def _run_firestore_op[T](
         except BrewDomainError:
             raise
         except GoogleAuthError as exc:
+            tracker.mark_error(
+                "PERSISTENCE_AUTH_ERROR",
+                error_code="PERSISTENCE_UNAVAILABLE",
+                error_type=type(exc).__name__,
+            )
             raise PersistenceOperationError(_format_firestore_auth_error(exc)) from exc
         except TimeoutError as exc:
+            tracker.mark_error(
+                "PERSISTENCE_TIMEOUT",
+                error_code="PERSISTENCE_UNAVAILABLE",
+                error_type=type(exc).__name__,
+            )
             raise PersistenceOperationError(
                 f"Firestore operation '{span_name}' timed out after {timeout_seconds:.1f}s."
             ) from exc
         except GoogleAPICallError as exc:
+            tracker.mark_error(
+                "PERSISTENCE_UNAVAILABLE",
+                error_code="PERSISTENCE_UNAVAILABLE",
+                error_type=type(exc).__name__,
+            )
             raise PersistenceOperationError(f"Firestore operation '{span_name}' failed.") from exc
 
 
@@ -210,6 +261,11 @@ async def _save_versioned_document(
         _txn(client.transaction()),
         timeout_seconds=timeout_seconds,
         client=client,
+        extra_attributes=(
+            {ATTR_MEMORY_SAVED_COUNT: 1}
+            if span_name in {"firestore.memories.save", "firestore.memory_proposals.save"}
+            else None
+        ),
     )
 
 
@@ -803,35 +859,41 @@ class FirestoreMemoryRepository:
         elif scope is not None:
             query = coll_ref.where(filter=FieldFilter("scope", "==", scope.value))
 
-        docs = await _run_firestore_op(
+        async def _fetch_and_filter() -> list[Memory]:
+            docs = await query.get()
+            filtered: list[Memory] = []
+            for doc in docs:
+                data = doc.to_dict()
+                if not data or data.get("owner_user_id") != uid:
+                    continue
+                memory = Memory.model_validate(data)
+                if not include_revoked and memory.consent_status is not ConsentStatus.APPROVED:
+                    continue
+                if (
+                    not include_superseded
+                    and memory.lifecycle_state is not MemoryLifecycleState.APPROVED
+                ):
+                    continue
+                if scope is not None and memory.scope is not scope:
+                    continue
+                if contact_id is not None and memory.contact_id != contact_id:
+                    continue
+                if memory_type is not None and memory.memory_type is not memory_type:
+                    continue
+                filtered.append(memory)
+            set_safe_span_attribute(
+                trace.get_current_span(),
+                ATTR_MEMORY_RETRIEVED_COUNT,
+                len(filtered),
+            )
+            return sorted(filtered, key=lambda item: (item.created_at, item.id))
+
+        return await _run_firestore_op(
             "firestore.memories.list",
-            query.get(),
+            _fetch_and_filter(),
             timeout_seconds=self._timeout_seconds,
             client=self._client,
         )
-
-        memories: list[Memory] = []
-        for doc in docs:
-            data = doc.to_dict()
-            if not data or data.get("owner_user_id") != uid:
-                continue
-            memory = Memory.model_validate(data)
-            if not include_revoked and memory.consent_status is not ConsentStatus.APPROVED:
-                continue
-            if (
-                not include_superseded
-                and memory.lifecycle_state is not MemoryLifecycleState.APPROVED
-            ):
-                continue
-            if scope is not None and memory.scope is not scope:
-                continue
-            if contact_id is not None and memory.contact_id != contact_id:
-                continue
-            if memory_type is not None and memory.memory_type is not memory_type:
-                continue
-            memories.append(memory)
-
-        return sorted(memories, key=lambda item: (item.created_at, item.id))
 
     async def save(self, memory: Memory, *, expected_version: int | None = None) -> Memory:
         doc_ref = self._doc_ref(memory.owner_user_id, memory.id)

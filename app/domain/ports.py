@@ -327,6 +327,9 @@ class BriefAttemptMetrics(BaseModel):
     max_tool_retries: int = Field(default=1, ge=0, le=5)
     model_invocations: int = Field(default=0, ge=0)
     tool_invocations: int = Field(default=0, ge=0)
+    input_tokens: int = Field(default=0, ge=0)
+    output_tokens: int = Field(default=0, ge=0)
+    total_tokens: int = Field(default=0, ge=0)
     degraded_tools: list[str] = Field(default_factory=list)
 
 

@@ -17,12 +17,14 @@ import asyncio
 import contextlib
 import contextvars
 import logging
+import time
 from collections.abc import Iterator
 from typing import Annotated, Literal, TypedDict, cast
 
 from google.adk.tools.function_tool import FunctionTool
 from google.adk.tools.tool_context import ToolContext
 from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from app.application.coaching_service import (
@@ -34,6 +36,18 @@ from app.application.coaching_service import (
     ReadOnlyPreferencesFacade,
 )
 from app.application.memory_persistence_service import translate_pydantic_error
+from app.application.telemetry import (
+    ATTR_DURATION_MS,
+    ATTR_MEMORY_RETRIEVED_COUNT,
+    ATTR_MEMORY_SAVED_COUNT,
+    ATTR_OPERATION_NAME,
+    ATTR_RESULT_STATUS,
+    ATTR_TOOL_NAME,
+    SpanOutcomeTracker,
+    mark_span_error,
+    set_safe_span_attributes,
+    stamp_correlation_attributes,
+)
 from app.config import get_settings
 from app.domain.errors import (
     AuthenticationError,
@@ -679,13 +693,100 @@ def _translate_tool_exception(tool_name: str, exc: Exception) -> ToolErrorDetail
 # ---------------------------------------------------------------------------
 
 
+@contextlib.contextmanager
+def _tool_telemetry_scope(tool_name: str) -> Iterator[SpanOutcomeTracker]:
+    """Enrich ADK's ``execute_tool`` span when active, or open a standalone tool span."""
+    current = trace.get_current_span()
+    current_name = getattr(current, "name", "")
+    is_adk_tool_span = bool(current.is_recording() and str(current_name).startswith("execute_tool"))
+    started = time.perf_counter()
+
+    if is_adk_tool_span:
+        stamp_correlation_attributes(current)
+        set_safe_span_attributes(
+            current,
+            {
+                ATTR_OPERATION_NAME: f"tool.{tool_name}",
+                ATTR_TOOL_NAME: tool_name,
+            },
+        )
+        tracker = SpanOutcomeTracker(span=current)
+        try:
+            yield tracker
+        finally:
+            elapsed_ms = round((time.perf_counter() - started) * 1000.0, 2)
+            set_safe_span_attributes(
+                current,
+                {
+                    ATTR_DURATION_MS: elapsed_ms,
+                    ATTR_RESULT_STATUS: tracker.status,
+                },
+            )
+        return
+
+    with _tracer.start_as_current_span(f"coach.tool.{tool_name}") as span:
+        stamp_correlation_attributes(span)
+        set_safe_span_attributes(
+            span,
+            {
+                ATTR_OPERATION_NAME: f"tool.{tool_name}",
+                ATTR_TOOL_NAME: tool_name,
+            },
+        )
+        tracker = SpanOutcomeTracker(span=span)
+        try:
+            yield tracker
+        finally:
+            elapsed_ms = round((time.perf_counter() - started) * 1000.0, 2)
+            set_safe_span_attributes(
+                span,
+                {
+                    ATTR_DURATION_MS: elapsed_ms,
+                    ATTR_RESULT_STATUS: tracker.status,
+                },
+            )
+            if tracker.status != "error" and span.is_recording():
+                span.set_status(Status(StatusCode.OK))
+
+
+def _record_tool_failure_telemetry(
+    tracker: SpanOutcomeTracker,
+    *,
+    tool_name: str,
+    err: ToolErrorDetail,
+    exc: Exception,
+) -> None:
+    tracker.status = "error"
+    tracker.error_classification = err.code
+    tracker.error_code = err.code
+    mark_span_error(
+        tracker.span,
+        classification=err.code,
+        error_code=err.code,
+        error_type=type(exc).__name__,
+        description=err.code,
+    )
+    logger.warning(
+        f"Coaching tool {tool_name} failed with {err.code}",
+        extra={
+            "event_type": "tool.execution.failed",
+            "operation_name": f"tool.{tool_name}",
+            "tool_name": tool_name,
+            "result_status": "error",
+            "error_type": type(exc).__name__,
+            "error_code": err.code,
+            "error_classification": err.code,
+        },
+    )
+
+
 async def _execute_get_user_preferences(
     *,
     max_preference_memories: int,
     tool_context: ToolContext | None,
     deps: CoachingToolDependencies,
 ) -> GetUserPreferencesResponseDict:
-    with _tracer.start_as_current_span("coach.tool.get_user_preferences"):
+    with _tool_telemetry_scope("get_user_preferences") as tracker:
         try:
             principal = resolve_authenticated_principal(tool_context)
             validated_in = GetUserPreferencesInput(
@@ -698,12 +799,13 @@ async def _execute_get_user_preferences(
                 ),
                 timeout=deps.io_timeout_seconds,
             )
-            is_empty = (
-                not projection.has_saved_preferences
-                and len(projection.approved_preference_memories) == 0
-            )
+            mem_count = len(projection.approved_preference_memories)
+            is_empty = not projection.has_saved_preferences and mem_count == 0
+            status: ToolStatus = "empty" if is_empty else "success"
+            tracker.status = status
+            tracker.set_attribute(ATTR_MEMORY_RETRIEVED_COUNT, mem_count)
             output = GetUserPreferencesOutput(
-                status="empty" if is_empty else "success",
+                status=status,
                 data=UserPreferencesDataOutput(
                     has_saved_preferences=projection.has_saved_preferences,
                     default_tone=projection.default_tone,
@@ -726,6 +828,12 @@ async def _execute_get_user_preferences(
             return cast(GetUserPreferencesResponseDict, output.model_dump(mode="json"))
         except Exception as exc:
             err = _translate_tool_exception("get_user_preferences", exc)
+            _record_tool_failure_telemetry(
+                tracker,
+                tool_name="get_user_preferences",
+                err=err,
+                exc=exc,
+            )
             failed = GetUserPreferencesOutput(status="error", data=None, error=err)
             return cast(GetUserPreferencesResponseDict, failed.model_dump(mode="json"))
 
@@ -738,7 +846,7 @@ async def _execute_get_contact_context(
     tool_context: ToolContext | None,
     deps: CoachingToolDependencies,
 ) -> GetContactContextResponseDict:
-    with _tracer.start_as_current_span("coach.tool.get_contact_context"):
+    with _tool_telemetry_scope("get_contact_context") as tracker:
         try:
             principal = resolve_authenticated_principal(tool_context)
             validated_in = GetContactContextInput(
@@ -755,8 +863,12 @@ async def _execute_get_contact_context(
                 ),
                 timeout=deps.io_timeout_seconds,
             )
+            mem_count = len(projection.approved_memories)
+            status: ToolStatus = "success" if projection.has_prior_context else "empty"
+            tracker.status = status
+            tracker.set_attribute(ATTR_MEMORY_RETRIEVED_COUNT, mem_count)
             output = GetContactContextOutput(
-                status="success" if projection.has_prior_context else "empty",
+                status=status,
                 data=ContactContextDataOutput(
                     contact_id=projection.contact_id,
                     name=projection.name,
@@ -780,6 +892,12 @@ async def _execute_get_contact_context(
             return cast(GetContactContextResponseDict, output.model_dump(mode="json"))
         except Exception as exc:
             err = _translate_tool_exception("get_contact_context", exc)
+            _record_tool_failure_telemetry(
+                tracker,
+                tool_name="get_contact_context",
+                err=err,
+                exc=exc,
+            )
             failed = GetContactContextOutput(status="error", data=None, error=err)
             return cast(GetContactContextResponseDict, failed.model_dump(mode="json"))
 
@@ -793,7 +911,7 @@ async def _execute_get_meeting_history(
     tool_context: ToolContext | None,
     deps: CoachingToolDependencies,
 ) -> GetMeetingHistoryResponseDict:
-    with _tracer.start_as_current_span("coach.tool.get_meeting_history"):
+    with _tool_telemetry_scope("get_meeting_history") as tracker:
         try:
             principal = resolve_authenticated_principal(tool_context)
             validated_in = GetMeetingHistoryInput(
@@ -812,8 +930,11 @@ async def _execute_get_meeting_history(
                 ),
                 timeout=deps.io_timeout_seconds,
             )
+            status: ToolStatus = "empty" if projection.total_returned == 0 else "success"
+            tracker.status = status
+            tracker.set_attribute("brew.meeting.retrieved_count", projection.total_returned)
             output = GetMeetingHistoryOutput(
-                status="empty" if projection.total_returned == 0 else "success",
+                status=status,
                 data=MeetingHistoryDataOutput(
                     meetings=[
                         MeetingHistoryItemOutput(
@@ -837,6 +958,12 @@ async def _execute_get_meeting_history(
             return cast(GetMeetingHistoryResponseDict, output.model_dump(mode="json"))
         except Exception as exc:
             err = _translate_tool_exception("get_meeting_history", exc)
+            _record_tool_failure_telemetry(
+                tracker,
+                tool_name="get_meeting_history",
+                err=err,
+                exc=exc,
+            )
             failed = GetMeetingHistoryOutput(status="error", data=None, error=err)
             return cast(GetMeetingHistoryResponseDict, failed.model_dump(mode="json"))
 
@@ -851,7 +978,7 @@ async def _execute_suggest_memory_candidates(
     tool_context: ToolContext | None,
     deps: CoachingToolDependencies,
 ) -> SuggestMemoryCandidatesResponseDict:
-    with _tracer.start_as_current_span("coach.tool.suggest_memory_candidates"):
+    with _tool_telemetry_scope("suggest_memory_candidates") as tracker:
         try:
             principal = resolve_authenticated_principal(tool_context)
             validated_in = SuggestMemoryCandidatesInput(
@@ -872,8 +999,11 @@ async def _execute_suggest_memory_candidates(
                 ),
                 timeout=deps.io_timeout_seconds,
             )
+            status: ToolStatus = "empty" if projection.total_suggested == 0 else "success"
+            tracker.status = status
+            tracker.set_attribute(ATTR_MEMORY_SAVED_COUNT, projection.total_suggested)
             output = SuggestMemoryCandidatesOutput(
-                status="empty" if projection.total_suggested == 0 else "success",
+                status=status,
                 data=SuggestMemoryCandidatesDataOutput(
                     candidates=[
                         SuggestedMemoryCandidateOutput(
@@ -893,6 +1023,12 @@ async def _execute_suggest_memory_candidates(
             return cast(SuggestMemoryCandidatesResponseDict, output.model_dump(mode="json"))
         except Exception as exc:
             err = _translate_tool_exception("suggest_memory_candidates", exc)
+            _record_tool_failure_telemetry(
+                tracker,
+                tool_name="suggest_memory_candidates",
+                err=err,
+                exc=exc,
+            )
             failed = SuggestMemoryCandidatesOutput(status="error", data=None, error=err)
             return cast(SuggestMemoryCandidatesResponseDict, failed.model_dump(mode="json"))
 
