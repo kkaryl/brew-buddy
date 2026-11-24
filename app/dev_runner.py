@@ -9,10 +9,34 @@ import subprocess
 import sys
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import IO
+from typing import IO, Any
 
-from app.config import REPO_ROOT, get_settings
+import google.auth
+from google.auth.exceptions import GoogleAuthError
+from google.auth.transport.requests import Request as GoogleAuthRequest
+
+from app.config import REPO_ROOT, AppSettings, get_settings
+
+
+def _warn_if_firestore_adc_invalid(settings: AppSettings) -> None:
+    if settings.persistence_backend != "firestore" or os.environ.get("FIRESTORE_EMULATOR_HOST"):
+        return
+    try:
+        creds, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+        if not creds.valid:
+            refresh_fn: Callable[[Any], None] = creds.refresh
+            refresh_fn(GoogleAuthRequest())
+    except GoogleAuthError:
+        sys.stderr.write(
+            "[brew-dev] WARNING: BREW_PERSISTENCE_BACKEND=firestore is active, "
+            "but Google Cloud Application Default Credentials need reauthentication.\n"
+            "[brew-dev]   -> Run: gcloud auth application-default login\n"
+            "[brew-dev]   -> Or set BREW_PERSISTENCE_BACKEND=in_memory in .env "
+            "for offline local mode.\n"
+        )
+        sys.stderr.flush()
 
 
 def _stream_prefixed_lines(stream: IO[str] | None, prefix: str) -> None:
@@ -48,6 +72,7 @@ def _terminate_process(proc: subprocess.Popen[str]) -> None:
 def main() -> int:
     """Launch FastAPI backend and Vite frontend concurrently and supervise both."""
     settings = get_settings()
+    _warn_if_firestore_adc_invalid(settings)
     backend_host = "127.0.0.1"
     backend_port = settings.port
     frontend_port = int(os.environ.get("WEB_PORT", "5173"))
@@ -65,6 +90,8 @@ def main() -> int:
         "uvicorn",
         "app.fast_api_app:app",
         "--reload",
+        "--reload-include",
+        ".env",
         "--host",
         backend_host,
         "--port",

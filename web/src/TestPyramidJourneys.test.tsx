@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
-import { BrewApiClient, BrewApiError } from "./api/client";
+import { BrewApiClient, type BrewApiError } from "./api/client";
 import type {
   AuthClientConfigResponse,
   ContactResponse,
@@ -11,21 +11,27 @@ import type {
   PreparationBriefResponse,
 } from "./api/types";
 
+interface Deferred<T> {
+  readonly promise: Promise<T>;
+  readonly resolve: (value: T) => void;
+  readonly reject: (reason?: unknown) => void;
+}
+
+function createDeferred<T>(): Deferred<T> {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 function jsonResponse(body: unknown, status: number = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
     headers: { "Content-Type": "application/json" },
   });
-}
-
-function createDeferred<T>() {
-  let resolveFn: (value: T) => void = () => {};
-  let rejectFn: (reason?: unknown) => void = () => {};
-  const promise = new Promise<T>((resolve, reject) => {
-    resolveFn = resolve;
-    rejectFn = reject;
-  });
-  return { promise, resolve: resolveFn, reject: rejectFn };
 }
 
 const HEALTH_OK = {
@@ -34,7 +40,7 @@ const HEALTH_OK = {
   version: "0.1.0",
   environment: "local",
   model: "gemini-3.8-flash",
-  timestamp_utc: "2026-11-23T07:00:00Z",
+  timestamp_utc: "2026-11-24T06:00:00Z",
 };
 
 const LOCAL_AUTH_CONFIG: AuthClientConfigResponse = {
@@ -48,7 +54,7 @@ const LOCAL_AUTH_CONFIG: AuthClientConfigResponse = {
     {
       persona_id: "alice",
       display_name: "Alice Chen",
-      role_summary: "Product Lead — Isolated Local Workspace",
+      role_summary: "Product Lead · Isolated Local Workspace",
     },
   ],
 };
@@ -63,7 +69,7 @@ function makeBrief(overrides?: Partial<PreparationBriefResponse>): PreparationBr
     contact_context: "Maya Lin is a Principal SRE at CloudScale.",
     meeting_objective: "Understand multi-region failover game days.",
     conversation_openers: [
-      "Thanks for carving out time—excited to learn how CloudScale runs failover drills.",
+      "Thanks for carving out time, excited to learn how CloudScale runs failover drills.",
       "How has Q4 reliability planning been going across your regions?",
     ],
     time_boxed_agenda: [
@@ -101,8 +107,8 @@ function makeBrief(overrides?: Partial<PreparationBriefResponse>): PreparationBr
     referenced_memory_ids: ["mem_maya_1"],
     revision_summary: null,
     version: 1,
-    created_at: "2026-11-23T07:05:00Z",
-    updated_at: "2026-11-23T07:05:00Z",
+    created_at: "2026-11-24T06:05:00Z",
+    updated_at: "2026-11-24T06:05:00Z",
     workflow: {
       request_id: "req_j_1",
       trace_id: "trc_j_1",
@@ -121,17 +127,19 @@ function makeBrief(overrides?: Partial<PreparationBriefResponse>): PreparationBr
   };
 }
 
-describe("Brew Test Pyramid — Frontend Journeys, States, Memory Governance, and Revisions", () => {
+describe("Brew Test Pyramid: v2 Frontend Journeys, States, Memory Governance, and Revisions", () => {
   beforeEach(() => {
     window.sessionStorage.clear();
+    window.localStorage.clear();
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
     window.sessionStorage.clear();
+    window.localStorage.clear();
   });
 
-  it("1. User journey: multi-counterpart creation, advanced preferences brief, session switching, and sign-out", async () => {
+  it("1. User journey: Quick Spark sentence, multi-counterpart folios, fine-tuned preferences, and sign-out", async () => {
     const contacts: ContactResponse[] = [];
     const meetings: MeetingResponse[] = [];
     const briefs = new Map<string, PreparationBriefResponse>();
@@ -187,8 +195,8 @@ describe("Brew Test Pyramid — Frontend Journeys, States, Memory Governance, an
           organization: typeof body["organization"] === "string" ? body["organization"] : null,
           context_notes: typeof body["context_notes"] === "string" ? body["context_notes"] : null,
           version: 1,
-          created_at: "2026-11-23T07:01:00Z",
-          updated_at: "2026-11-23T07:01:00Z",
+          created_at: "2026-11-24T06:01:00Z",
+          updated_at: "2026-11-24T06:01:00Z",
         };
         contacts.push(created);
         return jsonResponse(created, 201);
@@ -224,8 +232,8 @@ describe("Brew Test Pyramid — Frontend Journeys, States, Memory Governance, an
           status: "preparing",
           latest_brief_id: briefId,
           version: 1,
-          created_at: "2026-11-23T07:05:00Z",
-          updated_at: "2026-11-23T07:05:00Z",
+          created_at: "2026-11-24T06:05:00Z",
+          updated_at: "2026-11-24T06:05:00Z",
         });
         return jsonResponse(brief, 201);
       }
@@ -256,8 +264,17 @@ describe("Brew Test Pyramid — Frontend Journeys, States, Memory Governance, an
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: /Continue as Alice Chen/i }));
 
-    // Add first counterpart via empty-state CTA
-    fireEvent.click(await screen.findByRole("button", { name: /New Counterpart/i }));
+    // Save personal coaching style note first in Relationship Journal -> My Coaching Style
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Account and coaching style for Alice Chen/i }),
+    );
+    fireEvent.change(await screen.findByLabelText(/Personal communication style note/i), {
+      target: { value: "Prefer concrete engineering stories." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Save Defaults/i }));
+
+    // Add first counterpart via "+ Person" modal in Relationship Journal
+    fireEvent.click(screen.getByRole("button", { name: /^Person$/i }));
     const dialog1 = await screen.findByRole("dialog", { name: /New Counterpart/i });
     fireEvent.change(within(dialog1).getByLabelText(/Full name/i), {
       target: { value: "Maya Lin" },
@@ -269,22 +286,32 @@ describe("Brew Test Pyramid — Frontend Journeys, States, Memory Governance, an
       target: { value: "CloudScale" },
     });
     fireEvent.click(within(dialog1).getByRole("button", { name: /Save Counterpart/i }));
-    await screen.findByRole("heading", { level: 1, name: "Maya Lin" });
+    await screen.findByRole("heading", { level: 2, name: "Maya Lin" });
 
-    // Generate Brief #1 with advanced preferences expanded
-    fireEvent.click(screen.getByRole("button", { name: /Mentorship/i }));
-    fireEvent.click(screen.getByRole("button", { name: /Add session notes or preferences/i }));
+    // Start setup for Maya Lin via "Prep Chat" button
+    fireEvent.click(screen.getByRole("button", { name: /Prep Chat/i }));
+    await screen.findByRole("heading", { level: 1, name: /Shape your conversation/i });
+
+    // Select Mentorship in Mad-Libs + expand optional fine-tuning
+    fireEvent.change(screen.getByLabelText(/Conversation purpose/i), {
+      target: { value: "mentorship" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /Fine-tune question count, custom length, or pre-chat notes/i,
+      }),
+    );
     fireEvent.change(screen.getByLabelText(/Question count/i), { target: { value: "4" } });
     fireEvent.change(screen.getByLabelText(/Focus areas/i), {
       target: { value: "incident reviews, game days" },
     });
-    fireEvent.change(screen.getByLabelText(/Personal coaching style notes/i), {
-      target: { value: "Prefer concrete engineering stories." },
-    });
-    fireEvent.change(screen.getByLabelText(/Meeting objective/i), {
-      target: { value: "Learn how Maya scales multi-region failover drills." },
-    });
-    fireEvent.click(screen.getByRole("button", { name: /Generate Preparation Brief/i }));
+    fireEvent.change(
+      screen.getByLabelText(/What would make this 30-minute chat feel worthwhile/i),
+      {
+        target: { value: "Learn how Maya scales multi-region failover drills." },
+      },
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Synthesize Cue Deck/i }));
 
     expect(
       await screen.findByText(/How do you validate service dependency maps/i),
@@ -296,41 +323,40 @@ describe("Brew Test Pyramid — Frontend Journeys, States, Memory Governance, an
       focus_areas: ["incident reviews", "game days"],
     });
 
-    // Generate a second meeting brief for Maya and verify session switcher appears
-    fireEvent.click(screen.getByRole("button", { name: /New Meeting Brief/i }));
-    fireEvent.click(screen.getByRole("button", { name: /15m/i }));
-    fireEvent.change(screen.getByLabelText(/Meeting objective/i), {
-      target: { value: "Quick 15m follow-up on dependency graphs." },
+    // Use Quick Spark natural-language sentence from Clubhouse to create a second counterpart + brief
+    const navBar = screen.getByRole("navigation", { name: /^Primary navigation$/i });
+    fireEvent.click(within(navBar).getByRole("button", { name: /^Clubhouse$/i }));
+    const sparkArea = await screen.findByLabelText(/Describe an off-calendar conversation/i);
+    fireEvent.change(sparkArea, {
+      target: {
+        value: "20m casual coffee chat with Jordan Kim at Figma about design token governance",
+      },
     });
-    fireEvent.click(screen.getByRole("button", { name: /Generate Preparation Brief/i }));
-    await waitFor(() => {
-      expect(screen.queryByLabelText(/Meeting objective/i)).not.toBeInTheDocument();
-      expect(
-        screen.getByText("Quick 15m follow-up on dependency graphs."),
-      ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Spark Brief/i }));
+
+    await screen.findByRole("heading", { level: 1, name: /Shape your conversation/i });
+    expect(screen.getByLabelText(/Who are you meeting/i)).toHaveValue("Jordan Kim");
+    expect(screen.getByLabelText(/Meeting duration/i)).toHaveValue("20");
+    fireEvent.click(screen.getByRole("button", { name: /Synthesize Cue Deck/i }));
+
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "Jordan Kim" }),
+    ).toBeInTheDocument();
+
+    // Switch back to Maya Lin via Studio counterpart switcher
+    fireEvent.change(screen.getByLabelText(/Switch counterpart deck/i), {
+      target: { value: "cnt_1" },
     });
-    expect(screen.getByLabelText("Recent meetings")).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "Maya Lin" }),
+    ).toBeInTheDocument();
 
-    // Add second counterpart and switch between them in the navigation rail
-    fireEvent.click(screen.getByRole("button", { name: /^\+ Add$/i }));
-    const dialog2 = await screen.findByRole("dialog", { name: /New Counterpart/i });
-    fireEvent.change(within(dialog2).getByLabelText(/Full name/i), {
-      target: { value: "Dr. Samir Patel" },
-    });
-    fireEvent.click(within(dialog2).getByRole("button", { name: /Save Counterpart/i }));
-    await screen.findByRole("heading", { level: 1, name: "Dr. Samir Patel" });
+    // Sign out via Coaching Style folio
+    fireEvent.click(
+      screen.getByRole("button", { name: /Account and coaching style for Alice Chen/i }),
+    );
+    fireEvent.click(await screen.findByRole("button", { name: /Sign out/i }));
 
-    // Switch back to Maya Lin from rail
-    fireEvent.click(screen.getByRole("button", { name: /Maya Lin/i }));
-    await screen.findByRole("heading", { level: 1, name: "Maya Lin" });
-
-    // Sign out cleanly and confirm session clearance
-    const signOutButtons = screen.getAllByRole("button", { name: /Sign out/i });
-    const primarySignOut = signOutButtons[0];
-    expect(primarySignOut).toBeDefined();
-    if (primarySignOut) {
-      fireEvent.click(primarySignOut);
-    }
     await waitFor(() => {
       expect(screen.getByText(/Sign in to your workspace/i)).toBeInTheDocument();
     });
@@ -383,8 +409,8 @@ describe("Brew Test Pyramid — Frontend Journeys, States, Memory Governance, an
               organization: "CloudScale",
               context_notes: null,
               version: 1,
-              created_at: "2026-11-23T07:00:00Z",
-              updated_at: "2026-11-23T07:00:00Z",
+              created_at: "2026-11-24T06:00:00Z",
+              updated_at: "2026-11-24T06:00:00Z",
             },
           ],
           total: 1,
@@ -431,18 +457,25 @@ describe("Brew Test Pyramid — Frontend Journeys, States, Memory Governance, an
 
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: /Continue as Alice Chen/i }));
-    await screen.findByRole("heading", { name: "Prepare a Conversation Brief" });
+    fireEvent.click(await screen.findByRole("button", { name: /Quick Spark/i }));
+    await screen.findByRole("heading", { level: 1, name: /Shape your conversation/i });
 
-    fireEvent.change(screen.getByLabelText(/Meeting objective/i), {
-      target: { value: "Explore regional failover drills with Maya." },
+    fireEvent.change(screen.getByLabelText(/Or saved person/i), {
+      target: { value: "cnt_maya" },
     });
-    fireEvent.click(screen.getByRole("button", { name: /Generate Preparation Brief/i }));
+    fireEvent.change(
+      screen.getByLabelText(/What would make this 30-minute chat feel worthwhile/i),
+      {
+        target: { value: "Explore regional failover drills with Maya." },
+      },
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Synthesize Cue Deck/i }));
 
-    // Assert live in-flight loading state disables submit button
-    const inFlightBtn = await screen.findByRole("button", { name: /Synthesizing Brief\.\.\./i });
+    const inFlightBtn = await screen.findByRole("button", {
+      name: /Synthesizing Cue Deck\.\.\./i,
+    });
     expect(inFlightBtn).toBeDisabled();
 
-    // Resolve first attempt with a structured 504 MODEL_TIMEOUT error
     generateGate.resolve(
       jsonResponse(
         {
@@ -464,13 +497,12 @@ describe("Brew Test Pyramid — Frontend Journeys, States, Memory Governance, an
     ).toBeInTheDocument();
     expect(screen.getByText(/Trace: trace_timeout_504/i)).toBeInTheDocument();
 
-    // Retry succeeds with degraded context fallback banner visible
-    fireEvent.click(screen.getByRole("button", { name: /Generate Preparation Brief/i }));
+    // Retry succeeds -> enters Cue Studio with degraded fallback banner
+    fireEvent.click(screen.getByRole("button", { name: /Synthesize Cue Deck/i }));
     expect(
       await screen.findByText(/Generated with partial context fallback \(meeting_history\)/i),
     ).toBeInTheDocument();
 
-    // Also verify BrewApiClient translates browser AbortError directly into REQUEST_TIMEOUT BrewApiError
     vi.spyOn(globalThis, "fetch").mockRejectedValueOnce(
       new DOMException("The operation was aborted.", "AbortError"),
     );
@@ -482,7 +514,7 @@ describe("Brew Test Pyramid — Frontend Journeys, States, Memory Governance, an
     } satisfies Partial<BrewApiError>);
   });
 
-  it("3. Memory approval & deletion: supersession approval, scope tabs, superseded history toggle, and cancel/confirm deletion", async () => {
+  it("3. Memory approval & deletion: supersession stamp, Coaching Style folio, earlier-notes toggle, and cancel/confirm delete", async () => {
     const proposals: MemoryProposalResponse[] = [
       {
         id: "prop_supersede_1",
@@ -604,7 +636,7 @@ describe("Brew Test Pyramid — Frontend Journeys, States, Memory Governance, an
               id: "cnt_maya",
               name: "Maya Lin",
               title: "Principal SRE",
-              role: null,
+              role: "Engineering Peer",
               organization: "CloudScale",
               context_notes: null,
               version: 1,
@@ -686,53 +718,48 @@ describe("Brew Test Pyramid — Frontend Journeys, States, Memory Governance, an
 
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: /Continue as Alice Chen/i }));
-    await screen.findByRole("heading", { level: 1, name: "Maya Lin" });
 
-    // Open Notes & Review, validate edit guard (<3 chars), then approve superseding proposal
-    fireEvent.click(screen.getByRole("button", { name: /^Notes & Review/i }));
+    // Open Debrief via Clubhouse's "Edit" on Recent Keepsakes card
+    fireEvent.click(await screen.findByRole("button", { name: /^Edit$/i }));
+    await screen.findByRole("heading", { level: 2, name: /Stamp what belongs in memory/i });
+
+    // Verify supersession strikethrough text from old memory is displayed!
     expect(
-      await screen.findByText(/Supersedes earlier manual dependency mapping note/i),
+      screen.getByText(/Maya Lin mentioned manual dependency maps slowed Q3 drills/i),
     ).toBeInTheDocument();
 
+    // Validate <3 char edit guard, cancel, then Stamp Keep
     fireEvent.click(screen.getByRole("button", { name: /^Edit$/i }));
-    const editArea = await screen.findByLabelText(/Edit memory text before saving/i);
+    const editArea = await screen.findByLabelText(/Edit keepsake/i);
     fireEvent.change(editArea, { target: { value: "No" } });
-    fireEvent.click(screen.getByRole("button", { name: /Approve Edited Memory/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Save & Stamp Keep/i }));
     expect(
-      await screen.findByText("Memory text must be at least 3 characters."),
+      await screen.findByText("Keepsake text must be at least 3 characters."),
     ).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /^Cancel$/i }));
-    fireEvent.click(screen.getByRole("button", { name: /^Approve$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Stamp Keep/i }));
     expect(
-      await screen.findByText(/marked the previous conflicting entry as superseded/i),
+      await screen.findByText(/archived the earlier note/i),
     ).toBeInTheDocument();
 
-    // Navigate to Relationship Memory vault and verify scope tabs + superseded toggle + delete
-    fireEvent.click(screen.getByRole("button", { name: /^Relationship Memory/i }));
+    // Navigate to Relationship Journal -> Maya Lin folio
+    fireEvent.click(screen.getByRole("button", { name: /Back to Clubhouse/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /Relationship Journal/i }));
+
     expect(
       await screen.findByText(
         "In Nov 23 notes, Maya Lin shifted focus from manual dependency maps to automated service-mesh discovery.",
       ),
     ).toBeInTheDocument();
     expect(
-      screen.queryByText("In Nov 2 notes, Maya Lin mentioned manual dependency maps slowed Q3 drills."),
-    ).not.toBeInTheDocument();
-
-    // Filter to Personal Preferences tab
-    fireEvent.click(screen.getByRole("tab", { name: /Personal Preferences/i }));
-    expect(
-      screen.getByText("User preference: Prefers informal engineering chats."),
-    ).toBeInTheDocument();
-    expect(
       screen.queryByText(
-        "In Nov 23 notes, Maya Lin shifted focus from manual dependency maps to automated service-mesh discovery.",
+        "In Nov 2 notes, Maya Lin mentioned manual dependency maps slowed Q3 drills.",
       ),
     ).not.toBeInTheDocument();
 
-    // Return to All tab and enable Show superseded history
-    fireEvent.click(screen.getByRole("tab", { name: /^All/i }));
-    fireEvent.click(screen.getByLabelText(/Show superseded history/i));
+    // Enable "Show earlier notes" -> superseded note appears with "Archived" badge
+    fireEvent.click(screen.getByLabelText(/Show earlier notes/i));
     expect(
       await screen.findByText(
         "In Nov 2 notes, Maya Lin mentioned manual dependency maps slowed Q3 drills.",
@@ -740,23 +767,19 @@ describe("Brew Test Pyramid — Frontend Journeys, States, Memory Governance, an
     ).toBeInTheDocument();
     expect(sawIncludeSupersededQuery).toBe(true);
 
-    // Cancel delete first, then Confirm Delete on preference memory
-    const deleteButtons = screen.getAllByRole("button", { name: /^Delete$/i });
-    const targetDeleteBtn = deleteButtons[deleteButtons.length - 1];
-    expect(targetDeleteBtn).toBeDefined();
-    if (targetDeleteBtn) {
-      fireEvent.click(targetDeleteBtn);
-    }
+    // Switch to My Coaching Style folio -> cancel delete first, then Confirm Delete on preference memory
+    fireEvent.click(screen.getByRole("button", { name: /My Coaching Style \(Alice\)/i }));
+    expect(
+      await screen.findByText("User preference: Prefers informal engineering chats."),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /^Delete$/i }));
     fireEvent.click(await screen.findByRole("button", { name: /^Cancel$/i }));
     expect(
       screen.getByText("User preference: Prefers informal engineering chats."),
     ).toBeInTheDocument();
 
-    const retryDeleteButtons = screen.getAllByRole("button", { name: /^Delete$/i });
-    const confirmTargetBtn = retryDeleteButtons[retryDeleteButtons.length - 1];
-    if (confirmTargetBtn) {
-      fireEvent.click(confirmTargetBtn);
-    }
+    fireEvent.click(screen.getByRole("button", { name: /^Delete$/i }));
     fireEvent.click(await screen.findByRole("button", { name: /Confirm Delete/i }));
     await waitFor(() => {
       expect(
@@ -904,55 +927,57 @@ describe("Brew Test Pyramid — Frontend Journeys, States, Memory Governance, an
 
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: /Continue as Alice Chen/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Cue Studio$/i }));
     expect(
       await screen.findByText(/How do you validate service dependency maps/i),
     ).toBeInTheDocument();
 
     // 1. Validate empty/short revision instructions and invalid duration override
-    fireEvent.click(screen.getByRole("button", { name: /Save New Revision/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Refine Deck/i }));
     expect(
       await screen.findByText("Enter revision instructions (at least 3 characters)."),
     ).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: /Less formal tone/i }));
-    fireEvent.change(screen.getByLabelText(/Optional duration override/i), {
+    fireEvent.click(screen.getByRole("button", { name: /Less formal/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Duration or tone override/i }));
+    fireEvent.change(screen.getByLabelText(/^Minutes$/i), {
       target: { value: "2" },
     });
-    fireEvent.click(screen.getByRole("button", { name: /Save New Revision/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Refine Deck/i }));
     expect(
       await screen.findByText("Updated duration must be between 5 and 180 minutes."),
     ).toBeInTheDocument();
 
-    // 2. Clear bad duration and create v2 (Warm & Casual)
-    fireEvent.change(screen.getByLabelText(/Optional duration override/i), {
+    // 2. Clear bad duration and create v2
+    fireEvent.change(screen.getByLabelText(/^Minutes$/i), {
       target: { value: "" },
     });
-    fireEvent.click(screen.getByRole("button", { name: /Save New Revision/i }));
-    expect(await screen.findByText("Updated to revision v2")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Refine Deck/i }));
+    expect(await screen.findByText(/Updated to deck v2/i)).toBeInTheDocument();
 
-    // 3. Create v3 using 15-minute trim preset
-    fireEvent.click(screen.getByRole("button", { name: /15-minute trim/i }));
-    fireEvent.click(screen.getByRole("button", { name: /Save New Revision/i }));
-    expect(await screen.findByText("Updated to revision v3")).toBeInTheDocument();
-    expect(screen.getByText("15 min")).toBeInTheDocument();
+    // 3. Create v3 using Trim to 15m preset
+    fireEvent.click(screen.getByRole("button", { name: /Trim to 15m/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Refine Deck/i }));
+    expect(await screen.findByText(/Updated to deck v3/i)).toBeInTheDocument();
+    expect(screen.getByText(/15-MINUTE RUN OF SHOW/i)).toBeInTheDocument();
 
-    // 4. Inspect v1 archived snapshot and confirm Refine Brief composer is hidden (immutable)
+    // 4. Inspect v1 archived snapshot and confirm Refine Deck form is locked/hidden
     fireEvent.click(screen.getByRole("button", { name: "v1" }));
     expect(await screen.findByText(/Viewing archived snapshot v1/i)).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Refine Brief" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Refine Deck/i })).not.toBeInTheDocument();
 
-    // Return to latest v3 -> composer reappears
+    // Return to latest v3 -> Refine Deck reappears
     fireEvent.click(screen.getByRole("button", { name: /Return to latest \(v3\)/i }));
-    expect(await screen.findByRole("heading", { name: "Refine Brief" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /Refine Deck/i })).toBeInTheDocument();
 
     // 5. Trigger 409 VERSION_CONFLICT and click Reload Latest Version -> syncs to v4
     forceConflictOnce = true;
-    fireEvent.click(screen.getByRole("button", { name: /Customer discovery/i }));
-    fireEvent.click(screen.getByRole("button", { name: /Save New Revision/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Career focus/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Refine Deck/i }));
     const reloadBtn = await screen.findByRole("button", { name: /Reload Latest Version/i });
     fireEvent.click(reloadBtn);
 
-    expect(await screen.findByText(/Synced external v4 revision/i)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "v4" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "v4" })).toBeInTheDocument();
+    expect(screen.getByText(/20-MINUTE RUN OF SHOW/i)).toBeInTheDocument();
   });
 });

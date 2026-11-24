@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, cast
 
+import requests
 from google.auth.transport import requests as google_auth_requests
 from google.oauth2 import id_token as google_id_token
 
@@ -26,6 +27,9 @@ logger = logging.getLogger(__name__)
 _SAFE_SUBJECT_CHARS_RE = re.compile(r"[^A-Za-z0-9._:-]+")
 _JWT_SEGMENT_COUNT = 3
 _MOCK_TOKEN_PREFIX = "mses_"
+_CLOCK_SKEW_SECONDS = 10
+_GOOGLE_TOKENINFO_URL = "https://oauth2.googleapis.com/tokeninfo"
+_GOOGLE_USERINFO_URL = "https://openidconnect.googleapis.com/v1/userinfo"
 
 
 @dataclass(frozen=True)
@@ -43,13 +47,13 @@ LOCAL_MOCK_PERSONAS: tuple[MockPersonaDefinition, ...] = (
         persona_id="alice",
         user_id="usr_mock_alice",
         display_name="Alice Chen",
-        role_summary="Product Lead — Isolated Local Workspace",
+        role_summary="Product Lead · Isolated Local Workspace",
     ),
     MockPersonaDefinition(
         persona_id="bob",
         user_id="usr_mock_bob",
         display_name="Bob Rivera",
-        role_summary="Staff Engineer — Secondary Isolated Workspace",
+        role_summary="Staff Engineer · Secondary Isolated Workspace",
     ),
 )
 
@@ -68,11 +72,20 @@ class IssuedMockSession:
 
 
 class _BoundedGoogleAuthRequest:
-    """Adapter around ``google.auth.transport.requests.Request`` enforcing a default timeout."""
+    """Adapter around ``google.auth.transport.requests.Request`` with plain HTTPS session."""
 
-    def __init__(self, timeout_seconds: float) -> None:
-        self._inner: Any = google_auth_requests.Request()
+    def __init__(self, timeout_seconds: float, session: requests.Session | None = None) -> None:
+        self._session = session or requests.Session()
+        self._inner: Any = google_auth_requests.Request(session=self._session)
         self._timeout_seconds = timeout_seconds
+
+    @property
+    def session(self) -> requests.Session:
+        return self._session
+
+    @property
+    def timeout_seconds(self) -> float:
+        return self._timeout_seconds
 
     def __call__(
         self,
@@ -133,7 +146,7 @@ TokenClaimsVerifier = Callable[[str], Mapping[str, Any]]
 
 
 class FirebaseGoogleTokenAuthenticator:
-    """Verifies Firebase Authentication and Google Sign-In ID tokens via Google public keys."""
+    """Verifies Firebase Auth ID tokens, Google OIDC ID tokens, and Google OAuth2 popup tokens."""
 
     def __init__(
         self,
@@ -143,12 +156,14 @@ class FirebaseGoogleTokenAuthenticator:
         timeout_seconds: float = 5.0,
         firebase_verifier_override: TokenClaimsVerifier | None = None,
         google_verifier_override: TokenClaimsVerifier | None = None,
+        google_access_token_verifier_override: TokenClaimsVerifier | None = None,
     ) -> None:
         self._firebase_project_id = (firebase_project_id or "").strip() or None
         self._google_oauth_client_id = (google_oauth_client_id or "").strip() or None
-        self._request_adapter: Any = _BoundedGoogleAuthRequest(timeout_seconds=timeout_seconds)
+        self._request_adapter = _BoundedGoogleAuthRequest(timeout_seconds=timeout_seconds)
         self._firebase_verifier_override = firebase_verifier_override
         self._google_verifier_override = google_verifier_override
+        self._google_access_token_verifier_override = google_access_token_verifier_override
 
     @property
     def is_configured(self) -> bool:
@@ -158,14 +173,99 @@ class FirebaseGoogleTokenAuthenticator:
             or self._google_oauth_client_id
             or self._firebase_verifier_override
             or self._google_verifier_override
+            or self._google_access_token_verifier_override
+        )
+
+    def _verify_google_oauth_access_token(self, access_token: str) -> AuthenticatedPrincipal:
+        """Verify an OAuth 2.0 access token issued to ``GOOGLE_OAUTH_CLIENT_ID`` via Google OIDC."""
+        if self._google_access_token_verifier_override is not None:
+            claims = self._google_access_token_verifier_override(access_token)
+        else:
+            if not self._google_oauth_client_id:
+                raise AuthenticationError(
+                    "Google OAuth client ID is not configured on the server.",
+                    code="AUTH_PROVIDER_NOT_CONFIGURED",
+                )
+            session = self._request_adapter.session
+            timeout = self._request_adapter.timeout_seconds
+            try:
+                tokeninfo_resp = session.post(
+                    _GOOGLE_TOKENINFO_URL,
+                    data={"access_token": access_token},
+                    timeout=timeout,
+                )
+            except requests.RequestException as exc:
+                logger.warning("Google tokeninfo request failed: %s", type(exc).__name__)
+                raise AuthenticationError(
+                    "Unable to reach Google authentication service to verify token.",
+                    code="AUTHENTICATION_REQUIRED",
+                ) from exc
+
+            if tokeninfo_resp.status_code != 200:
+                body_text = tokeninfo_resp.text.lower()
+                if "expired" in body_text or "invalid_token" in body_text:
+                    raise AuthenticationError(
+                        "Authentication token has expired or is invalid. Please sign in again.",
+                        code="TOKEN_EXPIRED"
+                        if "expired" in body_text
+                        else "AUTHENTICATION_REQUIRED",
+                    )
+                raise AuthenticationError(
+                    "Invalid or untrusted Google OAuth access token.",
+                    code="AUTHENTICATION_REQUIRED",
+                )
+
+            raw_info = tokeninfo_resp.json()
+            if not isinstance(raw_info, Mapping):
+                raise AuthenticationError("Malformed response from Google tokeninfo.")
+
+            aud = str(raw_info.get("aud") or "").strip()
+            azp = str(raw_info.get("azp") or "").strip()
+            if self._google_oauth_client_id not in {aud, azp}:
+                raise AuthenticationError(
+                    "Google OAuth token audience does not match configured GOOGLE_OAUTH_CLIENT_ID.",
+                    code="AUTHENTICATION_REQUIRED",
+                )
+
+            expires_in_raw = raw_info.get("expires_in")
+            try:
+                if int(str(expires_in_raw or "0")) <= 0:
+                    raise AuthenticationError(
+                        "Authentication token has expired. Please sign in again.",
+                        code="TOKEN_EXPIRED",
+                    )
+            except ValueError:
+                pass
+
+            merged_claims: dict[str, Any] = dict(raw_info)
+            try:
+                userinfo_resp = session.get(
+                    _GOOGLE_USERINFO_URL,
+                    headers={"Authorization": f"Bearer {access_token}"},
+                    timeout=timeout,
+                )
+                if userinfo_resp.status_code == 200:
+                    profile = userinfo_resp.json()
+                    if isinstance(profile, Mapping):
+                        merged_claims.update(profile)
+            except requests.RequestException:
+                logger.debug("Optional Google userinfo enrichment timed out or failed.")
+
+            claims = merged_claims
+
+        subject = str(claims.get("sub") or claims.get("user_id") or "").strip()
+        user_id = _normalize_verified_user_id("google", subject)
+        return AuthenticatedPrincipal(
+            user_id=user_id,
+            display_name=_extract_display_name(claims),
         )
 
     def authenticate_bearer_token(self, token: str) -> AuthenticatedPrincipal:
-        """Cryptographically verify a Firebase or Google ID token and extract its principal."""
+        """Cryptographically verify a Firebase/Google ID token or Google OAuth2 popup token."""
         cleaned = token.strip()
-        if not cleaned or cleaned.count(".") != (_JWT_SEGMENT_COUNT - 1):
+        if not cleaned:
             raise AuthenticationError(
-                "A valid Firebase or Google ID token is required.",
+                "A valid Firebase or Google authentication token is required.",
                 code="AUTHENTICATION_REQUIRED",
             )
 
@@ -174,6 +274,18 @@ class FirebaseGoogleTokenAuthenticator:
                 "Verified authentication is active, but FIREBASE_PROJECT_ID or "
                 "GOOGLE_OAUTH_CLIENT_ID is not configured on the server.",
                 code="AUTH_PROVIDER_NOT_CONFIGURED",
+            )
+
+        # Non-JWT bearer token (e.g. ya29.* from Google OAuth2 popup flow)
+        if cleaned.count(".") != (_JWT_SEGMENT_COUNT - 1):
+            if (
+                self._google_oauth_client_id is not None
+                or self._google_access_token_verifier_override is not None
+            ) and not cleaned.startswith(_MOCK_TOKEN_PREFIX):
+                return self._verify_google_oauth_access_token(cleaned)
+            raise AuthenticationError(
+                "A valid Firebase or Google ID token is required.",
+                code="AUTHENTICATION_REQUIRED",
             )
 
         expired_seen = False
@@ -187,6 +299,7 @@ class FirebaseGoogleTokenAuthenticator:
                         cleaned,
                         self._request_adapter,
                         audience=self._firebase_project_id,
+                        clock_skew_in_seconds=_CLOCK_SKEW_SECONDS,
                     )
                 )
                 subject = str(claims.get("user_id") or claims.get("sub") or "").strip()
@@ -211,6 +324,7 @@ class FirebaseGoogleTokenAuthenticator:
                         cleaned,
                         self._request_adapter,
                         audience=self._google_oauth_client_id,
+                        clock_skew_in_seconds=_CLOCK_SKEW_SECONDS,
                     )
                 )
                 issuer = str(claims.get("iss") or "")
@@ -230,7 +344,11 @@ class FirebaseGoogleTokenAuthenticator:
             except Exception as exc:
                 if _looks_like_expired_error(exc):
                     expired_seen = True
-                logger.debug("Google OIDC token verification did not match: %s", type(exc).__name__)
+                logger.warning(
+                    "Google OIDC token verification rejected token (%s): %s",
+                    type(exc).__name__,
+                    exc,
+                )
 
         if expired_seen:
             raise AuthenticationError(
@@ -367,9 +485,13 @@ class RuntimeAuthenticator:
         if not self._local_mock_enabled:
             return self._verified.authenticate_bearer_token(cleaned)
 
-        # In local/test mode, verify real JWTs when Firebase/Google OAuth is configured,
-        # and route isolated mock tokens through the local session registry.
-        if cleaned.count(".") == (_JWT_SEGMENT_COUNT - 1) and self._verified.is_configured:
+        # Route local mock tokens and static developer test tokens directly to the mock registry.
+        if cleaned.startswith(_MOCK_TOKEN_PREFIX) or cleaned in DEFAULT_FAKE_TOKENS:
+            return self._mock_registry.authenticate_mock_token(cleaned)
+
+        # In local/test mode, verify real Google/Firebase JWTs and Google OAuth2 popup tokens
+        # whenever Firebase/Google OAuth is configured on the server.
+        if self._verified.is_configured:
             return self._verified.authenticate_bearer_token(cleaned)
 
         return self._mock_registry.authenticate_mock_token(cleaned)
@@ -379,8 +501,10 @@ def build_runtime_authenticator(
     settings: AppSettings,
     *,
     clock: ClockPort | None = None,
+    mock_registry: LocalMockSessionRegistry | None = None,
     firebase_verifier_override: TokenClaimsVerifier | None = None,
     google_verifier_override: TokenClaimsVerifier | None = None,
+    google_access_token_verifier_override: TokenClaimsVerifier | None = None,
 ) -> RuntimeAuthenticator:
     """Construct ``RuntimeAuthenticator`` from validated ``AppSettings``."""
     verified = FirebaseGoogleTokenAuthenticator(
@@ -389,8 +513,9 @@ def build_runtime_authenticator(
         timeout_seconds=min(settings.http_timeout_seconds, 10.0),
         firebase_verifier_override=firebase_verifier_override,
         google_verifier_override=google_verifier_override,
+        google_access_token_verifier_override=google_access_token_verifier_override,
     )
-    registry = LocalMockSessionRegistry(
+    registry = mock_registry or LocalMockSessionRegistry(
         clock=clock,
         ttl_seconds=settings.mock_session_ttl_seconds,
     )

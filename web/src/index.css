@@ -1,51 +1,92 @@
 @import "tailwindcss";
 
-:root {
-  /* Material Design 3 — Warm Cream & Soft Espresso Palette */
-  --md-sys-color-surface: #faf6f0;
-  --md-sys-color-surface-dim: #efe7dc;
-  --md-sys-color-surface-container-lowest: #ffffff;
-  --md-sys-color-surface-container-low: #f5eee4;
-  --md-sys-color-surface-container: #ede3d5;
-  --md-sys-color-surface-container-high: #e3d6c4;
+/* ==========================================================================
+   Brew Design System: Playful Social Club (Modern Pastel Editorial SaaS)
+   ========================================================================== */
 
-  --md-sys-color-primary: #4a2e1b;
-  --md-sys-color-primary-hover: #382112;
-  --md-sys-color-on-primary: #fffbf7;
-  --md-sys-color-primary-container: #ead8c7;
-  --md-sys-color-on-primary-container: #2b170a;
+@theme {
+  /* Palette Tokens (Tailwind v4 Theme Utilities) */
+  --color-brew-bg: #FFFAF8;
+  --color-brew-paper: #FFFFFF;
+  --color-brew-plum: #302731;
+  --color-brew-secondary: #6F5E6A;
+  --color-brew-muted: #A69AA7;
+  --color-brew-dark-btn: #342B36;
+  --color-brew-dark-btn-hover: #251E27;
 
-  --md-sys-color-secondary: #684d39;
-  --md-sys-color-secondary-container: #efe3d6;
-  --md-sys-color-on-secondary-container: #332012;
+  --color-brew-coral: #EF8B70;
+  --color-brew-coral-vibrant: #E9785B;
+  --color-brew-peach: #FFE9DE;
+  --color-brew-blush: #FFF1EC;
 
-  --md-sys-color-tertiary: #2c553e;
-  --md-sys-color-tertiary-container: #dceadf;
-  --md-sys-color-on-tertiary-container: #133321;
+  --color-brew-lavender: #E9DFFC;
+  --color-brew-lilac: #F5F0FC;
+  --color-brew-purple: #8C67BC;
 
-  --md-sys-color-warning: #744c0c;
-  --md-sys-color-warning-container: #f8e8cb;
-  --md-sys-color-on-warning-container: #3f2702;
+  --color-brew-mint: #DDF3E7;
+  --color-brew-mint-pale: #F0F8F3;
+  --color-brew-mint-deep: #3F9678;
 
-  --md-sys-color-error: #9e2a2b;
-  --md-sys-color-error-container: #fceae9;
-  --md-sys-color-on-error-container: #5a1213;
+  --color-brew-yellow: #FFF2CD;
+  --color-brew-border: #EEE4E6;
 
-  --md-sys-color-on-surface: #23170f;
-  --md-sys-color-on-surface-variant: #594638;
-  --md-sys-color-outline: #857060;
-  --md-sys-color-outline-variant: #d6c7b7;
-
-  /* Elevation & Motion */
-  --md-elevation-1: 0 1px 2px rgba(35, 23, 15, 0.06), 0 1px 3px 1px rgba(35, 23, 15, 0.04);
-  --md-elevation-2: 0 2px 6px 2px rgba(35, 23, 15, 0.07), 0 1px 2px rgba(35, 23, 15, 0.05);
-  --md-elevation-3: 0 6px 18px 4px rgba(35, 23, 15, 0.09), 0 2px 4px rgba(35, 23, 15, 0.06);
-  --md-motion-standard: 160ms cubic-bezier(0.2, 0, 0, 1);
-
-  /* Typography */
-  --font-sans: "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  /* Typography Families */
+  --font-sans: "DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-serif: "Fraunces", Georgia, Cambria, "Times New Roman", serif;
   --font-display: "Fraunces", Georgia, Cambria, "Times New Roman", serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  /* Border Radii */
+  --radius-card: 1.625rem; /* 26px (24-30px spec) */
+  --radius-card-lg: 1.875rem; /* 30px */
+  --radius-hero: 2.125rem; /* 34px (32-38px spec) */
+  --radius-btn-primary: 1.0625rem; /* 17px (16-22px spec) */
+  --radius-pill: 9999px;
+
+  /* Soft Lavender & Warm-Grey Ambient Shadows */
+  --shadow-ambient: 0 10px 30px -8px rgba(140, 103, 188, 0.08), 0 3px 10px -3px rgba(48, 39, 49, 0.04);
+  --shadow-card: 0 8px 26px -6px rgba(48, 39, 49, 0.05), 0 2px 8px -2px rgba(140, 103, 188, 0.05);
+  --shadow-floating: 0 18px 42px -10px rgba(140, 103, 188, 0.14), 0 6px 16px -4px rgba(48, 39, 49, 0.06);
+  --shadow-nav: 0 -4px 24px -2px rgba(48, 39, 49, 0.05), 0 10px 28px -6px rgba(140, 103, 188, 0.11);
+}
+
+:root {
+  /* Core Semantic CSS Custom Properties */
+  --brew-bg-app: #FFFAF8;
+  --brew-surface-paper: #FFFFFF;
+  --brew-text-primary: #302731;
+  --brew-text-secondary: #6F5E6A;
+  --brew-text-placeholder: #A69AA7;
+  --brew-btn-primary: #342B36;
+  --brew-btn-primary-hover: #251E27;
+
+  --brew-coral: #EF8B70;
+  --brew-coral-vibrant: #E9785B;
+  --brew-peach-pale: #FFE9DE;
+  --brew-blush-warm: #FFF1EC;
+
+  --brew-lavender: #E9DFFC;
+  --brew-lilac-pale: #F5F0FC;
+  --brew-purple: #8C67BC;
+
+  --brew-mint: #DDF3E7;
+  --brew-mint-pale: #F0F8F3;
+  --brew-mint-deep: #3F9678;
+
+  --brew-yellow-pale: #FFF2CD;
+  --brew-border-subtle: #EEE4E6;
+
+  /* Editorial Pastel Gradients (matching approved v2 mockups) */
+  --brew-gradient-peach-hero: linear-gradient(135deg, #FFE9DF 0%, #FFF4EE 58%, #FFFDFB 100%);
+  --brew-gradient-lavender-card: linear-gradient(145deg, #F8F4FF 0%, #EEE6FC 100%);
+  --brew-gradient-mint-card: linear-gradient(145deg, #F2FAF5 0%, #E4F4EA 100%);
+  --brew-gradient-coral-highlight: linear-gradient(135deg, #FFE4D8 0%, #FFF2EB 100%);
+
+  /* Layout & Rhythm Tokens */
+  --brew-gutter-mobile: 20px;
+  --brew-container-max: 1368px;
+  --brew-touch-min: 44px;
+  --brew-motion: 180ms cubic-bezier(0.22, 1, 0.36, 1);
 
   color-scheme: light;
 }
@@ -53,8 +94,8 @@
 @layer base {
   html {
     font-family: var(--font-sans);
-    background-color: var(--md-sys-color-surface);
-    color: var(--md-sys-color-on-surface);
+    background-color: var(--brew-bg-app);
+    color: var(--brew-text-primary);
     -webkit-tap-highlight-color: transparent;
   }
 
@@ -62,15 +103,21 @@
     margin: 0;
     min-height: 100vh;
     overflow-x: hidden;
-    background-color: var(--md-sys-color-surface);
-    color: var(--md-sys-color-on-surface);
+    background-color: var(--brew-bg-app);
+    color: var(--brew-text-primary);
+    font-size: 0.9375rem;
     line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
   }
 
   h1,
-  .font-display {
-    font-family: var(--font-display);
-    letter-spacing: -0.015em;
+  h2,
+  h3,
+  .font-display,
+  .font-serif {
+    font-family: var(--font-serif);
+    color: var(--brew-text-primary);
+    letter-spacing: -0.022em;
   }
 
   code,
@@ -80,248 +127,271 @@
   }
 
   *:focus-visible {
-    outline: 2px solid var(--md-sys-color-primary);
+    outline: 2px solid var(--brew-purple);
     outline-offset: 2px;
   }
 }
 
-/* Skip navigation link for keyboard accessibility */
-.md-skip-link {
+/* ==========================================================================
+   Typography, Surfaces, Badges, & Controls (@layer components for Tailwind v4)
+   ========================================================================== */
+
+@layer components {
+/* Wordmark: bold, tightly tracked lowercase sans-serif "brew." */
+.brew-wordmark {
+  font-family: var(--font-sans);
+  font-weight: 800;
+  letter-spacing: -0.045em;
+  line-height: 1;
+  text-transform: lowercase;
+  color: var(--brew-text-primary);
+}
+
+/* Page hero: 38-46px mobile, 52-68px desktop */
+.brew-hero-heading {
+  font-family: var(--font-serif);
+  font-weight: 700;
+  font-size: clamp(2.15rem, 4.2vw, 3.35rem);
+  line-height: 1.08;
+  letter-spacing: -0.026em;
+  color: var(--brew-text-primary);
+}
+
+/* Page heading: 28-35px */
+.brew-page-heading {
+  font-family: var(--font-serif);
+  font-weight: 700;
+  font-size: clamp(1.625rem, 2.5vw, 2.1875rem);
+  line-height: 1.12;
+  letter-spacing: -0.022em;
+  color: var(--brew-text-primary);
+}
+
+/* Section heading: 21-25px */
+.brew-section-heading {
+  font-family: var(--font-serif);
+  font-weight: 700;
+  font-size: clamp(1.3125rem, 1.8vw, 1.5625rem);
+  line-height: 1.2;
+  letter-spacing: -0.018em;
+  color: var(--brew-text-primary);
+}
+
+/* Card heading: 18-22px */
+.brew-card-heading {
+  font-family: var(--font-serif);
+  font-weight: 700;
+  font-size: clamp(1.125rem, 1.4vw, 1.3125rem);
+  line-height: 1.26;
+  letter-spacing: -0.014em;
+  color: var(--brew-text-primary);
+}
+
+/* Small uppercase eyebrow: 11-12px, bold, increased letter spacing */
+.brew-eyebrow {
+  font-family: var(--font-sans);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--brew-text-secondary);
+}
+
+/* ==========================================================================
+   Pastel Surface & Gradient Utilities
+   ========================================================================== */
+
+.brew-hero-peach {
+  background: var(--brew-gradient-peach-hero);
+  border: 1px solid #F6DDD1;
+  box-shadow: var(--shadow-card);
+}
+
+.brew-card-paper {
+  background-color: var(--brew-surface-paper);
+  border: 1px solid var(--brew-border-subtle);
+  box-shadow: var(--shadow-card);
+}
+
+.brew-card-lavender {
+  background: var(--brew-gradient-lavender-card);
+  border: 1px solid #E3D7FA;
+  box-shadow: var(--shadow-card);
+}
+
+.brew-card-mint {
+  background: var(--brew-gradient-mint-card);
+  border: 1px solid #D2EBDD;
+  box-shadow: var(--shadow-card);
+}
+
+.brew-card-coral {
+  background: var(--brew-gradient-coral-highlight);
+  border: 1px solid #F8D6C7;
+  box-shadow: var(--shadow-card);
+}
+
+.brew-card-blush {
+  background-color: var(--brew-blush-warm);
+  border: 1px solid #F4DFD7;
+}
+
+.brew-card-yellow {
+  background-color: var(--brew-yellow-pale);
+  border: 1px solid #EBD99B;
+}
+
+/* ==========================================================================
+   Semantic Pill Badges & Mad-Libs Controls
+   ========================================================================== */
+
+.brew-badge-coral {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  border-radius: 9999px;
+  background-color: var(--brew-coral);
+  color: var(--brew-text-primary);
+  font-size: 0.6875rem;
+  font-weight: 800;
+  padding: 0.15rem 0.55rem;
+  white-space: nowrap;
+}
+
+.brew-badge-mint {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3125rem;
+  border-radius: 9999px;
+  background-color: var(--brew-mint);
+  color: #215A45;
+  font-size: 0.71875rem;
+  font-weight: 700;
+  padding: 0.25rem 0.6875rem;
+  white-space: nowrap;
+}
+
+.brew-badge-lavender {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3125rem;
+  border-radius: 9999px;
+  background-color: var(--brew-lavender);
+  color: #5E3E8C;
+  font-size: 0.71875rem;
+  font-weight: 700;
+  padding: 0.25rem 0.6875rem;
+  white-space: nowrap;
+}
+
+.brew-badge-peach {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3125rem;
+  border-radius: 9999px;
+  background-color: var(--brew-peach-pale);
+  color: var(--brew-text-primary);
+  font-size: 0.71875rem;
+  font-weight: 700;
+  padding: 0.25rem 0.6875rem;
+  white-space: nowrap;
+}
+
+.brew-badge-yellow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3125rem;
+  border-radius: 9999px;
+  background-color: var(--brew-yellow-pale);
+  color: #6B5314;
+  font-size: 0.71875rem;
+  font-weight: 700;
+  padding: 0.25rem 0.6875rem;
+  white-space: nowrap;
+}
+
+.brew-madlib-select {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.25rem;
+  border-radius: 9999px;
+  padding: 0.18rem 1.6rem 0.18rem 0.72rem;
+  font-family: var(--font-sans);
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: var(--brew-text-primary);
+  cursor: pointer;
+  background-repeat: no-repeat;
+  background-position: right 0.55rem center;
+  background-size: 0.68rem;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='currentColor'%3E%3Cpath d='M6 9l6 7 6-7z'/%3E%3C/svg%3E");
+  transition:
+    border-color var(--brew-motion),
+    box-shadow var(--brew-motion);
+}
+
+.brew-madlib-select:focus {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(140, 103, 188, 0.22);
+}
+
+/* Accessible Skip Link */
+.brew-skip-link {
   position: absolute;
   left: -9999px;
   top: 0.75rem;
   z-index: 100;
-  padding: 0.625rem 1rem;
+  padding: 0.65rem 1.15rem;
   border-radius: 9999px;
-  background-color: var(--md-sys-color-primary);
-  color: var(--md-sys-color-on-primary);
+  background-color: var(--brew-btn-primary);
+  color: #FFFFFF;
   font-size: 0.875rem;
   font-weight: 600;
-  box-shadow: var(--md-elevation-2);
+  box-shadow: var(--shadow-floating);
 }
 
-.md-skip-link:focus {
-  left: 0.75rem;
+.brew-skip-link:focus {
+  left: 1.25rem;
 }
 
-/* Material 3 Surface Containers */
-.md-card {
-  background-color: var(--md-sys-color-surface-container-lowest);
-  border: 1px solid var(--md-sys-color-outline-variant);
-  border-radius: 1.25rem;
-  box-shadow: var(--md-elevation-1);
-}
-
-.md-card-tonal {
-  background-color: var(--md-sys-color-surface-container-low);
-  border: 1px solid var(--md-sys-color-outline-variant);
-  border-radius: 1.25rem;
-}
-
-.md-card-elevated {
-  background-color: var(--md-sys-color-surface-container-lowest);
-  border: 1px solid var(--md-sys-color-outline-variant);
-  border-radius: 1.5rem;
-  box-shadow: var(--md-elevation-3);
-}
-
-/* Material 3 Buttons */
-.md-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.5rem;
-  min-height: 2.625rem;
-  padding: 0.5rem 1.25rem;
-  border-radius: 9999px;
-  font-size: 0.875rem;
-  font-weight: 600;
-  line-height: 1.25rem;
-  cursor: pointer;
-  transition:
-    background-color var(--md-motion-standard),
-    border-color var(--md-motion-standard),
-    color var(--md-motion-standard),
-    box-shadow var(--md-motion-standard);
-}
-
-.md-btn:disabled {
-  opacity: 0.48;
-  cursor: not-allowed;
-  box-shadow: none;
-}
-
-.md-btn-filled {
-  background-color: var(--md-sys-color-primary);
-  color: var(--md-sys-color-on-primary);
-  border: 1px solid transparent;
-}
-
-.md-btn-filled:hover:not(:disabled) {
-  background-color: var(--md-sys-color-primary-hover);
-  box-shadow: var(--md-elevation-1);
-}
-
-.md-btn-tonal {
-  background-color: var(--md-sys-color-primary-container);
-  color: var(--md-sys-color-on-primary-container);
-  border: 1px solid transparent;
-}
-
-.md-btn-tonal:hover:not(:disabled) {
-  background-color: #dfcbb6;
-}
-
-.md-btn-outlined {
-  background-color: var(--md-sys-color-surface-container-lowest);
-  color: var(--md-sys-color-primary);
-  border: 1px solid var(--md-sys-color-outline);
-}
-
-.md-btn-outlined:hover:not(:disabled) {
-  background-color: var(--md-sys-color-surface-container-low);
-}
-
-.md-btn-text {
-  background-color: transparent;
-  color: var(--md-sys-color-primary);
-  border: 1px solid transparent;
-  padding-inline: 0.875rem;
-}
-
-.md-btn-text:hover:not(:disabled) {
-  background-color: var(--md-sys-color-surface-container);
-}
-
-.md-btn-danger {
-  background-color: var(--md-sys-color-error-container);
-  color: var(--md-sys-color-on-error-container);
-  border: 1px solid #eabcbc;
-}
-
-.md-btn-danger:hover:not(:disabled) {
-  background-color: #f6d5d4;
-}
-
-/* Material 3 Outlined Form Controls */
-.md-input,
-.md-select,
-.md-textarea {
+/* Form Input Surfaces */
+.brew-field-control {
   width: 100%;
-  border-radius: 0.75rem;
-  border: 1px solid var(--md-sys-color-outline);
-  background-color: var(--md-sys-color-surface-container-lowest);
-  color: var(--md-sys-color-on-surface);
-  padding: 0.65rem 0.875rem;
+  min-height: var(--brew-touch-min);
+  border-radius: 1.125rem;
+  border: 1.5px solid var(--brew-border-subtle);
+  background-color: var(--brew-surface-paper);
+  color: var(--brew-text-primary);
+  padding: 0.75rem 1rem;
+  font-family: var(--font-sans);
   font-size: 0.9375rem;
-  line-height: 1.4;
+  line-height: 1.5;
   transition:
-    border-color var(--md-motion-standard),
-    box-shadow var(--md-motion-standard);
+    border-color var(--brew-motion),
+    box-shadow var(--brew-motion),
+    background-color var(--brew-motion);
 }
 
-.md-input {
-  min-height: 2.75rem;
+.brew-field-control::placeholder {
+  color: var(--brew-text-placeholder);
 }
 
-.md-select {
-  min-height: 2.75rem;
+.brew-field-control:hover:not(:disabled) {
+  border-color: #D8C7CE;
 }
 
-.md-input::placeholder,
-.md-textarea::placeholder {
-  color: #7c6757;
-}
-
-.md-input:hover:not(:disabled),
-.md-select:hover:not(:disabled),
-.md-textarea:hover:not(:disabled) {
-  border-color: var(--md-sys-color-primary);
-}
-
-.md-input:focus,
-.md-select:focus,
-.md-textarea:focus {
+.brew-field-control:focus {
   outline: none;
-  border-color: var(--md-sys-color-primary);
-  box-shadow: 0 0 0 2px rgba(74, 46, 27, 0.18);
+  border-color: var(--brew-purple);
+  box-shadow: 0 0 0 3.5px rgba(140, 103, 188, 0.14);
 }
 
-.md-input[aria-invalid="true"],
-.md-select[aria-invalid="true"],
-.md-textarea[aria-invalid="true"] {
-  border-color: var(--md-sys-color-error);
+.brew-field-control[aria-invalid="true"] {
+  border-color: var(--brew-coral-vibrant);
+  box-shadow: 0 0 0 3px rgba(233, 120, 91, 0.14);
 }
-
-/* Material 3 Filter & Choice Chips */
-.md-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.375rem;
-  min-height: 2.25rem;
-  padding: 0.375rem 0.875rem;
-  border-radius: 0.625rem;
-  border: 1px solid var(--md-sys-color-outline-variant);
-  background-color: var(--md-sys-color-surface-container-lowest);
-  color: var(--md-sys-color-on-surface-variant);
-  font-size: 0.8125rem;
-  font-weight: 500;
-  cursor: pointer;
-  transition:
-    background-color var(--md-motion-standard),
-    border-color var(--md-motion-standard),
-    color var(--md-motion-standard);
-}
-
-.md-chip:hover:not(:disabled) {
-  background-color: var(--md-sys-color-surface-container-low);
-  border-color: var(--md-sys-color-outline);
-}
-
-.md-chip-active {
-  background-color: var(--md-sys-color-primary-container);
-  border-color: var(--md-sys-color-primary);
-  color: var(--md-sys-color-on-primary-container);
-  font-weight: 600;
-}
-
-/* Status Badges */
-.md-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-  padding: 0.2rem 0.65rem;
-  border-radius: 9999px;
-  font-size: 0.75rem;
-  font-weight: 600;
-  line-height: 1.2;
-  white-space: nowrap;
-  flex-shrink: 0;
-}
-
-.md-badge-espresso {
-  background-color: var(--md-sys-color-primary-container);
-  color: var(--md-sys-color-on-primary-container);
-}
-
-.md-badge-sage {
-  background-color: var(--md-sys-color-tertiary-container);
-  color: var(--md-sys-color-on-tertiary-container);
-}
-
-.md-badge-amber {
-  background-color: var(--md-sys-color-warning-container);
-  color: var(--md-sys-color-on-warning-container);
-}
-
-.md-badge-error {
-  background-color: var(--md-sys-color-error-container);
-  color: var(--md-sys-color-on-error-container);
-}
-
-.md-badge-neutral {
-  background-color: var(--md-sys-color-surface-container);
-  color: var(--md-sys-color-on-surface-variant);
 }
 
 @media (prefers-reduced-motion: reduce) {

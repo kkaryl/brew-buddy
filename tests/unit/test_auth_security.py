@@ -220,3 +220,68 @@ def test_local_mock_sessions_enforce_isolation_expiry_and_logout(
             headers={"Authorization": f"Bearer {fresh_bob}"},
         )
         assert after_logout.status_code == 401
+
+
+def test_google_oauth_client_id_quote_cleaning_and_popup_access_token_verification(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("K_SERVICE", raising=False)
+
+    settings = AppSettings(
+        environment="local",
+        google_oauth_client_id='  "987654321-web.apps.googleusercontent.com"  ',
+        brief_coach_backend="fake",
+        memory_extractor_backend="fake",
+        otel_to_cloud=False,
+        web_dist_dir=tmp_path / "no-dist",
+    )
+    assert settings.google_oauth_client_id == "987654321-web.apps.googleusercontent.com"
+
+    placeholder_settings = AppSettings(
+        environment="local",
+        google_oauth_client_id="your-google-oauth-web-client-id.apps.googleusercontent.com",
+        otel_to_cloud=False,
+    )
+    assert placeholder_settings.google_oauth_client_id is None
+
+    # Synthetic non-JWT bearer tokens for unit testing only (never real credentials).
+    valid_test_oauth_token = "oauth_test.valid_popup_oauth_token"
+    wrong_client_test_token = "oauth_test.wrong_client_token"
+
+    def fake_access_token_verifier(token: str) -> dict[str, object]:
+        if token == valid_test_oauth_token:
+            return {
+                "sub": "112233445566",
+                "name": "Kary Long",
+                "email": "kary@example.com",
+            }
+        raise AuthenticationError("Audience mismatch", code="AUTHENTICATION_REQUIRED")
+
+    runtime_auth = build_runtime_authenticator(
+        settings,
+        google_access_token_verifier_override=fake_access_token_verifier,
+    )
+    container = FakeServiceContainer(authenticator=runtime_auth)
+
+    with TestClient(create_app(settings, service_container=container)) as client:
+        cfg = client.get("/api/auth/config").json()
+        assert cfg["google_sign_in_enabled"] is True
+        assert cfg["google_oauth_client_id"] == "987654321-web.apps.googleusercontent.com"
+
+        me_resp = client.get(
+            "/api/v1/auth/me",
+            headers={"Authorization": f"Bearer {valid_test_oauth_token}"},
+        )
+        assert me_resp.status_code == 200
+        assert me_resp.json() == {
+            "user_id": "google:112233445566",
+            "display_name": "Kary Long",
+            "auth_provider": "verified",
+        }
+
+        bad_resp = client.get(
+            "/api/v1/auth/me",
+            headers={"Authorization": f"Bearer {wrong_client_test_token}"},
+        )
+        assert bad_resp.status_code == 401

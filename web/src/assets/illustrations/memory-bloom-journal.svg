@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 280">
+  <!-- Layered Pastel Circles -->
+  <circle cx="166" cy="148" r="92" fill="#E9DFFC" />
+  <circle cx="258" cy="144" r="90" fill="#FFFFFF" />
+  <circle cx="258" cy="144" r="86" fill="#DDF3E7" />
+  <circle cx="212" cy="84" r="50" fill="#FFE9DE" />
+  <circle cx="96" cy="96" r="12" fill="#FFF2CD" />
+
+  <!-- Coral Radiating Capsules -->
+  <path d="M295 65 L307 54 C308.6 52.5, 311 55, 309.4 56.5 L297.4 67.5 C295.8 69, 293.4 66.5, 295 65 Z" fill="#EF8B70" />
+  <path d="M304 76.5 L319 73.5 C321 73, 321.8 76.5, 319.8 77 L304.8 80 C302.8 80.5, 302 77, 304 76.5 Z" fill="#EF8B70" />
+  <path d="M284.5 58 L288.5 43.5 C289 41.5, 292.5 42.4, 292 44.4 L288 58.9 C287.5 60.9, 284 60, 284.5 58 Z" fill="#EF8B70" />
+
+  <!-- White Speech Bubble with Three Dots -->
+  <rect x="176" y="42" width="68" height="38" rx="19" fill="#FFFFFF" />
+  <path d="M204 79 L198 90 L215 80 Z" fill="#FFFFFF" />
+  <circle cx="198" cy="61" r="3.8" fill="#302731" />
+  <circle cx="210" cy="61" r="3.8" fill="#8C67BC" />
+  <circle cx="222" cy="61" r="3.8" fill="#302731" />
+
+  <!-- Open Editorial Relationship Journal -->
+  <rect x="104" y="110" width="212" height="134" rx="21" fill="#FFFFFF" />
+  <rect x="108" y="114" width="204" height="126" rx="18" fill="#8C67BC" />
+  <path d="M118 122 H206 C209 122, 210 124, 210 127 V228 C200 224, 132 224, 118 228 Z" fill="#FFFDF9" />
+  <path d="M302 122 H214 C211 122, 210 124, 210 127 V228 C220 224, 288 224, 302 228 Z" fill="#FFF9F3" />
+  <rect x="208.8" y="122" width="2.4" height="106" fill="#E9DFFC" />
+
+  <!-- Coral Bookmark Ribbon -->
+  <path d="M204 226 L204 256 L211 249 L218 256 L218 226 Z" fill="#EF8B70" />
+
+  <!-- Left Page Visual Blocks -->
+  <rect x="132" y="140" width="38" height="10" rx="5" fill="#FFE9DE" />
+  <rect x="132" y="160" width="62" height="6" rx="3" fill="#EEE4E6" />
+  <rect x="132" y="174" width="54" height="6" rx="3" fill="#EEE4E6" />
+  <rect x="132" y="194" width="46" height="18" rx="9" fill="#DDF3E7" />
+
+  <!-- Approved Keepsake Memory Card on Right Page -->
+  <rect x="220" y="132" width="78" height="76" rx="16" fill="#EF8B70" />
+  <rect x="222.5" y="134.5" width="73" height="71" rx="13.5" fill="#FFFFFF" />
+  <circle cx="241" cy="153" r="9.5" fill="#FFE9DE" />
+  <!-- Filled Checkmark Inside Coral Badge -->
+  <path d="M236.5 153 L238.3 151.2 L240.3 153.2 L244.8 148.7 L246.6 150.5 L240.3 156.8 Z" fill="#E9785B" />
+  <rect x="234" y="171" width="48" height="6" rx="3" fill="#E9DFFC" />
+  <rect x="234" y="184" width="34" height="6" rx="3" fill="#DDF3E7" />
+
+  <!-- Warm Character Hand & Coral Sleeve Placing Keepsake Card -->
+  <path d="M326 214 C312 204, 298 192, 288 186 C282 182, 286 172, 294 175 L338 196 Z" fill="#E39E7D" />
+  <path d="M322 186 L360 205 L347 234 L311 214 Z" fill="#FFFFFF" />
+  <path d="M324 188 L358 206 L346 232 L314 213 Z" fill="#EF8B70" />
+</svg>

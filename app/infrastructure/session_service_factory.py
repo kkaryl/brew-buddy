@@ -13,10 +13,11 @@ from google.adk.integrations.firestore.firestore_session_service import (
 )
 from google.adk.sessions import BaseSessionService
 from google.adk.sessions.in_memory_session_service import InMemorySessionService
+from google.auth.exceptions import GoogleAuthError
 from google.cloud import firestore
 
 from app.config import AppSettings, get_settings
-from app.domain.errors import InvalidConfigurationError
+from app.domain.errors import InvalidConfigurationError, PersistenceOperationError
 from app.infrastructure.firestore_repositories import (
     BRIEFS_SUBCOLLECTION,
     CONTACTS_SUBCOLLECTION,
@@ -70,7 +71,14 @@ def create_firestore_async_client(
         or os.environ.get("GOOGLE_CLOUD_PROJECT")
         or ("brew-local" if os.environ.get("FIRESTORE_EMULATOR_HOST") else None)
     )
-    return firestore.AsyncClient(project=resolved_project, database=database)
+    try:
+        return firestore.AsyncClient(project=resolved_project, database=database)
+    except GoogleAuthError as exc:
+        raise PersistenceOperationError(
+            "Cloud Firestore credentials are unavailable or invalid. "
+            "Run 'gcloud auth application-default login' or set "
+            "BREW_PERSISTENCE_BACKEND=in_memory in .env for offline local mode."
+        ) from exc
 
 
 def create_adk_firestore_session_service(

@@ -25,20 +25,57 @@ import {
   saveStoredSession,
   type StoredAuthSession,
 } from "./auth/session";
+import {
+  loadStoredCalendarEvents,
+  saveStoredCalendarEvents,
+} from "./calendar/calendarStore";
+import type { CalendarCoffeeChatEvent } from "./calendar/calendarTypes";
+import {
+  fetchReadOnlyGoogleCalendarEvents,
+  requestGoogleCalendarReadOnlyToken,
+} from "./calendar/googleCalendarClient";
+import { parseIcsCalendarEvents } from "./calendar/icsParser";
 import { AuthSignInGate } from "./components/AuthSignInGate";
 import { ContactFormModal } from "./components/ContactFormModal";
 import { errorToFeedbackNotice } from "./components/formatters";
-import { MemoryReviewWorkspace } from "./components/MemoryReviewWorkspace";
-import { MemoryVaultWorkspace } from "./components/MemoryVaultWorkspace";
-import { PrepareWorkspace } from "./components/PrepareWorkspace";
-import { EmptyStateCard, StatusBanner } from "./components/StatusFeedback";
-
-type ActiveNavSection = "prepare" | "review" | "memories" | "people";
+import { ClubhouseScreen } from "./components/screens/ClubhouseScreen";
+import { CueStudioScreen } from "./components/screens/CueStudioScreen";
+import { DebriefKeepsakesScreen } from "./components/screens/DebriefKeepsakesScreen";
+import { PocketCueCardsScreen } from "./components/screens/PocketCueCardsScreen";
+import {
+  QuickSparkSetupScreen,
+  type QuickSparkSetupInitialSeed,
+} from "./components/screens/QuickSparkSetupScreen";
+import { RelationshipJournalScreen } from "./components/screens/RelationshipJournalScreen";
+import { FocusedTopBar } from "./components/shell/FocusedTopBar";
+import { MobileDock } from "./components/shell/MobileDock";
+import { TopBarShell, type MainSpace } from "./components/shell/TopBarShell";
+import { StatusBanner } from "./components/StatusFeedback";
+import {
+  loadCoachingDefaults,
+  saveCoachingDefaults,
+  type CoachingStyleDefaults,
+} from "./state/coachingDefaultsStore";
+import {
+  loadStarredQuestionIds,
+  saveStarredQuestionIds,
+  toggleQuestionStar,
+} from "./state/starredQuestionsStore";
 
 type HealthViewState =
   | { readonly kind: "loading" }
   | { readonly kind: "ready"; readonly data: HealthPayload }
   | { readonly kind: "error"; readonly message: string };
+
+type ActiveRouteView =
+  | { readonly kind: "space"; readonly space: MainSpace; readonly journalMode?: "contact" | "coaching_style" }
+  | { readonly kind: "setup"; readonly returnSpace: MainSpace; readonly seed: QuickSparkSetupInitialSeed | null }
+  | { readonly kind: "pocket" }
+  | {
+      readonly kind: "debrief";
+      readonly returnSpace: MainSpace;
+      readonly calendarEvent: CalendarCoffeeChatEvent | null;
+    };
 
 export function App(): JSX.Element {
   const [healthState, setHealthState] = useState<HealthViewState>({ kind: "loading" });
@@ -55,17 +92,38 @@ export function App(): JSX.Element {
   });
   const [sessionExpiredReason, setSessionExpiredReason] = useState<string | null>(null);
 
-  const [navSection, setNavSection] = useState<ActiveNavSection>("prepare");
+  const [routeView, setRouteView] = useState<ActiveRouteView>({
+    kind: "space",
+    space: "clubhouse",
+  });
   const [isContactModalOpen, setIsContactModalOpen] = useState(false);
 
   const [contacts, setContacts] = useState<readonly ContactResponse[]>([]);
   const [activeContactId, setActiveContactId] = useState<string | null>(null);
   const [meetings, setMeetings] = useState<readonly MeetingResponse[]>([]);
+  const [meetingsByContact, setMeetingsByContact] = useState<
+    ReadonlyMap<string, readonly MeetingResponse[]>
+  >(new Map());
   const [activeBrief, setActiveBrief] = useState<PreparationBriefResponse | null>(null);
   const [briefRevisions, setBriefRevisions] = useState<readonly PreparationBriefResponse[]>([]);
   const [pendingProposals, setPendingProposals] = useState<readonly MemoryProposalResponse[]>([]);
   const [memories, setMemories] = useState<readonly MemoryResponse[]>([]);
   const [includeSuperseded, setIncludeSuperseded] = useState(false);
+
+  const [calendarEvents, setCalendarEvents] = useState<readonly CalendarCoffeeChatEvent[]>([]);
+  const [calendarSyncing, setCalendarSyncing] = useState(false);
+  const [calendarNotice, setCalendarNotice] = useState<string | null>(null);
+
+  const [starredQuestionIds, setStarredQuestionIds] = useState<ReadonlySet<string>>(new Set());
+
+  const currentUserId = session?.principal.user_id ?? null;
+  const currentDisplayName =
+    session?.principal.display_name ?? session?.principal.user_id ?? "Guest";
+  const isLocalMock = session?.principal.auth_provider === "local_mock";
+
+  const [styleDefaults, setStyleDefaults] = useState<CoachingStyleDefaults>(() =>
+    loadCoachingDefaults(currentUserId),
+  );
 
   const [loadingWorkspace, setLoadingWorkspace] = useState(false);
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
@@ -76,6 +134,51 @@ export function App(): JSX.Element {
   const authConfigRef = useRef<AuthClientConfigResponse | null>(authConfig);
   authConfigRef.current = authConfig;
 
+  useEffect(() => {
+    setStyleDefaults(loadCoachingDefaults(currentUserId));
+    if (currentUserId) {
+      setCalendarEvents(
+        loadStoredCalendarEvents(currentUserId, {
+          isLocalMock,
+          userDisplayName: currentDisplayName,
+        }),
+      );
+    } else {
+      setCalendarEvents([]);
+    }
+  }, [currentDisplayName, currentUserId, isLocalMock]);
+
+  // Sync starred cue cards whenever the active brief changes
+  useEffect(() => {
+    if (!activeBrief) {
+      setStarredQuestionIds(new Set());
+      return;
+    }
+    const allIds = activeBrief.suggested_questions.map((q) => q.id);
+    setStarredQuestionIds(loadStarredQuestionIds(currentUserId, activeBrief.id, allIds));
+  }, [activeBrief, currentUserId]);
+
+  // Keep document title synchronized with active v2 view (zero em-dashes)
+  useEffect(() => {
+    if (!session) {
+      document.title = "brew. · Thoughtful Coffee Chat & Relationship Companion";
+      return;
+    }
+    if (routeView.kind === "setup") {
+      document.title = "brew. · Shape Conversation";
+    } else if (routeView.kind === "pocket") {
+      document.title = "brew. · Pocket Cue Cards";
+    } else if (routeView.kind === "debrief") {
+      document.title = "brew. · Post-Chat Debrief";
+    } else if (routeView.space === "studio") {
+      document.title = "brew. · Cue Studio";
+    } else if (routeView.space === "journal") {
+      document.title = "brew. · Relationship Journal";
+    } else {
+      document.title = "brew. · Clubhouse";
+    }
+  }, [routeView, session]);
+
   const resetAuthenticatedState = useCallback((expiredReason: string | null): void => {
     clearStoredSession();
     sessionRef.current = null;
@@ -83,10 +186,12 @@ export function App(): JSX.Element {
     setContacts([]);
     setActiveContactId(null);
     setMeetings([]);
+    setMeetingsByContact(new Map());
     setActiveBrief(null);
     setBriefRevisions([]);
     setPendingProposals([]);
     setMemories([]);
+    setRouteView({ kind: "space", space: "clubhouse" });
     if (expiredReason) {
       setSessionExpiredReason(expiredReason);
     }
@@ -148,6 +253,10 @@ export function App(): JSX.Element {
         apiClient.getBrief(briefId),
         apiClient.listBriefRevisions(briefId),
       ]);
+      const allIds = brief.suggested_questions.map((q) => q.id);
+      setStarredQuestionIds(
+        loadStarredQuestionIds(sessionRef.current?.principal.user_id ?? null, brief.id, allIds),
+      );
       setActiveBrief(brief);
       setBriefRevisions(revisionsResp.items);
     },
@@ -155,24 +264,36 @@ export function App(): JSX.Element {
   );
 
   const loadContactContext = useCallback(
-    async (contactId: string): Promise<void> => {
+    async (contactId: string, explicitBriefId?: string | null): Promise<void> => {
       setLoadingWorkspace(true);
       setWorkspaceError(null);
       try {
         const meetingsResp = await apiClient.listMeetings(contactId);
         setMeetings(meetingsResp.items);
-        const latestWithBrief = meetingsResp.items.find(
-          (m) => typeof m.latest_brief_id === "string" && m.latest_brief_id.length > 0,
-        );
-        if (latestWithBrief?.latest_brief_id) {
-          await loadBriefWithRevisions(latestWithBrief.latest_brief_id);
+        setMeetingsByContact((prev) => {
+          const next = new Map(prev);
+          next.set(contactId, meetingsResp.items);
+          return next;
+        });
+
+        const targetBriefId =
+          explicitBriefId ??
+          meetingsResp.items.find(
+            (m) => typeof m.latest_brief_id === "string" && m.latest_brief_id.length > 0,
+          )?.latest_brief_id ??
+          null;
+
+        if (targetBriefId) {
+          await loadBriefWithRevisions(targetBriefId);
         } else {
           setActiveBrief(null);
           setBriefRevisions([]);
         }
       } catch (err: unknown) {
         if (!(err instanceof BrewApiError && err.isUnauthorized)) {
-          setWorkspaceError(errorToFeedbackNotice(err, "Failed to load contact session").message ?? null);
+          setWorkspaceError(
+            errorToFeedbackNotice(err, "Failed to load contact session").message ?? null,
+          );
         }
       } finally {
         setLoadingWorkspace(false);
@@ -282,10 +403,9 @@ export function App(): JSX.Element {
   }, [apiClient, resetAuthenticatedState]);
 
   const handleSelectContact = useCallback(
-    async (contactId: string): Promise<void> => {
+    async (contactId: string, explicitBriefId?: string | null): Promise<void> => {
       setActiveContactId(contactId);
-      setNavSection("prepare");
-      await loadContactContext(contactId);
+      await loadContactContext(contactId, explicitBriefId);
     },
     [loadContactContext],
   );
@@ -296,9 +416,13 @@ export function App(): JSX.Element {
       setContacts((prev) => [created, ...prev]);
       setActiveContactId(created.id);
       setMeetings([]);
+      setMeetingsByContact((prev) => {
+        const next = new Map(prev);
+        next.set(created.id, []);
+        return next;
+      });
       setActiveBrief(null);
       setBriefRevisions([]);
-      setNavSection("prepare");
       return created;
     },
     [apiClient],
@@ -311,9 +435,20 @@ export function App(): JSX.Element {
         apiClient.listMeetings(payload.contact_id),
         apiClient.listBriefRevisions(created.id),
       ]);
+      setActiveContactId(payload.contact_id);
       setMeetings(meetingsResp.items);
+      setMeetingsByContact((prev) => {
+        const next = new Map(prev);
+        next.set(payload.contact_id, meetingsResp.items);
+        return next;
+      });
+      const allIds = created.suggested_questions.map((q) => q.id);
+      setStarredQuestionIds(
+        loadStarredQuestionIds(sessionRef.current?.principal.user_id ?? null, created.id, allIds),
+      );
       setActiveBrief(created);
       setBriefRevisions(revisionsResp.items);
+      setRouteView({ kind: "space", space: "studio" });
       return created;
     },
     [apiClient],
@@ -328,10 +463,29 @@ export function App(): JSX.Element {
       if (activeContactId) {
         const meetingsResp = await apiClient.listMeetings(activeContactId);
         setMeetings(meetingsResp.items);
+        setMeetingsByContact((prev) => {
+          const next = new Map(prev);
+          next.set(activeContactId, meetingsResp.items);
+          return next;
+        });
       }
       return updated;
     },
     [activeContactId, apiClient],
+  );
+
+  const handleToggleStarQuestion = useCallback(
+    (questionId: string): void => {
+      if (!activeBrief) {
+        return;
+      }
+      setStarredQuestionIds((prev) => {
+        const next = toggleQuestionStar(prev, questionId);
+        saveStarredQuestionIds(currentUserId, activeBrief.id, next);
+        return next;
+      });
+    },
+    [activeBrief, currentUserId],
   );
 
   const handleProposeMemories = useCallback(
@@ -375,7 +529,7 @@ export function App(): JSX.Element {
         setMemories(memoriesResp.items);
       } catch (err: unknown) {
         if (!(err instanceof BrewApiError && err.isUnauthorized)) {
-          setWorkspaceError(errorToFeedbackNotice(err, "Could not load memories").message ?? null);
+          setWorkspaceError(errorToFeedbackNotice(err, "Could not load keepsakes").message ?? null);
         }
       }
     },
@@ -399,6 +553,73 @@ export function App(): JSX.Element {
     [apiClient, includeSuperseded, refreshMemoriesAndProposals],
   );
 
+  const handleSaveStyleDefaults = useCallback(
+    (next: CoachingStyleDefaults): void => {
+      setStyleDefaults(next);
+      if (currentUserId) {
+        saveCoachingDefaults(currentUserId, next);
+      }
+    },
+    [currentUserId],
+  );
+
+  const handleConnectGoogleCalendar = useCallback(async (): Promise<void> => {
+    const clientId = authConfig?.google_oauth_client_id;
+    if (!clientId) {
+      return;
+    }
+    setCalendarSyncing(true);
+    setCalendarNotice(null);
+    try {
+      const calToken = await requestGoogleCalendarReadOnlyToken(clientId);
+      const events = await fetchReadOnlyGoogleCalendarEvents(calToken, {
+        selfDisplayName: currentDisplayName,
+      });
+      setCalendarEvents(events);
+      saveStoredCalendarEvents(currentUserId, events);
+      setCalendarNotice(`Synced ${String(events.length)} coffee chat events from Google Calendar.`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Could not sync Google Calendar.";
+      setWorkspaceError(msg);
+    } finally {
+      setCalendarSyncing(false);
+    }
+  }, [authConfig?.google_oauth_client_id, currentDisplayName, currentUserId]);
+
+  const handleImportIcsText = useCallback(
+    (icsText: string): void => {
+      const parsed = parseIcsCalendarEvents(icsText, {
+        selfDisplayName: currentDisplayName,
+        source: "gcal",
+      });
+      if (parsed.length === 0) {
+        setCalendarNotice(
+          "No matching coffee chat events found in the pasted .ics text (include Coffee Chat, 1:1, or #brew in the title).",
+        );
+        return;
+      }
+      setCalendarEvents((prev) => {
+        const byId = new Map<string, CalendarCoffeeChatEvent>(prev.map((ev) => [ev.id, ev]));
+        for (const ev of parsed) {
+          byId.set(ev.id, ev);
+        }
+        const merged = Array.from(byId.values()).sort(
+          (a, b) => Date.parse(a.scheduledStartIso) - Date.parse(b.scheduledStartIso),
+        );
+        saveStoredCalendarEvents(currentUserId, merged);
+        return merged;
+      });
+      setCalendarNotice(`Imported ${String(parsed.length)} calendar chat slot(s).`);
+    },
+    [currentDisplayName, currentUserId],
+  );
+
+  const handleClearCalendarEvents = useCallback((): void => {
+    setCalendarEvents([]);
+    saveStoredCalendarEvents(currentUserId, []);
+    setCalendarNotice("Cleared calendar slots.");
+  }, [currentUserId]);
+
   if (!session) {
     return (
       <AuthSignInGate
@@ -421,423 +642,333 @@ export function App(): JSX.Element {
       ? meetings.find((m) => m.id === activeBrief.meeting_id)
       : meetings[0]) ?? null;
 
-  const displayName = session.principal.display_name ?? session.principal.user_id;
-  const isLocalMock = session.principal.auth_provider === "local_mock";
+  const currentMainSpace: MainSpace =
+    routeView.kind === "space" ? routeView.space : "clubhouse";
+
+  const isBrowsingSpace = routeView.kind === "space" && !isContactModalOpen;
+
+  const openSetupWithSeed = (seed: QuickSparkSetupInitialSeed | null): void => {
+    setRouteView({
+      kind: "setup",
+      returnSpace: currentMainSpace,
+      seed,
+    });
+  };
 
   return (
-    <div className="min-h-screen bg-[#FAF6F0] text-[#23170F]">
-      <a href="#main-workspace" className="md-skip-link">
+    <div className="min-h-screen bg-brew-bg text-brew-plum">
+      <a href="#main-workspace" className="brew-skip-link">
         Skip to workspace
       </a>
 
-      {/* Mobile Sticky Top App Bar */}
-      <header className="sticky top-0 z-30 flex items-center justify-between gap-2 border-b border-[#D6C7B7] bg-[#FAF6F0]/95 px-4 py-2.5 backdrop-blur lg:hidden">
-        <div className="flex min-w-0 items-center gap-2">
-          <span className="font-display shrink-0 text-xl font-semibold text-[#23170F]">Brew</span>
-          {activeContact && (
-            <button
-              id="btn-mobile-active-contact"
-              type="button"
-              onClick={() => setNavSection("people")}
-              className="md-badge md-badge-espresso max-w-[132px] truncate"
-            >
-              {activeContact.name}
-            </button>
+      {/* Contextual v2 Top Shell */}
+      {routeView.kind === "space" && (
+        <TopBarShell
+          activeSpace={routeView.space}
+          onSelectSpace={(space) =>
+            setRouteView({ kind: "space", space, journalMode: "contact" })
+          }
+          onOpenQuickSpark={() => openSetupWithSeed(null)}
+          onOpenCoachingStyle={() =>
+            setRouteView({
+              kind: "space",
+              space: "journal",
+              journalMode: "coaching_style",
+            })
+          }
+          userDisplayName={currentDisplayName}
+          pendingProposalsCount={pendingProposals.length}
+        />
+      )}
+
+      {routeView.kind === "setup" && (
+        <FocusedTopBar
+          backLabel="Back to Clubhouse"
+          backId="btn-setup-back"
+          onBack={() => setRouteView({ kind: "space", space: routeView.returnSpace })}
+          onLogoClick={() => setRouteView({ kind: "space", space: "clubhouse" })}
+          userDisplayName={currentDisplayName}
+          onAvatarClick={() =>
+            setRouteView({
+              kind: "space",
+              space: "journal",
+              journalMode: "coaching_style",
+            })
+          }
+        />
+      )}
+
+      {routeView.kind === "pocket" && (
+        <FocusedTopBar
+          backLabel="Full Studio"
+          backId="btn-pocket-back"
+          centerEyebrow="POCKET CUE CARDS"
+          onBack={() => setRouteView({ kind: "space", space: "studio" })}
+          rightAction={{
+            label: "Debrief",
+            id: "btn-pocket-open-debrief",
+            onClick: () =>
+              setRouteView({
+                kind: "debrief",
+                returnSpace: "studio",
+                calendarEvent: null,
+              }),
+          }}
+        />
+      )}
+
+      {routeView.kind === "debrief" && (
+        <FocusedTopBar
+          backLabel="Back to Clubhouse"
+          mobileBackLabel="Done"
+          backId="btn-debrief-back"
+          mobileCenterEyebrow="DEBRIEF"
+          hideMobileAvatar
+          onBack={() => setRouteView({ kind: "space", space: routeView.returnSpace })}
+          onLogoClick={() => setRouteView({ kind: "space", space: "clubhouse" })}
+          userDisplayName={currentDisplayName}
+          onAvatarClick={() =>
+            setRouteView({
+              kind: "space",
+              space: "journal",
+              journalMode: "coaching_style",
+            })
+          }
+        />
+      )}
+
+      <main
+        id="main-workspace"
+        className={`mx-auto max-w-[1368px] px-5 pt-3 md:px-9 md:pt-[26px] ${
+          isBrowsingSpace ? "pb-28 md:pb-12" : "pb-14"
+        }`}
+      >
+        <div className="space-y-5">
+          {workspaceError && (
+            <StatusBanner
+              notice={{
+                kind: "error",
+                title: "Workspace notice",
+                message: workspaceError,
+              }}
+              onDismiss={() => setWorkspaceError(null)}
+            />
           )}
-        </div>
-        <div className="flex shrink-0 items-center gap-1.5">
-          <button
-            id="btn-mobile-new-contact"
-            type="button"
-            onClick={() => setIsContactModalOpen(true)}
-            className="md-btn md-btn-tonal min-h-9 px-3 py-1 text-xs whitespace-nowrap"
-          >
-            + New
-          </button>
-          <button
-            id="btn-mobile-sign-out"
-            type="button"
-            onClick={() => {
-              void handleSignOut();
-            }}
-            className="md-btn md-btn-text min-h-9 px-2.5 py-1 text-xs whitespace-nowrap"
-          >
-            Sign out
-          </button>
-        </div>
-      </header>
 
-      <div className="mx-auto grid min-h-screen max-w-7xl lg:grid-cols-[280px_minmax(0,1fr)]">
-        {/* Desktop Persistent Navigation Drawer / Rail */}
-        <aside
-          aria-label="Workspace navigation"
-          className="hidden border-r border-[#D6C7B7] bg-[#F5EEE4] lg:flex lg:flex-col lg:justify-between lg:p-5"
-        >
-          <div className="space-y-6">
-            <div className="flex items-center justify-between px-1">
-              <span className="font-display text-2xl font-semibold text-[#23170F]">Brew</span>
-              {healthState.kind === "ready" && (
-                <span className="md-badge md-badge-sage">Live</span>
-              )}
-            </div>
+          {routeView.kind === "space" && routeView.space === "clubhouse" && (
+            <ClubhouseScreen
+              userDisplayName={currentDisplayName}
+              contacts={contacts}
+              activeContact={activeContact}
+              meetings={meetings}
+              activeBrief={activeBrief}
+              pendingProposals={pendingProposals}
+              memories={memories}
+              calendarEvents={calendarEvents}
+              loadingWorkspace={loadingWorkspace}
+              googleCalendarAvailable={Boolean(authConfig?.google_oauth_client_id)}
+              calendarSyncing={calendarSyncing}
+              calendarNotice={calendarNotice}
+              onOpenCueStudio={(contactId, briefId) => {
+                if (contactId && contactId !== activeContactId) {
+                  void handleSelectContact(contactId, briefId ?? null);
+                } else if (briefId && briefId !== activeBrief?.id) {
+                  void loadBriefWithRevisions(briefId);
+                }
+                setRouteView({ kind: "space", space: "studio" });
+              }}
+              onOpenPocketMode={(contactId, briefId) => {
+                if (contactId && contactId !== activeContactId) {
+                  void handleSelectContact(contactId, briefId ?? null);
+                } else if (briefId && briefId !== activeBrief?.id) {
+                  void loadBriefWithRevisions(briefId);
+                }
+                setRouteView({ kind: "pocket" });
+              }}
+              onOpenSetupWithCalendarEvent={(calEv) =>
+                openSetupWithSeed({ calendarEvent: calEv })
+              }
+              onOpenSetupWithSparkText={(sparkText) =>
+                openSetupWithSeed({ sparkText })
+              }
+              onOpenSetupForContact={(contactId) =>
+                openSetupWithSeed({ contactId })
+              }
+              onOpenNewContactModal={() => setIsContactModalOpen(true)}
+              onOpenDebrief={(opts) => {
+                if (opts?.contactId && opts.contactId !== activeContactId) {
+                  void handleSelectContact(opts.contactId);
+                }
+                setRouteView({
+                  kind: "debrief",
+                  returnSpace: "clubhouse",
+                  calendarEvent: opts?.calendarEvent ?? null,
+                });
+              }}
+              onOpenJournalFolio={(contactId) => {
+                void handleSelectContact(contactId);
+                setRouteView({
+                  kind: "space",
+                  space: "journal",
+                  journalMode: "contact",
+                });
+              }}
+              onApproveProposal={handleApproveProposal}
+              onConnectGoogleCalendar={handleConnectGoogleCalendar}
+              onImportIcsText={handleImportIcsText}
+            />
+          )}
 
-            <nav aria-label="Primary sections" className="space-y-1">
-              <DesktopNavItem
-                id="nav-desktop-prepare"
-                label="Prepare"
-                active={navSection === "prepare"}
-                onClick={() => setNavSection("prepare")}
-              />
-              <DesktopNavItem
-                id="nav-desktop-review"
-                label="Notes & Review"
-                badgeCount={pendingProposals.length}
-                active={navSection === "review"}
-                onClick={() => setNavSection("review")}
-              />
-              <DesktopNavItem
-                id="nav-desktop-memories"
-                label="Relationship Memory"
-                badgeCount={memories.filter((m) => m.lifecycle_state === "approved").length}
-                active={navSection === "memories"}
-                onClick={() => setNavSection("memories")}
-              />
-            </nav>
+          {routeView.kind === "space" && routeView.space === "studio" && (
+            <CueStudioScreen
+              contacts={contacts}
+              activeContact={activeContact}
+              meetings={meetings}
+              activeBrief={activeBrief}
+              briefRevisions={briefRevisions}
+              memories={memories}
+              calendarEvents={calendarEvents}
+              starredQuestionIds={starredQuestionIds}
+              styleDefaults={styleDefaults}
+              loadingWorkspace={loadingWorkspace}
+              onToggleStarQuestion={handleToggleStarQuestion}
+              onSelectContact={(contactId) => handleSelectContact(contactId)}
+              onOpenSetup={(contactId) => openSetupWithSeed({ contactId: contactId ?? null })}
+              onOpenPocketGlance={() => setRouteView({ kind: "pocket" })}
+              onOpenDebrief={(contactId) => {
+                if (contactId && contactId !== activeContactId) {
+                  void handleSelectContact(contactId);
+                }
+                setRouteView({
+                  kind: "debrief",
+                  returnSpace: "studio",
+                  calendarEvent: null,
+                });
+              }}
+              onReviseBrief={handleReviseBrief}
+              onReloadBrief={loadBriefWithRevisions}
+            />
+          )}
 
-            <div className="space-y-2.5 border-t border-[#D6C7B7] pt-5">
-              <div className="flex items-center justify-between px-1">
-                <span className="text-xs font-semibold tracking-wide text-[#594638] uppercase">
-                  Counterparts
-                </span>
-                <button
-                  id="btn-sidebar-new-contact"
-                  type="button"
-                  onClick={() => setIsContactModalOpen(true)}
-                  className="text-xs font-semibold text-[#4A2E1B] hover:underline"
-                >
-                  + Add
-                </button>
-              </div>
-
-              {contacts.length === 0 ? (
-                <p className="px-1 text-xs text-[#594638]">No counterparts saved yet.</p>
-              ) : (
-                <ul className="max-h-72 space-y-1 overflow-y-auto pr-1">
-                  {contacts.map((contact) => {
-                    const isSelected = contact.id === activeContactId;
-                    return (
-                      <li key={contact.id}>
-                        <button
-                          id={`sidebar-contact-${contact.id}`}
-                          type="button"
-                          onClick={() => {
-                            void handleSelectContact(contact.id);
-                          }}
-                          className={`flex w-full flex-col items-start rounded-xl px-3 py-2 text-left transition ${
-                            isSelected
-                              ? "bg-[#EAD8C7] font-semibold text-[#2B170A]"
-                              : "text-[#23170F] hover:bg-[#EDE3D5]"
-                          }`}
-                        >
-                          <span className="w-full truncate text-sm">{contact.name}</span>
-                          {(contact.title || contact.organization) && (
-                            <span className="w-full truncate text-xs font-normal text-[#594638]">
-                              {[contact.title, contact.organization].filter(Boolean).join(" · ")}
-                            </span>
-                          )}
-                        </button>
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-            </div>
-          </div>
-
-          <div className="space-y-2 border-t border-[#D6C7B7] pt-4">
-            <div className="px-1">
-              <p className="truncate text-sm font-semibold text-[#23170F]">{displayName}</p>
-              <p className="text-xs text-[#594638]">
-                {isLocalMock ? "Local isolated test session" : "Verified Google account"}
-              </p>
-            </div>
-            <button
-              id="btn-desktop-sign-out"
-              type="button"
-              onClick={() => {
+          {routeView.kind === "space" && routeView.space === "journal" && (
+            <RelationshipJournalScreen
+              userDisplayName={currentDisplayName}
+              userId={session.principal.user_id}
+              isLocalMock={isLocalMock}
+              contacts={contacts}
+              activeContactId={activeContactId}
+              meetingsByContact={meetingsByContact}
+              activeBrief={activeBrief}
+              pendingProposals={pendingProposals}
+              memories={memories}
+              calendarEvents={calendarEvents}
+              includeSuperseded={includeSuperseded}
+              initialFolioMode={routeView.journalMode ?? "contact"}
+              styleDefaults={styleDefaults}
+              health={healthState}
+              googleCalendarAvailable={Boolean(authConfig?.google_oauth_client_id)}
+              calendarSyncing={calendarSyncing}
+              onSelectContactFolio={(contactId) => handleSelectContact(contactId)}
+              onOpenNewContactModal={() => setIsContactModalOpen(true)}
+              onOpenCueStudioForContact={(contactId, briefId) => {
+                void handleSelectContact(contactId, briefId ?? null);
+                setRouteView({ kind: "space", space: "studio" });
+              }}
+              onOpenSetupForContact={(contactId) => openSetupWithSeed({ contactId })}
+              onOpenDebrief={(contactId) => {
+                if (contactId && contactId !== activeContactId) {
+                  void handleSelectContact(contactId);
+                }
+                setRouteView({
+                  kind: "debrief",
+                  returnSpace: "journal",
+                  calendarEvent: null,
+                });
+              }}
+              onToggleIncludeSuperseded={(next) => {
+                void handleToggleIncludeSuperseded(next);
+              }}
+              onUpdateMemory={handleUpdateMemory}
+              onDeleteMemory={handleDeleteMemory}
+              onSaveStyleDefaults={handleSaveStyleDefaults}
+              onConnectGoogleCalendar={handleConnectGoogleCalendar}
+              onImportIcsText={handleImportIcsText}
+              onClearCalendarEvents={handleClearCalendarEvents}
+              onRefreshHealth={() => {
+                void refreshRuntimeBootstrap();
+              }}
+              onSignOut={() => {
                 void handleSignOut();
               }}
-              className="md-btn md-btn-outlined w-full text-xs"
-            >
-              Sign out
-            </button>
-          </div>
-        </aside>
+            />
+          )}
 
-        {/* Main Workspace Canvas */}
-        <main
-          id="main-workspace"
-          className="min-w-0 px-4 pt-6 pb-28 sm:px-8 lg:py-8 lg:pb-12"
-        >
-          <div className="mx-auto max-w-4xl space-y-6">
-            {workspaceError && (
-              <StatusBanner
-                notice={{
-                  kind: "error",
-                  title: "Workspace error",
-                  message: workspaceError,
-                }}
-                onDismiss={() => setWorkspaceError(null)}
-              />
-            )}
+          {routeView.kind === "setup" && (
+            <QuickSparkSetupScreen
+              contacts={contacts}
+              calendarEvents={calendarEvents}
+              styleDefaults={styleDefaults}
+              initialSeed={routeView.seed}
+              onCreateContact={handleCreateContact}
+              onGenerateBrief={handleGenerateBrief}
+              onOpenNewContactModal={() => setIsContactModalOpen(true)}
+            />
+          )}
 
-            {navSection === "prepare" && (
-              <PrepareWorkspace
-                activeContact={activeContact}
-                meetings={meetings}
-                activeBrief={activeBrief}
-                briefRevisions={briefRevisions}
-                loadingWorkspace={loadingWorkspace}
-                onOpenNewContact={() => setIsContactModalOpen(true)}
-                onSelectMeetingBrief={loadBriefWithRevisions}
-                onGenerateBrief={handleGenerateBrief}
-                onReviseBrief={handleReviseBrief}
-                onReloadBrief={loadBriefWithRevisions}
-                onJumpToPostMeetingNotes={() => setNavSection("review")}
-              />
-            )}
+          {routeView.kind === "pocket" && (
+            <PocketCueCardsScreen
+              activeContact={activeContact}
+              activeBrief={activeBrief}
+              calendarEvents={calendarEvents}
+              starredQuestionIds={starredQuestionIds}
+              onBackToStudio={() => setRouteView({ kind: "space", space: "studio" })}
+              onReviseBrief={handleReviseBrief}
+            />
+          )}
 
-            {navSection === "review" && (
-              <MemoryReviewWorkspace
-                contacts={contacts}
-                activeContact={activeContact}
-                activeMeeting={activeMeeting}
-                activeBrief={activeBrief}
-                pendingProposals={pendingProposals}
-                onProposeMemories={handleProposeMemories}
-                onApproveProposal={handleApproveProposal}
-                onRejectProposal={handleRejectProposal}
-              />
-            )}
+          {routeView.kind === "debrief" && (
+            <DebriefKeepsakesScreen
+              contacts={contacts}
+              activeContact={activeContact}
+              activeMeeting={activeMeeting}
+              activeBrief={activeBrief}
+              targetCalendarEvent={routeView.calendarEvent}
+              pendingProposals={pendingProposals}
+              memories={memories}
+              onSelectContact={(contactId) => handleSelectContact(contactId)}
+              onCreateContact={handleCreateContact}
+              onProposeMemories={handleProposeMemories}
+              onApproveProposal={handleApproveProposal}
+              onRejectProposal={handleRejectProposal}
+            />
+          )}
+        </div>
+      </main>
 
-            {navSection === "memories" && (
-              <MemoryVaultWorkspace
-                contacts={contacts}
-                activeContact={activeContact}
-                memories={memories}
-                includeSuperseded={includeSuperseded}
-                onToggleIncludeSuperseded={(next) => {
-                  void handleToggleIncludeSuperseded(next);
-                }}
-                onUpdateMemory={handleUpdateMemory}
-                onDeleteMemory={handleDeleteMemory}
-              />
-            )}
-
-            {navSection === "people" && (
-              <MobilePeopleDirectory
-                contacts={contacts}
-                activeContactId={activeContactId}
-                displayName={displayName}
-                isLocalMock={isLocalMock}
-                onSelectContact={(contactId) => {
-                  void handleSelectContact(contactId);
-                }}
-                onOpenNewContact={() => setIsContactModalOpen(true)}
-              />
-            )}
-          </div>
-        </main>
-      </div>
-
-      {/* Mobile Bottom Navigation Bar */}
-      <nav
-        aria-label="Mobile workspace navigation"
-        className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-4 border-t border-[#D6C7B7] bg-[#F5EEE4]/98 px-2 py-1.5 backdrop-blur lg:hidden"
-      >
-        <MobileNavButton
-          id="nav-mobile-prepare"
-          label="Prepare"
-          active={navSection === "prepare"}
-          onClick={() => setNavSection("prepare")}
+      {isBrowsingSpace && (
+        <MobileDock
+          activeSpace={currentMainSpace}
+          onSelectSpace={(space) =>
+            setRouteView({ kind: "space", space, journalMode: "contact" })
+          }
+          onOpenQuickSpark={() => openSetupWithSeed(null)}
+          pendingProposalsCount={pendingProposals.length}
         />
-        <MobileNavButton
-          id="nav-mobile-review"
-          label="Review"
-          badgeCount={pendingProposals.length}
-          active={navSection === "review"}
-          onClick={() => setNavSection("review")}
-        />
-        <MobileNavButton
-          id="nav-mobile-memories"
-          label="Memory"
-          active={navSection === "memories"}
-          onClick={() => setNavSection("memories")}
-        />
-        <MobileNavButton
-          id="nav-mobile-people"
-          label="People"
-          active={navSection === "people"}
-          onClick={() => setNavSection("people")}
-        />
-      </nav>
+      )}
 
       <ContactFormModal
         isOpen={isContactModalOpen}
         onClose={() => setIsContactModalOpen(false)}
-        onCreateContact={handleCreateContact}
+        onCreateContact={async (payload) => {
+          const created = await handleCreateContact(payload);
+          if (routeView.kind === "space" && routeView.space === "clubhouse") {
+            openSetupWithSeed({ contactId: created.id });
+          } else if (routeView.kind === "space" && routeView.space === "journal") {
+            setRouteView({ kind: "space", space: "journal", journalMode: "contact" });
+          }
+          return created;
+        }}
       />
     </div>
-  );
-}
-
-function DesktopNavItem({
-  id,
-  label,
-  badgeCount,
-  active,
-  onClick,
-}: {
-  readonly id: string;
-  readonly label: string;
-  readonly badgeCount?: number;
-  readonly active: boolean;
-  readonly onClick: () => void;
-}): JSX.Element {
-  return (
-    <button
-      id={id}
-      type="button"
-      aria-current={active ? "page" : undefined}
-      onClick={onClick}
-      className={`flex min-h-11 w-full items-center justify-between rounded-full px-4 py-2 text-sm font-medium transition ${
-        active
-          ? "bg-[#4A2E1B] font-semibold text-[#FFFBF7]"
-          : "text-[#23170F] hover:bg-[#EDE3D5]"
-      }`}
-    >
-      <span>{label}</span>
-      {badgeCount !== undefined && badgeCount > 0 && (
-        <span
-          className={`rounded-full px-2 py-0.5 font-mono-code text-xs font-semibold ${
-            active ? "bg-[#FFFBF7]/20 text-[#FFFBF7]" : "bg-[#EAD8C7] text-[#2B170A]"
-          }`}
-        >
-          {String(badgeCount)}
-        </span>
-      )}
-    </button>
-  );
-}
-
-function MobileNavButton({
-  id,
-  label,
-  badgeCount,
-  active,
-  onClick,
-}: {
-  readonly id: string;
-  readonly label: string;
-  readonly badgeCount?: number;
-  readonly active: boolean;
-  readonly onClick: () => void;
-}): JSX.Element {
-  return (
-    <button
-      id={id}
-      type="button"
-      aria-current={active ? "page" : undefined}
-      onClick={onClick}
-      className={`flex min-h-12 flex-col items-center justify-center rounded-2xl px-2 py-1 text-xs font-semibold transition ${
-        active ? "bg-[#EAD8C7] text-[#2B170A]" : "text-[#594638]"
-      }`}
-    >
-      <span className="flex items-center gap-1">
-        <span>{label}</span>
-        {badgeCount !== undefined && badgeCount > 0 && (
-          <span className="rounded-full bg-[#4A2E1B] px-1.5 py-0.2 font-mono-code text-[0.68rem] text-[#FFFBF7]">
-            {String(badgeCount)}
-          </span>
-        )}
-      </span>
-    </button>
-  );
-}
-
-function MobilePeopleDirectory({
-  contacts,
-  activeContactId,
-  displayName,
-  isLocalMock,
-  onSelectContact,
-  onOpenNewContact,
-}: {
-  readonly contacts: readonly ContactResponse[];
-  readonly activeContactId: string | null;
-  readonly displayName: string;
-  readonly isLocalMock: boolean;
-  readonly onSelectContact: (contactId: string) => void;
-  readonly onOpenNewContact: () => void;
-}): JSX.Element {
-  return (
-    <section className="space-y-5">
-      <div className="flex items-center justify-between gap-3">
-        <h1 className="font-display text-2xl font-semibold text-[#23170F]">Counterparts</h1>
-        <button
-          id="btn-people-add-contact"
-          type="button"
-          onClick={onOpenNewContact}
-          className="md-btn md-btn-filled"
-        >
-          + New Counterpart
-        </button>
-      </div>
-
-      {contacts.length === 0 ? (
-        <EmptyStateCard
-          title="No counterparts yet"
-          description="Add a counterpart to prepare a tailored meeting brief."
-          actionLabel="New Counterpart"
-          onAction={onOpenNewContact}
-        />
-      ) : (
-        <ul className="space-y-3">
-          {contacts.map((contact) => {
-            const selected = contact.id === activeContactId;
-            return (
-              <li key={contact.id}>
-                <button
-                  type="button"
-                  onClick={() => onSelectContact(contact.id)}
-                  className={`md-card flex w-full items-center justify-between gap-3 p-4 text-left ${
-                    selected ? "border-[#4A2E1B] bg-[#F5EEE4]" : ""
-                  }`}
-                >
-                  <div className="min-w-0">
-                    <p className="truncate text-base font-semibold text-[#23170F]">
-                      {contact.name}
-                    </p>
-                    {(contact.title || contact.organization) && (
-                      <p className="truncate text-xs text-[#594638]">
-                        {[contact.title, contact.organization].filter(Boolean).join(" · ")}
-                      </p>
-                    )}
-                  </div>
-                  <span className="text-xs font-semibold text-[#4A2E1B]">
-                    {selected ? "Active" : "Open"}
-                  </span>
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-      )}
-
-      <div className="md-card-tonal p-4 text-xs text-[#594638]">
-        Signed in as <strong className="text-[#23170F]">{displayName}</strong> (
-        {isLocalMock ? "Local test mode" : "Verified identity"}).
-      </div>
-    </section>
   );
 }

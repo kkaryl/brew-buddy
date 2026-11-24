@@ -16,4 +16,5 @@ docs
 tests
 artifacts
 .adk
+.agents
 .google-agents-cli

@@ -1,3 +1,4 @@
+import { X } from "lucide-react";
 import { useEffect, useRef, useState, type FormEvent, type JSX } from "react";
 import type { ContactResponse, CreateContactRequest } from "../api/types";
 import {
@@ -7,6 +8,7 @@ import {
   type FeedbackNotice,
 } from "./formatters";
 import { StatusBanner } from "./StatusFeedback";
+import { FormField, PillButton, PrimaryButton } from "./ui";
 
 export interface ContactFormModalProps {
   readonly isOpen: boolean;
@@ -97,7 +99,7 @@ export function ContactFormModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-end justify-center bg-[#23170F]/45 p-0 sm:items-center sm:p-4"
+      className="fixed inset-0 z-50 flex items-end justify-center bg-brew-plum/35 p-0 backdrop-blur-xs sm:items-center sm:p-5"
       onClick={(e) => {
         if (e.target === e.currentTarget && !submitting) {
           onClose();
@@ -108,30 +110,38 @@ export function ContactFormModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby="modal-new-contact-title"
-        className="md-card-elevated max-h-[92vh] w-full max-w-lg overflow-y-auto rounded-t-3xl rounded-b-none p-6 sm:rounded-3xl sm:p-7"
+        className="max-h-[92vh] w-full max-w-lg overflow-y-auto rounded-t-[32px] border border-brew-border bg-brew-paper p-6 shadow-floating sm:rounded-[30px] sm:p-7"
       >
         <div className="flex items-center justify-between gap-3">
-          <h2 id="modal-new-contact-title" className="text-xl font-semibold text-[#23170F]">
-            New Counterpart
-          </h2>
-          <button
+          <div>
+            <p className="brew-eyebrow">NEW CONNECTION</p>
+            <h2 id="modal-new-contact-title" className="brew-section-heading mt-0.5">
+              New Counterpart
+            </h2>
+          </div>
+          <PillButton
             id="btn-close-contact-modal"
-            type="button"
+            variant="ghost"
+            size="sm"
             disabled={submitting}
             onClick={onClose}
-            className="md-btn md-btn-text min-h-9 px-3 py-1 text-xs"
+            aria-label="Close New Counterpart dialog"
           >
-            Cancel
-          </button>
+            <X className="h-4 w-4" aria-hidden="true" />
+            <span>Close</span>
+          </PillButton>
         </div>
 
         <form onSubmit={(e) => void handleSubmit(e)} noValidate className="mt-5 space-y-4">
           {apiNotice && <StatusBanner notice={apiNotice} />}
 
-          <div>
-            <label htmlFor="contact-name-input" className="block text-sm font-medium text-[#23170F]">
-              Full name <span className="text-[#9E2A2B]">*</span>
-            </label>
+          <FormField
+            htmlFor="contact-name-input"
+            label="Full name"
+            required
+            error={fieldErrors.name}
+            errorId="contact-name-error"
+          >
             <input
               ref={nameInputRef}
               id="contact-name-input"
@@ -144,23 +154,16 @@ export function ContactFormModal({
               aria-invalid={fieldErrors.name ? "true" : "false"}
               aria-describedby={fieldErrors.name ? "contact-name-error" : undefined}
               placeholder="e.g., Alex Morgan"
-              className="md-input mt-1.5"
+              className="brew-field-control"
             />
-            {fieldErrors.name && (
-              <p id="contact-name-error" role="alert" className="mt-1 text-xs text-[#9E2A2B]">
-                {fieldErrors.name}
-              </p>
-            )}
-          </div>
+          </FormField>
 
           <div className="grid gap-4 sm:grid-cols-2">
-            <div>
-              <label
-                htmlFor="contact-title-input"
-                className="block text-sm font-medium text-[#23170F]"
-              >
-                Title
-              </label>
+            <FormField
+              htmlFor="contact-title-input"
+              label="Title"
+              error={fieldErrors.title}
+            >
               <input
                 id="contact-title-input"
                 name="title"
@@ -170,22 +173,15 @@ export function ContactFormModal({
                 onChange={(e) => setTitle(e.target.value)}
                 aria-invalid={fieldErrors.title ? "true" : "false"}
                 placeholder="e.g., Staff ML Engineer"
-                className="md-input mt-1.5"
+                className="brew-field-control"
               />
-              {fieldErrors.title && (
-                <p role="alert" className="mt-1 text-xs text-[#9E2A2B]">
-                  {fieldErrors.title}
-                </p>
-              )}
-            </div>
+            </FormField>
 
-            <div>
-              <label
-                htmlFor="contact-organization-input"
-                className="block text-sm font-medium text-[#23170F]"
-              >
-                Organization
-              </label>
+            <FormField
+              htmlFor="contact-organization-input"
+              label="Organization"
+              error={fieldErrors.organization}
+            >
               <input
                 id="contact-organization-input"
                 name="organization"
@@ -195,20 +191,16 @@ export function ContactFormModal({
                 onChange={(e) => setOrganization(e.target.value)}
                 aria-invalid={fieldErrors.organization ? "true" : "false"}
                 placeholder="e.g., Northstar Systems"
-                className="md-input mt-1.5"
+                className="brew-field-control"
               />
-              {fieldErrors.organization && (
-                <p role="alert" className="mt-1 text-xs text-[#9E2A2B]">
-                  {fieldErrors.organization}
-                </p>
-              )}
-            </div>
+            </FormField>
           </div>
 
-          <div>
-            <label htmlFor="contact-role-input" className="block text-sm font-medium text-[#23170F]">
-              Relationship role
-            </label>
+          <FormField
+            htmlFor="contact-role-input"
+            label="Relationship role"
+            error={fieldErrors.role}
+          >
             <input
               id="contact-role-input"
               name="role"
@@ -217,23 +209,17 @@ export function ContactFormModal({
               value={role}
               onChange={(e) => setRole(e.target.value)}
               aria-invalid={fieldErrors.role ? "true" : "false"}
-              placeholder="e.g., Engineering Mentor, Prospective Customer"
-              className="md-input mt-1.5"
+              placeholder="e.g., Engineering Mentor, Industry Peer"
+              className="brew-field-control"
             />
-            {fieldErrors.role && (
-              <p role="alert" className="mt-1 text-xs text-[#9E2A2B]">
-                {fieldErrors.role}
-              </p>
-            )}
-          </div>
+          </FormField>
 
-          <div>
-            <label
-              htmlFor="contact-notes-input"
-              className="block text-sm font-medium text-[#23170F]"
-            >
-              Background context
-            </label>
+          <FormField
+            htmlFor="contact-notes-input"
+            label="Background context"
+            error={fieldErrors.context_notes}
+            errorId="contact-notes-error"
+          >
             <textarea
               id="contact-notes-input"
               name="context_notes"
@@ -244,32 +230,21 @@ export function ContactFormModal({
               aria-invalid={fieldErrors.context_notes ? "true" : "false"}
               aria-describedby={fieldErrors.context_notes ? "contact-notes-error" : undefined}
               placeholder="How you connected or relevant team context you want grounded in prep."
-              className="md-textarea mt-1.5"
+              className="brew-field-control"
             />
-            {fieldErrors.context_notes && (
-              <p id="contact-notes-error" role="alert" className="mt-1 text-xs text-[#9E2A2B]">
-                {fieldErrors.context_notes}
-              </p>
-            )}
-          </div>
+          </FormField>
 
           <div className="flex flex-col-reverse justify-end gap-2.5 pt-2 sm:flex-row">
-            <button
-              type="button"
-              disabled={submitting}
-              onClick={onClose}
-              className="md-btn md-btn-outlined"
-            >
+            <PillButton variant="outline" disabled={submitting} onClick={onClose}>
               Cancel
-            </button>
-            <button
+            </PillButton>
+            <PrimaryButton
               id="btn-submit-create-contact"
               type="submit"
-              disabled={submitting}
-              className="md-btn md-btn-filled"
+              loading={submitting}
             >
               {submitting ? "Saving..." : "Save Counterpart"}
-            </button>
+            </PrimaryButton>
           </div>
         </form>
       </div>

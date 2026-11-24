@@ -33,6 +33,8 @@ htmlcov/
 # Frontend (keep web/package-lock.json committed)
 **/node_modules/
 web/dist/
+web/playwright-report/
+web/test-results/
 *.tsbuildinfo
 npm-debug.log*
 

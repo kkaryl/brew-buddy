@@ -12,12 +12,17 @@ Document paths:
 from __future__ import annotations
 
 import asyncio
+import inspect
+import os
 from collections.abc import Awaitable
 from datetime import datetime
 from enum import Enum
 from typing import Any, cast
 
 from google.api_core.exceptions import GoogleAPICallError
+from google.auth.credentials import AnonymousCredentials, Credentials
+from google.auth.exceptions import GoogleAuthError
+from google.auth.transport.requests import Request as GoogleAuthRequest
 from google.cloud import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 from opentelemetry import trace
@@ -93,18 +98,68 @@ def _serialize_domain_model(model: BaseModel) -> dict[str, Any]:
     return {str(k): _to_firestore_value(v) for k, v in raw.items()}
 
 
+def _close_unawaited(coro: Awaitable[Any]) -> None:
+    if inspect.iscoroutine(coro):
+        coro.close()
+
+
+def _format_firestore_auth_error(exc: GoogleAuthError) -> str:
+    detail = str(exc).lower()
+    if "reauthentication" in detail or "application-default login" in detail:
+        return (
+            "Cloud Firestore credentials require reauthentication. "
+            "Run 'gcloud auth application-default login' in your terminal and refresh, "
+            "or set BREW_PERSISTENCE_BACKEND=in_memory in .env for offline local mode."
+        )
+    return (
+        "Cloud Firestore credentials are unavailable or invalid. "
+        "Run 'gcloud auth application-default login' or set "
+        "BREW_PERSISTENCE_BACKEND=in_memory in .env for offline local mode."
+    )
+
+
+async def _ensure_client_credentials_valid(
+    client: firestore.AsyncClient | None,
+    *,
+    timeout_seconds: float,
+) -> None:
+    if client is None or os.environ.get("FIRESTORE_EMULATOR_HOST"):
+        return
+    creds = getattr(client, "_credentials", None)
+    if not isinstance(creds, Credentials) or isinstance(creds, AnonymousCredentials) or creds.valid:
+        return
+    await asyncio.wait_for(
+        asyncio.to_thread(creds.refresh, GoogleAuthRequest()),
+        timeout=min(timeout_seconds, 4.0),
+    )
+
+
 async def _run_firestore_op[T](
     span_name: str,
     coro: Awaitable[T],
     *,
     timeout_seconds: float,
+    client: firestore.AsyncClient | None = None,
 ) -> T:
     """Execute an async Firestore operation with an OTel span and explicit timeout."""
     with _tracer.start_as_current_span(span_name):
         try:
+            await _ensure_client_credentials_valid(client, timeout_seconds=timeout_seconds)
+        except GoogleAuthError as exc:
+            _close_unawaited(coro)
+            raise PersistenceOperationError(_format_firestore_auth_error(exc)) from exc
+        except TimeoutError as exc:
+            _close_unawaited(coro)
+            raise PersistenceOperationError(
+                f"Firestore credential refresh for '{span_name}' timed out."
+            ) from exc
+
+        try:
             return await asyncio.wait_for(coro, timeout=timeout_seconds)
         except BrewDomainError:
             raise
+        except GoogleAuthError as exc:
+            raise PersistenceOperationError(_format_firestore_auth_error(exc)) from exc
         except TimeoutError as exc:
             raise PersistenceOperationError(
                 f"Firestore operation '{span_name}' timed out after {timeout_seconds:.1f}s."
@@ -154,6 +209,7 @@ async def _save_versioned_document(
         span_name,
         _txn(client.transaction()),
         timeout_seconds=timeout_seconds,
+        client=client,
     )
 
 
@@ -175,6 +231,7 @@ async def _exists_in_collection_group(
         f"firestore.{subcollection}.exists_any_owner",
         query.get(),
         timeout_seconds=timeout_seconds,
+        client=client,
     )
     return len(docs) > 0
 
@@ -207,6 +264,7 @@ class FirestoreUserPreferencesRepository:
             "firestore.preferences.get",
             self._doc_ref(uid).get(),
             timeout_seconds=self._timeout_seconds,
+            client=self._client,
         )
         if not snap.exists:
             return None
@@ -266,6 +324,7 @@ class FirestoreContactRepository:
             "firestore.contacts.get",
             self._doc_ref(uid, contact_id).get(),
             timeout_seconds=self._timeout_seconds,
+            client=self._client,
         )
         if not snap.exists:
             return None
@@ -288,6 +347,7 @@ class FirestoreContactRepository:
             "firestore.contacts.list",
             self._collection_ref(uid).get(),
             timeout_seconds=self._timeout_seconds,
+            client=self._client,
         )
         contacts = [
             Contact.model_validate(data)
@@ -342,6 +402,7 @@ class FirestoreMeetingRepository:
             "firestore.meetings.get",
             self._doc_ref(uid, meeting_id).get(),
             timeout_seconds=self._timeout_seconds,
+            client=self._client,
         )
         if not snap.exists:
             return None
@@ -375,6 +436,7 @@ class FirestoreMeetingRepository:
             "firestore.meetings.list",
             query.get(),
             timeout_seconds=self._timeout_seconds,
+            client=self._client,
         )
         meetings = [
             Meeting.model_validate(data)
@@ -433,6 +495,7 @@ class FirestoreBriefRepository:
             "firestore.briefs.get",
             self._doc_ref(uid, brief_id).get(),
             timeout_seconds=self._timeout_seconds,
+            client=self._client,
         )
         if not snap.exists:
             return None
@@ -461,6 +524,7 @@ class FirestoreBriefRepository:
             "firestore.briefs.list_by_meeting",
             query.get(),
             timeout_seconds=self._timeout_seconds,
+            client=self._client,
         )
         briefs = [
             PreparationBrief.model_validate(data)
@@ -519,6 +583,7 @@ class FirestoreBriefRepository:
             "firestore.briefs.list_revisions",
             self._revisions_collection_ref(uid, bid).get(),
             timeout_seconds=self._timeout_seconds,
+            client=self._client,
         )
         revisions = [
             PreparationBrief.model_validate(data)
@@ -539,6 +604,7 @@ class FirestoreBriefRepository:
             "firestore.briefs.get_revision",
             self._revision_doc_ref(uid, bid, version).get(),
             timeout_seconds=self._timeout_seconds,
+            client=self._client,
         )
         if not snap.exists:
             return None
@@ -583,6 +649,7 @@ class FirestoreMemoryProposalRepository:
             "firestore.memory_proposals.get",
             self._doc_ref(uid, proposal_id).get(),
             timeout_seconds=self._timeout_seconds,
+            client=self._client,
         )
         if not snap.exists:
             return None
@@ -619,6 +686,7 @@ class FirestoreMemoryProposalRepository:
             "firestore.memory_proposals.list",
             query.get(),
             timeout_seconds=self._timeout_seconds,
+            client=self._client,
         )
         proposals = [
             proposal
@@ -696,6 +764,7 @@ class FirestoreMemoryRepository:
             "firestore.memories.get",
             self._doc_ref(uid, memory_id).get(),
             timeout_seconds=self._timeout_seconds,
+            client=self._client,
         )
         if not snap.exists:
             return None
@@ -738,6 +807,7 @@ class FirestoreMemoryRepository:
             "firestore.memories.list",
             query.get(),
             timeout_seconds=self._timeout_seconds,
+            client=self._client,
         )
 
         memories: list[Memory] = []
@@ -815,6 +885,7 @@ class FirestoreMemoryRepository:
             "firestore.memories.delete",
             _delete_txn(self._client.transaction()),
             timeout_seconds=self._timeout_seconds,
+            client=self._client,
         )
 
     async def get_deleted_for_owner(
@@ -827,6 +898,7 @@ class FirestoreMemoryRepository:
             "firestore.deleted_memories.get",
             self._deleted_doc_ref(uid, memory_id).get(),
             timeout_seconds=self._timeout_seconds,
+            client=self._client,
         )
         if not snap.exists:
             return None
@@ -876,6 +948,7 @@ class FirestoreWorkflowIdempotencyRepository:
             "firestore.workflow_idempotency.get",
             self._doc_ref(uid, operation, idempotency_key).get(),
             timeout_seconds=self._timeout_seconds,
+            client=self._client,
         )
         if not snap.exists:
             return None
@@ -893,5 +966,6 @@ class FirestoreWorkflowIdempotencyRepository:
             "firestore.workflow_idempotency.save",
             doc_ref.set(_serialize_domain_model(record)),
             timeout_seconds=self._timeout_seconds,
+            client=self._client,
         )
         return record

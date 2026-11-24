@@ -18,7 +18,7 @@ Before implementing **any** feature, bug fix, or slice:
    - Behavioral agent evaluations (`agents-cli eval`) for non-deterministic LLM behavior, tool trajectories, and persona adherence. **Never assert raw LLM prose in `pytest`.**
 5. **Execute tests, lint, and type checks**: Run all applicable validation suites locally in the workspace.
 6. **Report actual results and any blockers**: Share exact command outcomes (pass counts, lint/type statuses, or concrete failure diagnostics).
-7. **Update documentation when behavior changes**: Keep `docs/PRD.md`, `docs/ARCHITECTURE.md`, `docs/OBSERVABILITY.md`, `docs/DEPLOYMENT.md`, and `docs/DECISIONS.md` synchronized with the codebase.
+7. **Update documentation when behavior changes**: Keep `docs/PRD.md`, `docs/ARCHITECTURE.md`, `docs/DESIGN.md`, `docs/OBSERVABILITY.md`, `docs/DEPLOYMENT.md`, and `docs/DECISIONS.md` synchronized with the codebase.
 
 > **Hard Gate:** **Never mark a step complete if validation did not run.** If an environment issue prevents running a check, report the blocker explicitly and leave the step incomplete.
 
@@ -66,6 +66,11 @@ Before implementing **any** feature, bug fix, or slice:
 - **No Suppressing Test Failures or Type Errors**:
   - Do NOT add `@pytest.mark.skip`, `@pytest.mark.xfail`, `.skip` in Vitest, blanket `# type: ignore`, `@ts-ignore`, or blanket `# noqa` rules to force green builds.
   - Fix root causes immediately. Follow the **Stop-the-Line Rule**: if a change breaks an existing test, lint rule, or type check, fix the regression before proceeding with feature work.
+
+### 3.5 Frontend Design System & Illustration Governance (`docs/DESIGN.md`)
+- **Playful Social Club Aesthetic**: All UI screens, CSS tokens (`web/src/index.css`), components (`web/src/components/`), and illustrations (`web/src/assets/illustrations/`) MUST adhere to [`docs/DESIGN.md`](docs/DESIGN.md).
+- **Token, Microcopy, & Component Discipline**: Use centralized pastel tokens (`#FFFAF8` app canvas, `#FFFFFF` paper surfaces, `#302731` dark plum text, `#6F5E6A` WCAG AA secondary text, `#EF8B70` coral accents, `Fraunces` headlines, `DM Sans` UI/wordmark), `44px` minimum touch targets, Lucide interface icons, and cohesive flat-vector illustrations. Never use em-dashes (`U+2014` / `&mdash;`) anywhere in the web portal (use periods, commas, colons, or `·` middle dots instead), keep attribution pills concise (`from GCal`), and avoid random emojis, coffee stock photos, noisy system status pills, fake mobile status bars, or harsh black shadows.
+- **3-Space Navigation & Focused Rituals**: Use the v2 3-space navigation shell (`TopBarShell` on desktop/tablet and `MobileDock` on mobile across `Clubhouse`, `Cue Studio`, and `Relationship Journal`), and unmount primary navigation in favor of `FocusedTopBar` (`← Back`) during focused rituals (`QuickSparkSetupScreen`, `PocketCueCardsScreen`, and `DebriefKeepsakesScreen`).
 
 ---
 

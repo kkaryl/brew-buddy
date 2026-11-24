@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 300">
+  <!-- Soft Layered Pastel Circles -->
+  <circle cx="176" cy="160" r="102" fill="#FFE9DE" />
+  <circle cx="268" cy="152" r="92" fill="#FFFFFF" />
+  <circle cx="268" cy="152" r="87" fill="#E9DFFC" />
+  <circle cx="116" cy="96" r="42" fill="#DDF3E7" />
+  <circle cx="338" cy="214" r="14" fill="#FFF2CD" />
+
+  <!-- Coral-Orange Radiating Capsules -->
+  <path d="M315 65 L327 54 C328.6 52.5, 331 55, 329.4 56.5 L317.4 67.5 C315.8 69, 313.4 66.5, 315 65 Z" fill="#EF8B70" />
+  <path d="M324 77.5 L339 73.5 C341 73, 341.8 76.5, 339.8 77 L324.8 81 C322.8 81.5, 322 78, 324 77.5 Z" fill="#EF8B70" />
+  <path d="M304.5 58 L308.5 43.5 C309 41.5, 312.5 42.4, 312 44.4 L308 58.9 C307.5 60.9, 304 60, 304.5 58 Z" fill="#EF8B70" />
+
+  <!-- White Speech Bubble with Three Dark Purple/Plum Dots -->
+  <rect x="242" y="64" width="68" height="40" rx="20" fill="#FFFFFF" />
+  <path d="M254 102 L244 114 L266 103 Z" fill="#FFFFFF" />
+  <circle cx="264" cy="84" r="3.9" fill="#302731" />
+  <circle cx="276" cy="84" r="3.9" fill="#8C67BC" />
+  <circle cx="288" cy="84" r="3.9" fill="#302731" />
+
+  <!-- High Bun + Coral Hair Tie + Wavy Dark-Brown Hair -->
+  <ellipse cx="192" cy="79" rx="23" ry="19" fill="#FFFFFF" />
+  <ellipse cx="192" cy="79" rx="20.5" ry="16.5" fill="#322022" />
+  <path d="M176 91 Q192 85 208 91 Q209 94.5 206 95.5 Q192 90 178 95.5 Q175 94.5 176 91 Z" fill="#EF8B70" />
+  <path
+    d="M158 104 C140 120, 136 156, 144 188 L240 188 C248 156, 244 120, 226 104 C214 93, 170 93, 158 104 Z"
+    fill="#322022"
+  />
+
+  <!-- Soft Mint Cardigan & Warm Blush Tee -->
+  <path d="M129 230 C133 192, 156 177, 192 177 C228 177, 251 192, 255 230 L261 275 L123 275 Z" fill="#FFFFFF" />
+  <path d="M132 230 C136 194, 158 180, 192 180 C226 180, 248 194, 252 230 L258 274 L126 274 Z" fill="#DDF3E7" />
+  <path d="M174 182 L192 244 L210 182 Z" fill="#FFF1EC" />
+
+  <!-- Neck, Gold Hoop Earrings, Ears, & Warm Face -->
+  <rect x="183" y="158" width="18" height="26" rx="8" fill="#D58B68" />
+  <path
+    fill-rule="evenodd"
+    clip-rule="evenodd"
+    d="M162 134 A 6.8 6.8 0 1 0 162 147.6 A 6.8 6.8 0 1 0 162 134 Z M162 136.8 A 4 4 0 1 1 162 144.8 A 4 4 0 1 1 162 136.8 Z"
+    fill="#F2BF5E"
+  />
+  <path
+    fill-rule="evenodd"
+    clip-rule="evenodd"
+    d="M222 134 A 6.8 6.8 0 1 0 222 147.6 A 6.8 6.8 0 1 0 222 134 Z M222 136.8 A 4 4 0 1 1 222 144.8 A 4 4 0 1 1 222 136.8 Z"
+    fill="#F2BF5E"
+  />
+  <circle cx="163" cy="132" r="6.8" fill="#D58B68" />
+  <circle cx="221" cy="132" r="6.8" fill="#D58B68" />
+  <rect x="165" y="94" width="54" height="68" rx="27" fill="#E39E7D" />
+
+  <!-- Curtain Bangs -->
+  <path
+    d="M163 120 C163 98, 179 90, 194 92 C210 94, 221 105, 220 122 C211 111, 201 107, 191 108 C179 109, 170 114, 163 120 Z"
+    fill="#322022"
+  />
+
+  <!-- Minimal Facial Features -->
+  <path d="M177 120 Q182 116.8 187 120 Q187.4 121.6 185.8 121.6 Q182 119.2 178.2 121.6 Q176.6 121.6 177 120 Z" fill="#322022" />
+  <path d="M197 120 Q202 116.8 207 120 Q207.4 121.6 205.8 121.6 Q202 119.2 198.2 121.6 Q196.6 121.6 197 120 Z" fill="#322022" />
+  <circle cx="182" cy="128" r="2.8" fill="#302731" />
+  <circle cx="202" cy="128" r="2.8" fill="#302731" />
+  <ellipse cx="175" cy="138" rx="6" ry="3.6" fill="#F08A7E" opacity="0.54" />
+  <ellipse cx="209" cy="138" rx="6" ry="3.6" fill="#F08A7E" opacity="0.54" />
+  <path d="M184.5 141.5 Q192 148 199.5 141.5 Q201.3 141.8 200.4 143.6 Q192 151.2 183.6 143.6 Q182.7 141.8 184.5 141.5 Z" fill="#302731" />
+
+  <!-- Pastel Coral Relationship Notebook Held Warmly at Chest -->
+  <rect x="157" y="203" width="70" height="64" rx="15" fill="#FFFFFF" />
+  <rect x="160" y="206" width="64" height="58" rx="12" fill="#EF8B70" />
+  <rect x="170" y="216" width="44" height="13" rx="5" fill="#FFF9F2" />
+  <rect x="172" y="236" width="34" height="4" rx="2" fill="#FFE9DE" />
+  <ellipse cx="158" cy="238" rx="11" ry="8" fill="#E39E7D" />
+  <ellipse cx="226" cy="238" rx="11" ry="8" fill="#E39E7D" />
+
+  <!-- Soft Base Pill -->
+  <rect x="94" y="270" width="232" height="16" rx="8" fill="#FFFFFF" />
+  <rect x="96" y="272" width="228" height="12" rx="6" fill="#FFF1EC" />
+</svg>

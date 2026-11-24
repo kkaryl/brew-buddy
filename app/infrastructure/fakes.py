@@ -643,8 +643,8 @@ class FakeBriefCoachAgent:
         purpose_label = meeting.purpose.value.replace("_", " ")
         openers = [
             (
-                f"Thanks for carving out {meeting.duration_minutes} minutes, {contact.name}—"
-                f"looking forward to our {purpose_label} conversation ({tone_label} style)."
+                f"Thanks for carving out {meeting.duration_minutes} minutes, {contact.name}. "
+                f"Looking forward to our {purpose_label} conversation ({tone_label} style)."
             ),
             (
                 f"Before we dive into {meeting.objective[:120]}, I'd love to hear what has been "
@@ -766,7 +766,7 @@ class FakeBriefCoachAgent:
         updated_openers = [
             (
                 f"Hi {contact.name}, glad we could catch up for {target_duration_minutes} "
-                f"minutes ({tone_label})—excited to explore {cleaned_instruction[:140]}."
+                f"minutes ({tone_label}), excited to explore {cleaned_instruction[:140]}."
             ),
             (
                 current_brief.conversation_openers[1]

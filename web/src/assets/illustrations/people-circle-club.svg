@@ -1,0 +1,82 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 280">
+  <!-- Overlapping Pastel Circles -->
+  <circle cx="152" cy="150" r="86" fill="#FFE9DE" />
+  <circle cx="268" cy="150" r="90" fill="#FFFFFF" />
+  <circle cx="268" cy="150" r="86" fill="#DDF3E7" />
+  <circle cx="210" cy="94" r="57.5" fill="#FFFFFF" />
+  <circle cx="210" cy="94" r="54" fill="#E9DFFC" />
+
+  <!-- Coral Radiating Accents -->
+  <rect x="208.3" y="15" width="3.4" height="16" rx="1.7" fill="#EF8B70" />
+  <path d="M191 36 L182 24 C180.8 22.4, 183.6 20.4, 184.8 22 L193.8 34 C195 35.6, 192.2 37.6, 191 36 Z" fill="#EF8B70" />
+  <path d="M229 36 L238 24 C239.2 22.4, 236.4 20.4, 235.2 22 L226.2 34 C225 35.6, 227.8 37.6, 229 36 Z" fill="#EF8B70" />
+
+  <!-- Left Friendly Portrait (Same Woman Character) -->
+  <ellipse cx="152" cy="96" rx="20" ry="16" fill="#FFFFFF" />
+  <ellipse cx="152" cy="96" rx="18" ry="14" fill="#322022" />
+  <path d="M139 106 Q152 101 165 106 Q166 109 163 110 Q152 105.5 141 110 Q138 109 139 106 Z" fill="#EF8B70" />
+  <circle cx="152" cy="144" r="35" fill="#322022" />
+  <path d="M101 236 C105 200, 124 185, 152 185 C180 185, 199 200, 203 236 Z" fill="#FFFFFF" />
+  <path d="M104 236 C108 202, 126 188, 152 188 C178 188, 196 202, 200 236 Z" fill="#EF8B70" />
+  <rect x="144" y="168" width="16" height="24" rx="8" fill="#D58B68" />
+  <path
+    fill-rule="evenodd"
+    clip-rule="evenodd"
+    d="M128 142 A 5.8 5.8 0 1 0 128 153.6 A 5.8 5.8 0 1 0 128 142 Z M128 144.4 A 3.4 3.4 0 1 1 128 151.2 A 3.4 3.4 0 1 1 128 144.4 Z"
+    fill="#F2BF5E"
+  />
+  <path
+    fill-rule="evenodd"
+    clip-rule="evenodd"
+    d="M176 142 A 5.8 5.8 0 1 0 176 153.6 A 5.8 5.8 0 1 0 176 142 Z M176 144.4 A 3.4 3.4 0 1 1 176 151.2 A 3.4 3.4 0 1 1 176 144.4 Z"
+    fill="#F2BF5E"
+  />
+  <rect x="130" y="118" width="44" height="54" rx="22" fill="#E39E7D" />
+  <path d="M129 138 C130 120, 144 114, 156 116 C168 118, 175 127, 175 139 C167 130, 158 127, 149 128 C140 129, 134 133, 129 138 Z" fill="#322022" />
+  <circle cx="144" cy="145" r="2.5" fill="#302731" />
+  <circle cx="160" cy="145" r="2.5" fill="#302731" />
+  <ellipse cx="138" cy="153" rx="5" ry="3" fill="#F08A7E" opacity="0.54" />
+  <ellipse cx="166" cy="153" rx="5" ry="3" fill="#F08A7E" opacity="0.54" />
+  <path d="M145.5 155.5 Q152 161 158.5 155.5 Q160.2 155.8 159.4 157.5 Q152 164 144.6 157.5 Q143.8 155.8 145.5 155.5 Z" fill="#302731" />
+
+  <!-- Right Friendly Portrait (Same Man Character) -->
+  <path d="M217 236 C221 200, 240 185, 268 185 C296 185, 315 200, 319 236 Z" fill="#FFFFFF" />
+  <path d="M220 236 C224 202, 242 188, 268 188 C294 188, 312 202, 316 236 Z" fill="#C6B1F5" />
+  <rect x="260" y="168" width="16" height="24" rx="8" fill="#B5704E" />
+  <circle cx="252" cy="120" r="14" fill="#322022" />
+  <circle cx="268" cy="115" r="16" fill="#322022" />
+  <circle cx="284" cy="121" r="14" fill="#322022" />
+  <rect x="246" y="118" width="44" height="54" rx="22" fill="#C7825F" />
+  <circle cx="256" cy="121" r="8" fill="#322022" />
+  <circle cx="268" cy="119" r="8.5" fill="#322022" />
+  <circle cx="280" cy="121" r="8" fill="#322022" />
+  <!-- Round Glasses (Filled Donut Rings) -->
+  <path
+    fill-rule="evenodd"
+    clip-rule="evenodd"
+    d="M259 136.5 A 8.5 8.5 0 1 0 259 153.5 A 8.5 8.5 0 1 0 259 136.5 Z M259 138.6 A 6.4 6.4 0 1 1 259 151.4 A 6.4 6.4 0 1 1 259 138.6 Z"
+    fill="#302731"
+  />
+  <path
+    fill-rule="evenodd"
+    clip-rule="evenodd"
+    d="M277 136.5 A 8.5 8.5 0 1 0 277 153.5 A 8.5 8.5 0 1 0 277 136.5 Z M277 138.6 A 6.4 6.4 0 1 1 277 151.4 A 6.4 6.4 0 1 1 277 138.6 Z"
+    fill="#302731"
+  />
+  <rect x="266.5" y="144" width="3.5" height="2" rx="1" fill="#302731" />
+  <circle cx="259" cy="145" r="2.4" fill="#302731" />
+  <circle cx="277" cy="145" r="2.4" fill="#302731" />
+  <ellipse cx="253" cy="154" rx="4.8" ry="2.8" fill="#E87A70" opacity="0.45" />
+  <ellipse cx="283" cy="154" rx="4.8" ry="2.8" fill="#E87A70" opacity="0.45" />
+  <path d="M262 157.5 Q268 162.5 274 157.5 Q275.6 157.8 274.8 159.4 Q268 165.4 261.2 159.4 Q260.4 157.8 262 157.5 Z" fill="#302731" />
+
+  <!-- Center Connecting Speech Bubble -->
+  <rect x="180" y="68" width="60" height="34" rx="17" fill="#FFFFFF" />
+  <circle cx="199" cy="85" r="3.6" fill="#302731" />
+  <circle cx="210" cy="85" r="3.6" fill="#8C67BC" />
+  <circle cx="221" cy="85" r="3.6" fill="#302731" />
+
+  <!-- Soft Base Pill -->
+  <rect x="84" y="232" width="252" height="16" rx="8" fill="#FFFFFF" />
+  <rect x="86" y="234" width="248" height="12" rx="6" fill="#FFF1EC" />
+</svg>

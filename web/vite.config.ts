@@ -10,6 +10,10 @@ export default defineConfig({
     host: "localhost",
     port: 5173,
     strictPort: true,
+    allowedHosts: true,
+    headers: {
+      "Cross-Origin-Opener-Policy": "same-origin-allow-popups",
+    },
     proxy: {
       "/api": {
         target: backendOrigin,
@@ -21,5 +25,6 @@ export default defineConfig({
     environment: "jsdom",
     globals: true,
     setupFiles: ["./src/test/setup.ts"],
+    include: ["src/**/*.{test,spec}.{ts,tsx}"],
   },
 });

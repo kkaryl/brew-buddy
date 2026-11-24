@@ -18,11 +18,12 @@ from google.adk.runners import Runner
 
 from app.api.auth import router as auth_router
 from app.api.errors import register_exception_handlers
+from app.api.health import resolve_adc_file_mtime_ns
 from app.api.health import router as health_router
 from app.api.v1 import router as v1_router
 from app.app_utils import services
 from app.app_utils.a2a import attach_a2a_routes
-from app.config import AppSettings, get_settings
+from app.config import REPO_ROOT, AppSettings, get_settings
 from app.infrastructure.container import build_service_container
 from app.infrastructure.fakes import ServiceContainer
 from app.infrastructure.observability import configure_structured_logging
@@ -32,7 +33,7 @@ from app.tools.coaching_tools import (
     set_default_coaching_dependencies,
 )
 
-load_dotenv()
+load_dotenv(REPO_ROOT / ".env")
 
 logger = logging.getLogger(__name__)
 
@@ -176,6 +177,11 @@ def create_app(
         lifespan=lifespan,
     )
     fastapi_app.state.settings = resolved_settings
+    fastapi_app.state.settings_pinned = settings is not None
+    fastapi_app.state.env_mtime_ns = (
+        (REPO_ROOT / ".env").stat().st_mtime_ns if (REPO_ROOT / ".env").is_file() else None
+    )
+    fastapi_app.state.adc_mtime_ns = resolve_adc_file_mtime_ns()
     fastapi_app.state.service_container = resolved_container
     fastapi_app.state.coaching_tool_dependencies = coaching_deps
     fastapi_app.title = resolved_settings.app_name

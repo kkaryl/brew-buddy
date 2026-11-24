@@ -76,6 +76,7 @@ Brew keeps the project directly at the repository root (preserving `agents-cli-m
 ```text
 brew/
 ├── AGENTS.md                        # Permanent engineering rules & working agreement
+├── .agents/skills/                  # Project-scoped agent skills (e.g., generate-illustration)
 ├── agents-cli-manifest.yaml         # Official google-agents-cli project manifest
 ├── pyproject.toml                   # Python 3.12, uv, ruff, strict mypy, pytest config
 ├── uv.lock                          # Locked Python dependency graph
@@ -86,6 +87,7 @@ brew/
 ├── docs/
 │   ├── PRD.md                       # Product scope, user journey, non-goals
 │   ├── ARCHITECTURE.md              # System architecture & boundaries
+│   ├── DESIGN.md                    # Playful Social Club design tokens, components, & SVG art direction
 │   ├── DECISIONS.md                 # Architectural Decision Records (ADRs)
 │   └── openapi.json                 # Generated OpenAPI 3.1 HTTP API contract
 ├── app/
@@ -105,15 +107,22 @@ brew/
 │   ├── integration/                 # Deterministic FastAPI, A2A card, & SPA serving tests
 │   └── eval/                        # google-agents-cli evaluation config, judge, & datasets
 └── web/
-    ├── package.json                 # React 19, Vite, strict TypeScript, Tailwind CSS, Vitest
+    ├── package.json                 # React 19, Vite, strict TypeScript, Tailwind CSS v4, Lucide, Vitest
     ├── package-lock.json            # Locked frontend dependency graph
     └── src/
+        ├── index.css                # Centralized Playful Social Club CSS variables & Tailwind @theme tokens
+        ├── assets/illustrations/    # Cohesive flat-vector character illustrations (chat-setup-hero.png + companion SVGs)
         ├── api/                     # 1:1 OpenAPI types & same-origin BrewApiClient with timeouts
         ├── auth/                    # Session storage, expiry detection, & Firebase/Google OIDC
-        ├── components/              # Material 3 warm cream & espresso workspace views & dialogs
+        ├── components/
+        │   ├── ui/                  # 15 reusable accessible UI primitives (BrewLogo, AppHeader, BottomNavigation, etc.)
+        │   ├── domain/              # Domain cards (MeetingCard, QuestionCard, MemoryCard)
+        │   └── screens/             # 5 responsive main screens (Home, Chats, People, Memory, Me)
         ├── test/                    # Vitest + React Testing Library setup
-        ├── App.tsx                  # Responsive desktop rail + mobile bottom-bar application shell
-        └── App.test.tsx             # End-to-end UX, validation, API error, & auth expiry tests
+        ├── App.tsx                  # Shared shell, 5-tab BottomNavigation, & focused creation flows
+        ├── App.test.tsx             # End-to-end UX, validation, API error, & auth expiry tests
+        ├── DesignSystemAndShell.test.tsx # Wordmark, SVG illustration, focused flow, & profile default tests
+        └── TestPyramidJourneys.test.tsx  # Multi-counterpart, timeout, memory governance, & revision tests
 ```
 
 ---
@@ -226,5 +235,5 @@ All domain Firestore documents are strictly partitioned per authenticated user (
 - **Infrastructure as Code (`infra/terraform/`)**: Declaratively provisions Firestore database & composite indexes, Cloud Run / Agent Runtime services, least-privilege IAM service accounts, Secret Manager secret containers, and Cloud Trace/Logging sinks.
 - **CI/CD Pipeline (GitHub Actions / Cloud Build)**:
   1. **Static & Lint Checks**: `uv run ruff check .`, `uv run ruff format --check .`, `uv run mypy app tests/unit tests/integration`, `uv run codespell`, frontend `eslint` + `tsc --noEmit`, `terraform fmt -check` & `terraform validate`.
-  2. **Deterministic Tests**: `uv run pytest` (107 unit, integration, authorization-boundary, and Cloud Firestore Emulator tests) and frontend `Vitest` (`web/src/App.test.tsx`, `web/src/TestPyramidJourneys.test.tsx`).
+  2. **Deterministic Tests**: `uv run pytest` (107 unit, integration, authorization-boundary, and Cloud Firestore Emulator tests) and frontend `Vitest` (14 tests across `web/src/App.test.tsx`, `web/src/TestPyramidJourneys.test.tsx`, and `web/src/DesignSystemAndShell.test.tsx`).
   3. **Agent Behavioral & Trajectory Evaluation**: `make eval-deterministic`, `make eval-smoke`, and `make eval` (`tests/eval/run_eval_suite.py` + `agents-cli eval`) grading the 120-scenario `brew-comprehensive-dataset.json` across all 15 coaching, personalization, memory, grounding, prompt-injection, and tool-failure categories.

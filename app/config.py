@@ -40,7 +40,7 @@ class AppSettings(BaseSettings):
     """Typed, validated application settings loaded from environment variables."""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=REPO_ROOT / ".env",
         env_file_encoding="utf-8",
         extra="ignore",
         populate_by_name=True,
@@ -178,6 +178,32 @@ class AppSettings(BaseSettings):
         default=False,
         validation_alias="BREW_SEED_EVAL_FIXTURES",
     )
+
+    @field_validator(
+        "firebase_project_id",
+        "firebase_web_api_key",
+        "firebase_auth_domain",
+        "google_oauth_client_id",
+        mode="before",
+    )
+    @classmethod
+    def _clean_optional_auth_setting(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        text = str(value).strip()
+        if len(text) >= 2 and text[0] == text[-1] and text[0] in {'"', "'"}:
+            text = text[1:-1].strip()
+        if not text:
+            return None
+        placeholder_prefixes = (
+            "your-google-oauth-web-client-id",
+            "your-public-firebase-web-api-key",
+            "your-gcp-project-id",
+            "Google Cloud Console",
+        )
+        if text.startswith(placeholder_prefixes):
+            return None
+        return text
 
     @field_validator("gemini_model")
     @classmethod

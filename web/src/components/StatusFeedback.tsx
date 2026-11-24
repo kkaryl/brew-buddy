@@ -1,31 +1,32 @@
 import type { JSX } from "react";
 import type { FeedbackNotice } from "./formatters";
+import { EmptyState, LoadingSkeleton, PillButton, type IllustrationName } from "./ui";
 
 export function StatusBanner({
   notice,
   onDismiss,
 }: {
   readonly notice: FeedbackNotice;
-  readonly onDismiss?: () => void;
+  readonly onDismiss?: (() => void) | undefined;
 }): JSX.Element {
   const isError = notice.kind === "error";
   const containerStyles =
     notice.kind === "error"
-      ? "border-[#E6B8B7] bg-[#FCEAE9] text-[#5A1213]"
+      ? "border-[#F3C1B8] bg-[#FFF1EE] text-[#7D2418]"
       : notice.kind === "success"
-        ? "border-[#B8D4C0] bg-[#DCEADF] text-[#133321]"
-        : "border-[#D6C7B7] bg-[#F5EEE4] text-[#2B170A]";
+        ? "border-[#C4E6D3] bg-[#F0F8F3] text-[#1F543F]"
+        : "border-[#DFD4F8] bg-[#F5F0FC] text-[#302731]";
 
   return (
     <div
       role={isError ? "alert" : "status"}
       aria-live={isError ? "assertive" : "polite"}
-      className={`rounded-2xl border px-4 py-3.5 text-sm ${containerStyles}`}
+      className={`rounded-[22px] border px-5 py-4 text-sm shadow-card ${containerStyles}`}
     >
       <div className="flex items-start justify-between gap-3">
         <div className="space-y-1">
-          <p className="font-semibold">{notice.title}</p>
-          {notice.message && <p className="text-[0.84rem] opacity-95">{notice.message}</p>}
+          <p className="font-bold">{notice.title}</p>
+          {notice.message && <p className="text-[0.875rem] opacity-95">{notice.message}</p>}
           {notice.details && notice.details.length > 0 && (
             <ul className="mt-1.5 list-disc space-y-0.5 pl-5 text-xs">
               {notice.details.map((detail, idx) => (
@@ -37,20 +38,20 @@ export function StatusBanner({
             </ul>
           )}
           {notice.traceId && (
-            <p className="pt-0.5 font-mono-code text-[0.72rem] opacity-80">
+            <p className="pt-0.5 font-mono-code text-[0.72rem]">
               Trace: {notice.traceId}
             </p>
           )}
         </div>
         {onDismiss && (
-          <button
-            type="button"
+          <PillButton
+            variant="ghost"
+            size="sm"
             onClick={onDismiss}
             aria-label="Dismiss notification"
-            className="rounded-full px-2.5 py-1 text-xs font-semibold opacity-80 transition hover:bg-black/5 hover:opacity-100"
           >
             Dismiss
-          </button>
+          </PillButton>
         )}
       </div>
     </div>
@@ -58,19 +59,7 @@ export function StatusBanner({
 }
 
 export function LoadingCard({ label }: { readonly label: string }): JSX.Element {
-  return (
-    <div
-      role="status"
-      aria-live="polite"
-      className="md-card flex items-center gap-3.5 px-6 py-5 text-sm text-[#594638]"
-    >
-      <span
-        aria-hidden="true"
-        className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-[#D6C7B7] border-t-[#4A2E1B]"
-      />
-      <span className="font-medium">{label}</span>
-    </div>
-  );
+  return <LoadingSkeleton label={label} rows={3} />;
 }
 
 export function EmptyStateCard({
@@ -79,29 +68,23 @@ export function EmptyStateCard({
   actionLabel,
   onAction,
   actionId,
+  illustration,
 }: {
   readonly title: string;
   readonly description: string;
-  readonly actionLabel?: string;
-  readonly onAction?: () => void;
-  readonly actionId?: string;
+  readonly actionLabel?: string | undefined;
+  readonly onAction?: (() => void) | undefined;
+  readonly actionId?: string | undefined;
+  readonly illustration?: IllustrationName | undefined;
 }): JSX.Element {
   return (
-    <div className="md-card-tonal flex flex-col items-start justify-between gap-4 p-6 sm:flex-row sm:items-center">
-      <div className="space-y-1">
-        <h3 className="text-base font-semibold text-[#23170F]">{title}</h3>
-        <p className="max-w-xl text-sm text-[#594638]">{description}</p>
-      </div>
-      {actionLabel && onAction && (
-        <button
-          id={actionId}
-          type="button"
-          onClick={onAction}
-          className="md-btn md-btn-filled shrink-0"
-        >
-          {actionLabel}
-        </button>
-      )}
-    </div>
+    <EmptyState
+      title={title}
+      description={description}
+      actionLabel={actionLabel}
+      onAction={onAction}
+      actionId={actionId}
+      illustration={illustration}
+    />
   );
 }

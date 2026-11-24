@@ -222,6 +222,38 @@ This document records significant architectural and technical decisions for **Br
   - *Positive:* Zero brittle raw-LLM-prose assertions in `pytest`, fast (<15s) offline deterministic trajectory/guardrail verification across all 120 scenarios, and reproducible live Gemini rubric scoring via `make eval-smoke` and `make eval`.
   - *Trade-off:* `custom_function_file` evaluators executed by `agents-cli eval grade` run in isolated `exec()` module namespaces and therefore remain self-contained stdlib/`google-genai` modules without relative package imports.
 
+---
+
+## ADR-017: Playful Social Club Pastel Editorial Design System, Filled-Vector SVG Illustration Family, and 5-Tab + Focused-Flow Shell
+
+- **Date:** 2026-11-23
+- **Status:** Accepted *(supersedes the visual palette and navigation chrome of ADR-015 while retaining all verified Google/Firebase authentication, `BrewApiClient`, and deployment lockout guarantees)*
+- **Context:** Brew is a warm, human-centered AI relationship and conversation preparation companion—not a cafe ordering app or a generic enterprise dashboard. The UI needed a cohesive pastel editorial identity ("Playful Social Club"), custom character illustrations from a single visual family, a mobile-first 5-tab browsing shell (`Home`, `Chats`, `People`, `Memory`, `Me`) that scales up to `1200px` desktop side-by-side layouts without looking like a stretched mobile screenshot, and focused creation flows where bottom navigation never competes with primary call-to-action buttons.
+- **Decision:**
+  1. Centralize all color, gradient, ambient shadow, radius, spacing, and typography tokens (`Fraunces` bold headlines + `DM Sans` UI and `"brew."` wordmark with `#EF8B70` coral dot) in `web/src/index.css` via `:root` CSS custom properties and Tailwind v4 `@theme` variables, documented in [`docs/DESIGN.md`](DESIGN.md) and enforced via `AGENTS.md`.
+  2. Generate the primary `chat-setup-hero.png` asset via Gemini image generation (`gemini-2.5-flash-image`) with alpha sticker-cutout transparency (`898×571`), paired with three cohesive filled-path `.svg` companion scenes (`home-club-welcome.svg`, `memory-bloom-journal.svg`, `people-circle-club.svg`) sharing the same character palette, layered peach/lavender/mint circles, and three-dot white speech bubbles.
+  3. Build 18 reusable, keyboard-accessible primitives and domain cards (`BrewLogo`, `AppHeader`, `BottomNavigation`, `PastelHero`, `Illustration`, `SectionHeader`, `IconTile`, `PastelCard`, `PillButton`, `PrimaryButton`, `SegmentedChoice`, `FormField`, `ContactAvatar`, `MemoryCard`, `QuestionCard`, `MeetingCard`, `EmptyState`, `LoadingSkeleton`) powering the 5 browsing screens and unmounting `BottomNavigation` in favor of `← Back` during focused creation flows.
+- **Consequences:**
+  - *Positive:* Distinct, approachable lifestyle-editorial visual identity; zero duplicate navigation buttons in the DOM; crisp side-by-side form + live blueprint previews at desktop widths; and 100% preservation of OpenAPI v1 contracts and auth security.
+  - *Trade-off:* All new frontend features must consume tokens and primitives from `web/src/components/ui/` and keep `docs/DESIGN.md` synchronized.
+
+---
+
+## ADR-018: Brew V2 Calendar-Aware 3-Space Architecture, Read-Only GCal / `.ics` Sync, and Pocket Glance Rituals
+
+- **Date:** 2026-11-24
+- **Status:** Accepted *(evolves ADR-017's 5-tab shell into the approved v2 3-space + focused-ritual UX while preserving 100% of FastAPI v1 contracts)*
+- **Context:** While ADR-017 established Brew's Playful Social Club visual language, splitting interpersonal preparation across 5 equal tabs (`Home`, `Chats`, `People`, `Memory`, `Me`) separated people from their memories and lacked calendar-aware coffee chat detection, proportional time-boxing (`15m` vs `30m` vs `45m`), and a distraction-free mobile deck during live conversations.
+- **Decision:**
+  1. Collapse primary browsing into **3 cohesive spaces** (`Clubhouse`, `Cue Studio`, `Relationship Journal`) via `TopBarShell` and `MobileDock`, paired with **3 focused rituals** (`QuickSparkSetupScreen`, `PocketCueCardsScreen`, `DebriefKeepsakesScreen`) rendered inside `FocusedTopBar` with primary navigation unmounted.
+  2. Implement client-side read-only Google Calendar sync (`https://www.googleapis.com/auth/calendar.events.readonly` via GIS token client in `web/src/calendar/googleCalendarClient.ts`) alongside an RFC 5545 `.ics` parser (`web/src/calendar/icsParser.ts`) and deterministic local mock fixtures (`web/src/calendar/calendarStore.ts`), filtering strictly for explicit coffee/mentorship/1:1/discovery events `<= 180` minutes with at most 2 human attendees (excluding group/team meetings and >2 human attendees unless `#brew` is explicitly present) and displaying concise `from GCal` attribution badges.
+  3. Persist Pocket Glance starred cue-card IDs per `(userId, briefId)` and default coaching preferences per `userId` in `localStorage` (`web/src/state/`), keeping `/api/v1/*` backend schemas completely unchanged while eliminating all 10 obsolete v1 screen/shell/card files.
+  4. Enforce visual fidelity, responsive layout integrity (`1440px`, `834px`, `430px`), zero em-dashes, and live Chrome WCAG 2.1 AA contrast (`--brew-text-secondary: #6F5E6A`) through Vitest + `@playwright/test` + `@axe-core/playwright` (`web/e2e/`) and automated side-by-side mockup comparisons (`tests/visual/`).
+- **Consequences:**
+  - *Positive:* One-click preparation from calendar slots, calm 2-card Pocket Glance during live chats, unified counterpart + keepsake folios, zero backend breaking changes, and `93.7%` to `96.4%` desktop visual similarity against approved v2 mockups.
+  - *Trade-off:* Client-side starred question selections and imported `.ics` events are scoped to browser `localStorage` per user rather than synced across devices via Firestore.
+
+
 
 
 

@@ -1,0 +1,61 @@
+{
+  "generatedAtUtc": "2026-11-24T07:52:57.725Z",
+  "screens": [
+    {
+      "id": "01-desktop-clubhouse-calendar",
+      "label": "01 · Desktop Clubhouse & Calendar",
+      "viewport": "1440x980",
+      "meanChannelDeltaPct": 4.86,
+      "pixelSimilarityPct": 95.14
+    },
+    {
+      "id": "02-desktop-quick-spark-setup",
+      "label": "02 · Focused Conversation Setup",
+      "viewport": "1440x960",
+      "meanChannelDeltaPct": 3.57,
+      "pixelSimilarityPct": 96.43
+    },
+    {
+      "id": "03-desktop-cue-card-studio",
+      "label": "03 · Desktop Cue Studio",
+      "viewport": "1440x980",
+      "meanChannelDeltaPct": 6.27,
+      "pixelSimilarityPct": 93.73
+    },
+    {
+      "id": "04-desktop-debrief-keepsakes",
+      "label": "04 · Desktop Debrief & Keepsakes",
+      "viewport": "1440x960",
+      "meanChannelDeltaPct": 5.99,
+      "pixelSimilarityPct": 94.01
+    },
+    {
+      "id": "05-desktop-journal-people-dna",
+      "label": "05 · Desktop Relationship Journal",
+      "viewport": "1440x980",
+      "meanChannelDeltaPct": 3.91,
+      "pixelSimilarityPct": 96.09
+    },
+    {
+      "id": "06-mobile-clubhouse-calendar",
+      "label": "06 · Mobile Clubhouse & Calendar",
+      "viewport": "430x932",
+      "meanChannelDeltaPct": 12.33,
+      "pixelSimilarityPct": 87.67
+    },
+    {
+      "id": "07-mobile-pocket-cue-cards",
+      "label": "07 · Mobile Pocket Cue Cards",
+      "viewport": "430x932",
+      "meanChannelDeltaPct": 8.04,
+      "pixelSimilarityPct": 91.96
+    },
+    {
+      "id": "08-mobile-debrief-keepsakes",
+      "label": "08 · Mobile Debrief & Keepsakes",
+      "viewport": "430x932",
+      "meanChannelDeltaPct": 10.49,
+      "pixelSimilarityPct": 89.51
+    }
+  ]
+}

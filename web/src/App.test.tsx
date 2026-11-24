@@ -23,7 +23,7 @@ const HEALTH_OK = {
   version: "0.1.0",
   environment: "local",
   model: "gemini-3.8-flash",
-  timestamp_utc: "2026-11-23T02:00:00Z",
+  timestamp_utc: "2026-11-24T06:00:00Z",
 };
 
 const LOCAL_AUTH_CONFIG: AuthClientConfigResponse = {
@@ -37,12 +37,14 @@ const LOCAL_AUTH_CONFIG: AuthClientConfigResponse = {
     {
       persona_id: "alice",
       display_name: "Alice Chen",
-      role_summary: "Product Lead — Isolated Local Workspace",
+      role_summary: "Product Lead · Isolated Local Workspace",
     },
   ],
 };
 
-function buildBriefFixture(overrides?: Partial<PreparationBriefResponse>): PreparationBriefResponse {
+function buildBriefFixture(
+  overrides?: Partial<PreparationBriefResponse>,
+): PreparationBriefResponse {
   return {
     id: "brf_001",
     meeting_id: "mtg_001",
@@ -52,7 +54,7 @@ function buildBriefFixture(overrides?: Partial<PreparationBriefResponse>): Prepa
     contact_context: "Alex Morgan is a Staff ML Engineer at Northstar Systems.",
     meeting_objective: "Learn how Alex's team evaluates LLM pipelines in production.",
     conversation_openers: [
-      "Thanks for making time—excited to hear what your team has learned scaling evaluation.",
+      "Thanks for making time, excited to hear what your team has learned scaling evaluation.",
       "How has your quarter at Northstar Systems been shaping up so far?",
     ],
     time_boxed_agenda: [
@@ -75,15 +77,23 @@ function buildBriefFixture(overrides?: Partial<PreparationBriefResponse>): Prepa
     suggested_questions: [
       {
         id: "q_1",
-        question: "Which offline evaluation signals caught real regressions earliest for your team?",
+        question:
+          "Which offline evaluation signals caught real regressions earliest for your team?",
         rationale: "Directly uncovers high-leverage evaluation practices tied to your objective.",
         category: "Evaluation",
       },
       {
         id: "q_2",
-        question: "Where did engineers push back most when adopting automated quality gates?",
+        question:
+          "Where did engineers push back most when adopting automated quality gates?",
         rationale: "Surfaces realistic organizational adoption trade-offs.",
         category: "Adoption",
+      },
+      {
+        id: "q_3",
+        question: "How do you curate golden sets with non-ML domain reviewers?",
+        rationale: "Explores practical human-in-the-loop dataset hygiene.",
+        category: "Process",
       },
     ],
     suggested_follow_up_topics: [
@@ -92,8 +102,8 @@ function buildBriefFixture(overrides?: Partial<PreparationBriefResponse>): Prepa
     referenced_memory_ids: ["mem_001"],
     revision_summary: null,
     version: 1,
-    created_at: "2026-11-23T02:05:00Z",
-    updated_at: "2026-11-23T02:05:00Z",
+    created_at: "2026-11-24T06:05:00Z",
+    updated_at: "2026-11-24T06:05:00Z",
     workflow: {
       request_id: "req_1",
       trace_id: "trc_1",
@@ -126,7 +136,8 @@ interface MockBackendState {
 
 function createStatefulFetchMock(state: MockBackendState) {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-    const rawUrl = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const rawUrl =
+      typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
     const parsed = new URL(rawUrl, "http://localhost");
     const path = parsed.pathname;
     const method = (init?.method ?? "GET").toUpperCase();
@@ -189,7 +200,7 @@ function createStatefulFetchMock(state: MockBackendState) {
       }
       const payload = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
       const created: ContactResponse = {
-        id: "cnt_alex",
+        id: `cnt_${String(state.contacts.length + 1)}`,
         name: String(payload["name"] ?? ""),
         title: typeof payload["title"] === "string" ? payload["title"] : null,
         role: typeof payload["role"] === "string" ? payload["role"] : null,
@@ -198,8 +209,8 @@ function createStatefulFetchMock(state: MockBackendState) {
         context_notes:
           typeof payload["context_notes"] === "string" ? payload["context_notes"] : null,
         version: 1,
-        created_at: "2026-11-23T02:01:00Z",
-        updated_at: "2026-11-23T02:01:00Z",
+        created_at: "2026-11-24T06:01:00Z",
+        updated_at: "2026-11-24T06:01:00Z",
       };
       state.contacts = [created, ...state.contacts];
       return jsonResponse(created, 201);
@@ -227,15 +238,16 @@ function createStatefulFetchMock(state: MockBackendState) {
         tone: brief.tone,
         objective: brief.meeting_objective,
         duration_minutes: brief.duration_minutes,
-        scheduled_at: null,
+        scheduled_at:
+          typeof payload["scheduled_at"] === "string" ? payload["scheduled_at"] : null,
         notes: null,
         status: "preparing",
         latest_brief_id: brief.id,
         version: 1,
-        created_at: "2026-11-23T02:05:00Z",
-        updated_at: "2026-11-23T02:05:00Z",
+        created_at: "2026-11-24T06:05:00Z",
+        updated_at: "2026-11-24T06:05:00Z",
       };
-      state.meetings = [meeting];
+      state.meetings = [meeting, ...state.meetings];
       state.briefsById.set(brief.id, brief);
       state.revisionsById.set(brief.id, [brief]);
       return jsonResponse(brief, 201);
@@ -287,7 +299,12 @@ function createStatefulFetchMock(state: MockBackendState) {
     if (path.startsWith("/api/v1/briefs/") && method === "GET") {
       const briefId = path.split("/")[4] ?? "";
       const brief = state.briefsById.get(briefId);
-      return brief ? jsonResponse(brief) : jsonResponse({ error: { code: "NOT_FOUND", message: "Not found", trace_id: "t1", details: [] } }, 404);
+      return brief
+        ? jsonResponse(brief)
+        : jsonResponse(
+            { error: { code: "NOT_FOUND", message: "Not found", trace_id: "t1", details: [] } },
+            404,
+          );
     }
 
     if (path === "/api/v1/memories/proposals" && method === "GET") {
@@ -301,10 +318,13 @@ function createStatefulFetchMock(state: MockBackendState) {
     }
 
     if (path === "/api/v1/memories/propose" && method === "POST") {
+      const reqBody = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+      const cid =
+        typeof reqBody["contact_id"] === "string" ? reqBody["contact_id"] : "cnt_alex";
       const p1: MemoryProposalResponse = {
         id: "prop_ai",
         scope: "contact",
-        contact_id: "cnt_alex",
+        contact_id: cid,
         memory_type: "counterpart_background",
         text: "Alex Morgan discussed his team's challenges adopting AI.",
         rationale: "Useful context for future follow-ups with Alex.",
@@ -314,7 +334,7 @@ function createStatefulFetchMock(state: MockBackendState) {
           brief_id: "brf_001",
           proposal_id: "prop_ai",
           excerpt: "We discussed his team's challenges adopting AI.",
-          recorded_at: "2026-11-23T02:10:00Z",
+          recorded_at: "2026-11-24T06:10:00Z",
         },
         status: "pending",
         lifecycle_state: "proposed",
@@ -323,8 +343,8 @@ function createStatefulFetchMock(state: MockBackendState) {
         conflict_summary: "Updates earlier AI adoption note.",
         rejection_reason: null,
         approved_memory_id: null,
-        created_at: "2026-11-23T02:10:00Z",
-        updated_at: "2026-11-23T02:10:00Z",
+        created_at: "2026-11-24T06:10:00Z",
+        updated_at: "2026-11-24T06:10:00Z",
         reviewed_at: null,
         version: 1,
       };
@@ -341,7 +361,7 @@ function createStatefulFetchMock(state: MockBackendState) {
           brief_id: "brf_001",
           proposal_id: "prop_pref",
           excerpt: "I prefer having informal conversations with engineers.",
-          recorded_at: "2026-11-23T02:10:00Z",
+          recorded_at: "2026-11-24T06:10:00Z",
         },
         status: "pending",
         lifecycle_state: "proposed",
@@ -350,8 +370,8 @@ function createStatefulFetchMock(state: MockBackendState) {
         conflict_summary: null,
         rejection_reason: null,
         approved_memory_id: null,
-        created_at: "2026-11-23T02:10:00Z",
-        updated_at: "2026-11-23T02:10:00Z",
+        created_at: "2026-11-24T06:10:00Z",
+        updated_at: "2026-11-24T06:10:00Z",
         reviewed_at: null,
         version: 1,
       };
@@ -372,7 +392,10 @@ function createStatefulFetchMock(state: MockBackendState) {
       const payload = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
       const target = state.proposals.find((p) => p.id === proposalId);
       if (!target) {
-        return jsonResponse({ error: { code: "NOT_FOUND", message: "Missing", trace_id: "t", details: [] } }, 404);
+        return jsonResponse(
+          { error: { code: "NOT_FOUND", message: "Missing", trace_id: "t", details: [] } },
+          404,
+        );
       }
       const finalText =
         typeof payload["edited_text"] === "string" && payload["edited_text"]
@@ -392,12 +415,14 @@ function createStatefulFetchMock(state: MockBackendState) {
         supersedes_memory_id: target.supersedes_memory_id,
         superseded_by_memory_id: null,
         superseded_at: null,
-        created_at: "2026-11-23T02:12:00Z",
-        updated_at: "2026-11-23T02:12:00Z",
+        created_at: "2026-11-24T06:12:00Z",
+        updated_at: "2026-11-24T06:12:00Z",
         version: 1,
       };
       state.proposals = state.proposals.map((p) =>
-        p.id === proposalId ? { ...p, status: "approved", lifecycle_state: "approved", version: 2 } : p,
+        p.id === proposalId
+          ? { ...p, status: "approved", lifecycle_state: "approved", version: 2 }
+          : p,
       );
       state.memories = [createdMem, ...state.memories];
       return jsonResponse(createdMem);
@@ -407,7 +432,10 @@ function createStatefulFetchMock(state: MockBackendState) {
       const proposalId = path.split("/")[4] ?? "";
       const target = state.proposals.find((p) => p.id === proposalId);
       if (!target) {
-        return jsonResponse({ error: { code: "NOT_FOUND", message: "Missing", trace_id: "t", details: [] } }, 404);
+        return jsonResponse(
+          { error: { code: "NOT_FOUND", message: "Missing", trace_id: "t", details: [] } },
+          404,
+        );
       }
       const rejected: MemoryProposalResponse = {
         ...target,
@@ -428,7 +456,10 @@ function createStatefulFetchMock(state: MockBackendState) {
       const payload = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
       const existing = state.memories.find((m) => m.id === memoryId);
       if (!existing) {
-        return jsonResponse({ error: { code: "NOT_FOUND", message: "Missing", trace_id: "t", details: [] } }, 404);
+        return jsonResponse(
+          { error: { code: "NOT_FOUND", message: "Missing", trace_id: "t", details: [] } },
+          404,
+        );
       }
       const updated: MemoryResponse = {
         ...existing,
@@ -446,23 +477,33 @@ function createStatefulFetchMock(state: MockBackendState) {
     }
 
     return jsonResponse(
-      { error: { code: "NOT_FOUND", message: `Unhandled ${method} ${path}`, trace_id: "trc_404", details: [] } },
+      {
+        error: {
+          code: "NOT_FOUND",
+          message: `Unhandled ${method} ${path}`,
+          trace_id: "trc_404",
+          details: [],
+        },
+      },
       404,
     );
   });
 }
 
-describe("Brew complete user experience", () => {
+describe("Brew v2 Integration & Feature-Parity Regression Suite", () => {
   beforeEach(() => {
     window.sessionStorage.clear();
+    window.localStorage.clear();
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
+    delete window.google;
     window.sessionStorage.clear();
+    window.localStorage.clear();
   });
 
-  it("renders sign-in gate with runtime readiness and hides local mock personas in production config", async () => {
+  it("renders sign-in gate cleanly and hides local mock personas in production config", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = typeof input === "string" ? input : input.toString();
       if (url.endsWith("/api/health")) {
@@ -481,12 +522,11 @@ describe("Brew complete user experience", () => {
 
     render(<App />);
 
+    const googleBtn = await screen.findByRole("button", { name: /Continue with Google/i });
     await waitFor(() => {
-      expect(screen.getByText("Backend OK")).toBeInTheDocument();
+      expect(googleBtn).not.toBeDisabled();
     });
-    expect(screen.getByText(/gemini-3\.8-flash/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Continue with Google/i })).toBeInTheDocument();
-    expect(screen.queryByText(/Local Isolated Test Mode/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Local Workspace Personas/i)).not.toBeInTheDocument();
   });
 
   it("renders graceful offline alert when backend health check fails", async () => {
@@ -495,12 +535,13 @@ describe("Brew complete user experience", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByRole("alert")).toHaveTextContent("Backend connection unavailable");
+      expect(screen.getAllByRole("alert")[0]).toHaveTextContent(
+        "Backend connection unavailable",
+      );
     });
-    expect(screen.getByText("Offline")).toBeInTheDocument();
   });
 
-  it("covers empty states, contact form validation, and structured API error details", async () => {
+  it("covers empty states, contact form validation, structured 422 API errors, and 1-click GCal slot prep", async () => {
     const state: MockBackendState = {
       contacts: [],
       meetings: [],
@@ -513,25 +554,21 @@ describe("Brew complete user experience", () => {
 
     render(<App />);
 
-    const enterAliceBtn = await screen.findByRole("button", { name: /Continue as Alice Chen/i });
-    fireEvent.click(enterAliceBtn);
+    fireEvent.click(await screen.findByRole("button", { name: /Continue as Alice Chen/i }));
 
-    // Empty counterpart state
-    await waitFor(() => {
-      expect(screen.getByText("Add a counterpart to begin")).toBeInTheDocument();
-    });
+    // Clubhouse shows local demo GCal slots ("from GCal") right away
+    expect((await screen.findAllByText("from GCal")).length).toBeGreaterThan(0);
 
-    // Empty review queue & empty memory vault states
-    fireEvent.click(screen.getByRole("button", { name: /^Notes & Review$/i }));
-    expect(await screen.findByText("No pending memory proposals")).toBeInTheDocument();
+    // Cue Studio shows empty state before a brief is synthesized
+    fireEvent.click(screen.getByRole("button", { name: /^Cue Studio$/i }));
+    expect(await screen.findByText(/Synthesize your first cue deck/i)).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: /^Relationship Memory$/i }));
-    expect(await screen.findByText("No approved memories yet")).toBeInTheDocument();
+    // Relationship Journal opens New Counterpart modal and validates inputs + 422 API error
+    fireEvent.click(screen.getByRole("button", { name: /Relationship Journal/i }));
+    await screen.findByRole("heading", { level: 1, name: /Folios & Memory/i });
+    fireEvent.click(screen.getByRole("button", { name: /^Person$/i }));
 
-    // Open New Counterpart modal and test client-side validation
-    fireEvent.click(screen.getByRole("button", { name: /^\+ Add$/i }));
     const dialog = await screen.findByRole("dialog", { name: /New Counterpart/i });
-
     fireEvent.click(within(dialog).getByRole("button", { name: /Save Counterpart/i }));
     expect(await within(dialog).findByText("Counterpart name is required.")).toBeInTheDocument();
 
@@ -543,10 +580,11 @@ describe("Brew complete user experience", () => {
     });
     fireEvent.click(within(dialog).getByRole("button", { name: /Save Counterpart/i }));
     expect(
-      await within(dialog).findByText("Context notes must be at least 3 characters when provided."),
+      await within(dialog).findByText(
+        "Context notes must be at least 3 characters when provided.",
+      ),
     ).toBeInTheDocument();
 
-    // Inject structured backend 422 error with trace ID and field details
     state.nextCreateContactError = jsonResponse(
       {
         error: {
@@ -570,17 +608,42 @@ describe("Brew complete user experience", () => {
     });
     fireEvent.click(within(dialog).getByRole("button", { name: /Save Counterpart/i }));
 
-    expect(await within(dialog).findByText(/Organization name rejected by policy/i)).toBeInTheDocument();
+    expect(
+      await within(dialog).findByText(/Organization name rejected by policy/i),
+    ).toBeInTheDocument();
     expect(within(dialog).getByText(/Trace: trace_contact_422/i)).toBeInTheDocument();
 
-    // Retry succeeds and transitions to Prepare workspace for Alex Morgan
+    // Retry succeeds and adds Alex Morgan to Relationship Journal folios
     fireEvent.click(within(dialog).getByRole("button", { name: /Save Counterpart/i }));
-    await waitFor(() => {
-      expect(screen.getByRole("heading", { level: 1, name: "Alex Morgan" })).toBeInTheDocument();
-    });
+    expect(
+      await screen.findByRole("heading", { level: 2, name: "Alex Morgan" }),
+    ).toBeInTheDocument();
+
+    // Also test 1-click Calendar Slot Prep for an uncreated GCal invite ("Priya Nair") -> auto-creates contact + generates deck!
+    const nav = screen.getByRole("navigation", { name: /^Primary navigation$/i });
+    fireEvent.click(within(nav).getByRole("button", { name: /^Clubhouse$/i }));
+    const setup15mBtn = await screen.findByRole("button", { name: /Setup 15m Chat/i });
+    fireEvent.click(setup15mBtn);
+
+    await screen.findByRole("heading", { level: 1, name: /Shape your conversation/i });
+    expect(screen.getByLabelText(/Meeting duration/i)).toHaveValue("15");
+
+    fireEvent.change(
+      screen.getByLabelText(/What would make this 15-minute chat feel worthwhile/i),
+      {
+        target: { value: "Learn how Priya bridges Figma tokens with engineering PR checks." },
+      },
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Synthesize Cue Deck/i }));
+
+    // Enters Cue Studio for newly created Priya Nair with 15-minute Run of Show
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "Priya Nair" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/15-MINUTE RUN OF SHOW/i)).toBeInTheDocument();
   });
 
-  it("validates brief generation, synthesizes v1, refines to v2, inspects historical v1, and handles version conflicts", async () => {
+  it("validates brief setup, synthesizes v1, stars Pocket cards, refines to v2, inspects archived v1, and handles 409 conflicts", async () => {
     const state: MockBackendState = {
       contacts: [
         {
@@ -591,8 +654,8 @@ describe("Brew complete user experience", () => {
           organization: "Northstar Systems",
           context_notes: "Met at evaluation meetup.",
           version: 1,
-          created_at: "2026-11-23T02:00:00Z",
-          updated_at: "2026-11-23T02:00:00Z",
+          created_at: "2026-11-24T06:00:00Z",
+          updated_at: "2026-11-24T06:00:00Z",
         },
       ],
       meetings: [],
@@ -606,26 +669,42 @@ describe("Brew complete user experience", () => {
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: /Continue as Alice Chen/i }));
 
-    await screen.findByRole("heading", { name: "Prepare a Conversation Brief" });
+    fireEvent.click(await screen.findByRole("button", { name: /Quick Spark/i }));
+    await screen.findByRole("heading", { level: 1, name: /Shape your conversation/i });
+
+    // Select saved contact Alex Morgan
+    fireEvent.change(screen.getByLabelText(/Or saved person/i), {
+      target: { value: "cnt_alex" },
+    });
 
     // Objective validation check
-    fireEvent.click(screen.getByRole("button", { name: /Generate Preparation Brief/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Synthesize Cue Deck/i }));
     expect(
       await screen.findByText("Enter a meeting objective (at least 3 characters)."),
     ).toBeInTheDocument();
 
-    // Fill objective and generate brief v1
-    fireEvent.change(screen.getByLabelText(/Meeting objective/i), {
-      target: { value: "Learn how Alex's team evaluates production LLM pipelines." },
-    });
-    fireEvent.click(screen.getByRole("button", { name: /Generate Preparation Brief/i }));
+    fireEvent.change(
+      screen.getByLabelText(/What would make this 30-minute chat feel worthwhile/i),
+      {
+        target: { value: "Learn how Alex's team evaluates production LLM pipelines." },
+      },
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Synthesize Cue Deck/i }));
 
     expect(
-      await screen.findByText(/Which offline evaluation signals caught real regressions/i),
+      await screen.findByText(
+        /Which offline evaluation signals caught real regressions earliest/i,
+      ),
     ).toBeInTheDocument();
-    expect(screen.getByText("30 min")).toBeInTheDocument();
+    expect(screen.getByText(/30-MINUTE RUN OF SHOW/i)).toBeInTheDocument();
 
-    // Trigger 409 VERSION_CONFLICT on first refinement attempt
+    // Star Q3 and open Pocket Glance -> confirm 3 starred cards appear
+    fireEvent.click(await screen.findByRole("button", { name: /Tap to star/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Pocket Glance/i }));
+    expect(await screen.findByText(/STARRED Q1 · 1 OF 3/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Full Studio/i }));
+
+    // Trigger 409 VERSION_CONFLICT on first refinement attempt in Brief Co-Pilot
     state.nextReviseError = jsonResponse(
       {
         error: {
@@ -637,38 +716,40 @@ describe("Brew complete user experience", () => {
       },
       409,
     );
-    fireEvent.click(screen.getByRole("button", { name: /15-minute trim/i }));
-    fireEvent.click(screen.getByRole("button", { name: /Save New Revision/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /Trim to 15m/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Refine Deck/i }));
 
-    expect(await screen.findByRole("button", { name: /Reload Latest Version/i })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", { name: /Reload Latest Version/i }),
+    ).toBeInTheDocument();
 
-    // Submit refinement cleanly -> creates v2 (15 min) while preserving v1
-    fireEvent.click(screen.getByRole("button", { name: /Save New Revision/i }));
-    expect(await screen.findByText("Updated to revision v2")).toBeInTheDocument();
-    expect(screen.getByText("15 min")).toBeInTheDocument();
+    // Submit refinement cleanly -> creates v2 (15-MINUTE RUN OF SHOW) while preserving v1
+    fireEvent.click(screen.getByRole("button", { name: /Refine Deck/i }));
+    expect(await screen.findByText(/Updated to deck v2/i)).toBeInTheDocument();
+    expect(screen.getByText(/15-MINUTE RUN OF SHOW/i)).toBeInTheDocument();
 
     // Switch back to historical revision v1 and verify read-only snapshot banner
     fireEvent.click(screen.getByRole("button", { name: "v1" }));
-    expect(await screen.findByText(/Viewing archived snapshot/i)).toBeInTheDocument();
-    expect(screen.getByText("30 min")).toBeInTheDocument();
+    expect(await screen.findByText(/Viewing archived snapshot v1/i)).toBeInTheDocument();
+    expect(screen.getByText(/30-MINUTE RUN OF SHOW/i)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /Return to latest \(v2\)/i }));
-    expect(await screen.findByText("15 min")).toBeInTheDocument();
+    expect(await screen.findByText(/15-MINUTE RUN OF SHOW/i)).toBeInTheDocument();
   });
 
-  it("proposes memories from notes, edits & approves, rejects, and manages durable memories", async () => {
+  it("captures post-chat debrief reflections, edits & stamps keepsakes, tosses, and manages folios in Relationship Journal", async () => {
     const state: MockBackendState = {
       contacts: [
         {
           id: "cnt_alex",
           name: "Alex Morgan",
           title: "Staff ML Engineer",
-          role: null,
+          role: "Engineering Peer",
           organization: "Northstar Systems",
           context_notes: null,
           version: 1,
-          created_at: "2026-11-23T02:00:00Z",
-          updated_at: "2026-11-23T02:00:00Z",
+          created_at: "2026-11-24T06:00:00Z",
+          updated_at: "2026-11-24T06:00:00Z",
         },
       ],
       meetings: [],
@@ -681,74 +762,79 @@ describe("Brew complete user experience", () => {
 
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: /Continue as Alice Chen/i }));
-    await screen.findByRole("heading", { level: 1, name: "Alex Morgan" });
 
-    fireEvent.click(screen.getByRole("button", { name: /Log Post-Meeting Notes/i }));
-    await screen.findByRole("heading", { level: 1, name: /Post-Meeting Notes & Review/i });
+    // Open Debrief via Clubhouse wrapped event CTA
+    fireEvent.click(await screen.findByRole("button", { name: /Capture Debrief/i }));
+    await screen.findByRole("heading", { level: 1, name: /How did it go with Alex/i });
 
     // Short notes validation error
-    fireEvent.change(screen.getByLabelText(/Meeting reflections/i), {
+    fireEvent.change(screen.getByLabelText(/Session reflections/i), {
       target: { value: "Too" },
     });
-    fireEvent.click(screen.getByRole("button", { name: /Propose Memory Candidates/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Suggest Keepsakes/i }));
     expect(
       await screen.findByText("Enter at least 5 characters of meeting notes."),
     ).toBeInTheDocument();
 
     // Submit realistic post-meeting notes
-    fireEvent.change(screen.getByLabelText(/Meeting reflections/i), {
+    fireEvent.change(screen.getByLabelText(/Session reflections/i), {
       target: {
         value:
           "We discussed his team's challenges adopting AI. I prefer having informal conversations with engineers.",
       },
     });
-    fireEvent.click(screen.getByRole("button", { name: /Propose Memory Candidates/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Suggest Keepsakes/i }));
 
-    expect(
-      await screen.findByText(/2 memory proposals staged for review/i),
-    ).toBeInTheDocument();
+    expect(await screen.findByText(/2 suggested keepsakes staged/i)).toBeInTheDocument();
     expect(screen.getByText(/Updates earlier AI adoption note/i)).toBeInTheDocument();
 
-    // Edit & approve first proposal
+    // Edit & Stamp Keep on first proposal
     const editButtons = screen.getAllByRole("button", { name: /^Edit$/i });
-    const firstEditBtn = editButtons[0];
-    expect(firstEditBtn).toBeDefined();
-    if (firstEditBtn) {
-      fireEvent.click(firstEditBtn);
+    const firstProposalEdit = editButtons[0];
+    expect(firstProposalEdit).toBeDefined();
+    if (firstProposalEdit) {
+      fireEvent.click(firstProposalEdit);
     }
-    const editBox = await screen.findByLabelText(/Edit memory text before saving/i);
+    const editBox = await screen.findByLabelText(/Edit keepsake/i);
     fireEvent.change(editBox, {
       target: { value: "Alex highlighted dataset curation as their top AI adoption hurdle." },
     });
-    fireEvent.click(screen.getByRole("button", { name: /Approve Edited Memory/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Save & Stamp Keep/i }));
+    expect(await screen.findByText(/Keepsake stamped to journal/i)).toBeInTheDocument();
 
-    expect(await screen.findByText("Memory approved")).toBeInTheDocument();
-
-    // Reject second proposal with reason
-    fireEvent.click(screen.getByRole("button", { name: /^Reject$/i }));
-    fireEvent.change(await screen.findByLabelText(/Optional rejection note/i), {
+    // Toss second proposal with optional reason
+    fireEvent.click(screen.getByRole("button", { name: /^Toss$/i }));
+    fireEvent.change(await screen.findByLabelText(/Optional reason to toss/i), {
       target: { value: "Already captured in profile." },
     });
-    fireEvent.click(screen.getByRole("button", { name: /Confirm Reject/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Confirm Toss/i }));
 
-    expect(await screen.findByText("Proposal rejected")).toBeInTheDocument();
-    expect(screen.getByText("No pending memory proposals")).toBeInTheDocument();
+    expect(await screen.findByText(/Keepsake tossed/i)).toBeInTheDocument();
+    expect(screen.getByText(/No keepsakes awaiting your stamp/i)).toBeInTheDocument();
 
-    // Verify approved memory in Relationship Memory vault, edit it, then delete it
-    fireEvent.click(screen.getByRole("button", { name: /^Relationship Memory/i }));
+    // Return to Clubhouse and open Relationship Journal -> verify keepsake, edit, and delete
+    fireEvent.click(screen.getByRole("button", { name: /Back to Clubhouse/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /Relationship Journal/i }));
+
     expect(
       await screen.findByText(
         "Alex highlighted dataset curation as their top AI adoption hurdle.",
       ),
     ).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: /^Edit$/i }));
-    fireEvent.change(await screen.findByLabelText(/Memory statement/i), {
+    const journalEditButtons = screen.getAllByRole("button", { name: /^Edit$/i });
+    const cardEditBtn = journalEditButtons.find((b) => b.id.startsWith("btn-edit-memory-"));
+    expect(cardEditBtn).toBeDefined();
+    if (cardEditBtn) {
+      fireEvent.click(cardEditBtn);
+    }
+
+    fireEvent.change(await screen.findByLabelText(/Keepsake statement/i), {
       target: { value: "Alex highlighted golden eval sets as their top AI adoption hurdle." },
     });
     fireEvent.click(screen.getByRole("button", { name: /^Save$/i }));
+
     await waitFor(() => {
-      expect(screen.queryByLabelText(/Memory statement/i)).not.toBeInTheDocument();
       expect(
         screen.getByText(
           "Alex highlighted golden eval sets as their top AI adoption hurdle.",
@@ -758,7 +844,9 @@ describe("Brew complete user experience", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /^Delete$/i }));
     fireEvent.click(await screen.findByRole("button", { name: /Confirm Delete/i }));
-    expect(await screen.findByText("No approved memories yet")).toBeInTheDocument();
+    expect(
+      await screen.findByText(/No keepsakes stamped for/i),
+    ).toBeInTheDocument();
   });
 
   it("clears expired session and returns to sign-in gate with alert on 401 TOKEN_EXPIRED", async () => {
@@ -813,18 +901,11 @@ describe("Brew complete user experience", () => {
       } satisfies AuthClientConfigResponse);
     });
 
-    try {
-      render(<App />);
-      await waitFor(() => {
-        expect(screen.getByText("Backend OK")).toBeInTheDocument();
-      });
-      await waitFor(() => {
-        expect(document.getElementById("btn-google-sign-in")).toBeNull();
-      });
-      const googleButtons = screen.getAllByRole("button", { name: /Continue with Google/i });
-      expect(googleButtons).toHaveLength(1);
-    } finally {
-      delete window.google;
-    }
+    render(<App />);
+    await waitFor(() => {
+      expect(document.getElementById("btn-google-sign-in")).toBeNull();
+    });
+    const googleButtons = screen.getAllByRole("button", { name: /Continue with Google/i });
+    expect(googleButtons).toHaveLength(1);
   });
 });

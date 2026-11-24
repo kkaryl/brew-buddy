@@ -7,6 +7,7 @@ from typing import Annotated
 from fastapi import Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
+from app.api.health import get_app_settings
 from app.application.brief_workflow import BriefWorkflowSafeguardConfig
 from app.application.memory_persistence_service import MemoryPersistenceService
 from app.application.memory_retrieval_service import MemoryRetrievalService
@@ -30,13 +31,13 @@ bearer_security = HTTPBearer(
 
 def get_service_container(request: Request) -> ServiceContainer:
     """Resolve the injected ``ServiceContainer`` attached to FastAPI application state."""
+    settings = get_app_settings(request)
     container: ServiceContainer | None = getattr(
         request.app.state,
         "service_container",
         None,
     )
     if container is None:
-        settings: AppSettings = getattr(request.app.state, "settings", None) or get_settings()
         container = build_service_container(settings)
         request.app.state.service_container = container
     return container

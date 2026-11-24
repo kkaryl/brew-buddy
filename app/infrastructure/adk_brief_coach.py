@@ -48,12 +48,16 @@ BRIEF_WORKFLOW_JSON_CONTRACT = """
 ## Structured Brief Workflow Output Contract
 You are executing inside Brew's automated Meeting Preparation Workflow.
 1. `contact`, `user_preferences`, `approved_preference_memories`, and `approved_contact_memories`
-   are ALREADY pre-loaded in the `BASELINE_GROUNDING_CONTEXT` JSON in this prompt—do NOT re-call
+   are ALREADY pre-loaded in the `BASELINE_GROUNDING_CONTEXT` JSON in this prompt; do NOT re-call
    `get_user_preferences` or `get_contact_context` when that context is already provided. Only call
    `get_meeting_history` if checking prior sessions for a returning contact is genuinely needed.
 2. If any tool returns `status="error"`, do NOT loop retries endlessly and NEVER invent missing
    history or biographical details.
-3. Return ONLY a single valid JSON object (no markdown commentary outside JSON) conforming to:
+3. Never use em-dashes in any generated text field (`contact_context`, `meeting_objective`,
+   `conversation_openers`, `time_boxed_agenda`, `suggested_questions`,
+   `suggested_follow_up_topics`, or `revision_summary`). Use periods, commas, colons, or middle
+   dots instead.
+4. Return ONLY a single valid JSON object (no markdown commentary outside JSON) conforming to:
    - `contact_context` (string, 3-2000 chars): Grounded counterpart summary using ONLY verified
      facts from the contact profile, retrieved memories, and meeting input. Never invent degrees,
      past employers, tenure, publications, or private characteristics.
