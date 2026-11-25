@@ -57,6 +57,13 @@ jobs:
       - name: Run strict mypy static type checks
         run: uv run mypy app tests/unit tests/integration
 
+      - name: Ensure ImageMagick is available for illustration cutout unit tests
+        run: |
+          if ! command -v magick >/dev/null 2>&1 && ! command -v convert >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends imagemagick
+          fi
+
       - name: Run deterministic Python unit tests
         env:
           APP_ENV: test

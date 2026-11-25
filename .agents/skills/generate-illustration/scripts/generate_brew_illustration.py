@@ -120,6 +120,29 @@ def generate_raw_image_bytes(
     raise RuntimeError(f"Model '{model}' returned no image bytes.")
 
 
+def resolve_imagemagick_binaries() -> tuple[str, list[str]]:
+    """Resolve ImageMagick 7 (`magick`) or ImageMagick 6 (`convert` + `identify`) binaries."""
+    magick_bin = shutil.which("magick") or (
+        "/usr/bin/magick" if Path("/usr/bin/magick").is_file() else None
+    )
+    if magick_bin is not None:
+        return magick_bin, [magick_bin, "identify"]
+
+    convert_bin = shutil.which("convert") or (
+        "/usr/bin/convert" if Path("/usr/bin/convert").is_file() else None
+    )
+    identify_bin = shutil.which("identify") or (
+        "/usr/bin/identify" if Path("/usr/bin/identify").is_file() else None
+    )
+    if convert_bin is not None and identify_bin is not None:
+        return convert_bin, [identify_bin]
+
+    raise RuntimeError(
+        "ImageMagick ('magick' or 'convert'/'identify') is required for "
+        "outer-margin alpha extraction."
+    )
+
+
 def extract_transparent_cutout_png(
     *,
     raw_path: Path,
@@ -130,9 +153,7 @@ def extract_transparent_cutout_png(
     preview_bg: str = "#FFE9DF",
 ) -> str:
     """Flood-fill outer white margin to alpha transparent, trim, pad, and optimize PNG."""
-    magick_bin = shutil.which("magick") or "/usr/bin/magick"
-    if not Path(magick_bin).exists():
-        raise RuntimeError("ImageMagick ('magick') is required for outer-margin alpha extraction.")
+    convert_bin, identify_cmd = resolve_imagemagick_binaries()
     if not raw_path.exists():
         raise FileNotFoundError(f"Raw image file not found: {raw_path}")
 
@@ -140,8 +161,9 @@ def extract_transparent_cutout_png(
 
     # Add a 4px pure-white perimeter first so (0,0) flood-fill wraps 360 degrees around the
     # outer canvas without ever touching enclosed interior whites (speech bubbles, laptop, teeth).
+    # `-floodfill +0+0 #FFFFFF` sets alpha=0 in both ImageMagick 6 (`convert`) and 7 (`magick`).
     cutout_cmd = [
-        magick_bin,
+        convert_bin,
         str(raw_path),
         "-bordercolor",
         "#FFFFFF",
@@ -153,8 +175,9 @@ def extract_transparent_cutout_png(
         f"{fuzz_percent}%",
         "-fill",
         "none",
-        "-draw",
-        "color 0,0 floodfill",
+        "-floodfill",
+        "+0+0",
+        "#FFFFFF",
         "-trim",
         "+repage",
         "-bordercolor",
@@ -171,7 +194,7 @@ def extract_transparent_cutout_png(
     if preview_out_path is not None:
         preview_out_path.parent.mkdir(parents=True, exist_ok=True)
         preview_cmd = [
-            magick_bin,
+            convert_bin,
             str(output_path),
             "-background",
             preview_bg,
@@ -184,7 +207,7 @@ def extract_transparent_cutout_png(
         subprocess.run(preview_cmd, check=True, timeout=30)
 
     identify = subprocess.run(
-        [magick_bin, "identify", str(output_path)],
+        [*identify_cmd, str(output_path)],
         check=True,
         capture_output=True,
         text=True,

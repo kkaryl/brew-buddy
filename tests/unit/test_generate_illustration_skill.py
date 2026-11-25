@@ -91,10 +91,24 @@ def test_print_prompt_only_cli_runs_offline(capsys: pytest.CaptureFixture[str]) 
     assert "Two friendly professionals sharing ideas at a pastel desk." in out
 
 
+def test_resolve_imagemagick_binaries_falls_back_to_im6_convert_and_identify(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify Ubuntu ImageMagick 6 (`convert` + `identify`) is accepted when `magick` is absent."""
+    mod = _load_skill_module()
+    fake_bins = {"convert": "/usr/bin/convert", "identify": "/usr/bin/identify"}
+    monkeypatch.setattr(shutil, "which", lambda name: fake_bins.get(name))
+    monkeypatch.setattr(Path, "is_file", lambda self: str(self) in fake_bins.values())
+
+    convert_bin, identify_cmd = mod.resolve_imagemagick_binaries()
+    assert convert_bin == "/usr/bin/convert"
+    assert identify_cmd == ["/usr/bin/identify"]
+
+
 def test_from_raw_alpha_cutout_preserves_enclosed_interior_white(tmp_path: Path) -> None:
     """Verify outer #FFFFFF margin becomes transparent while enclosed white speech bubble stays."""
-    magick_bin = shutil.which("magick") or "/usr/bin/magick"
-    assert Path(magick_bin).exists(), "ImageMagick is required for cutout verification"
+    mod = _load_skill_module()
+    convert_bin, identify_cmd = mod.resolve_imagemagick_binaries()
 
     raw_png = tmp_path / "synthetic-raw.png"
     out_png = tmp_path / "out" / "synthetic-cutout.png"
@@ -104,7 +118,7 @@ def test_from_raw_alpha_cutout_preserves_enclosed_interior_white(tmp_path: Path)
     # and an enclosed pure-white interior speech-bubble box (80,55 -> 120,85).
     subprocess.run(
         [
-            magick_bin,
+            convert_bin,
             "-size",
             "200x140",
             "xc:#FFFFFF",
@@ -122,7 +136,6 @@ def test_from_raw_alpha_cutout_preserves_enclosed_interior_white(tmp_path: Path)
         timeout=15,
     )
 
-    mod = _load_skill_module()
     exit_code = mod.main(
         [
             "--name",
@@ -146,7 +159,7 @@ def test_from_raw_alpha_cutout_preserves_enclosed_interior_white(tmp_path: Path)
     # Top-left corner (0,0) must have alpha == 0 (transparent), while center pixel (enclosed
     # white speech-bubble interior) must remain opaque white (alpha == 1).
     corner_alpha = subprocess.run(
-        [magick_bin, f"{out_png}[1x1+0+0]", "-format", "%[fx:a]", "info:"],
+        [convert_bin, f"{out_png}[1x1+0+0]", "-format", "%[fx:a]", "info:"],
         check=True,
         capture_output=True,
         text=True,
@@ -155,7 +168,7 @@ def test_from_raw_alpha_cutout_preserves_enclosed_interior_white(tmp_path: Path)
     assert float(corner_alpha) == 0.0
 
     dims = subprocess.run(
-        [magick_bin, "identify", "-format", "%w %h", str(out_png)],
+        [*identify_cmd, "-format", "%w %h", str(out_png)],
         check=True,
         capture_output=True,
         text=True,
@@ -164,7 +177,7 @@ def test_from_raw_alpha_cutout_preserves_enclosed_interior_white(tmp_path: Path)
     cx = int(dims[0]) // 2
     cy = int(dims[1]) // 2
     center_rgba = subprocess.run(
-        [magick_bin, f"{out_png}[1x1+{cx}+{cy}]", "-format", "%[fx:r] %[fx:a]", "info:"],
+        [convert_bin, f"{out_png}[1x1+{cx}+{cy}]", "-format", "%[fx:r] %[fx:a]", "info:"],
         check=True,
         capture_output=True,
         text=True,

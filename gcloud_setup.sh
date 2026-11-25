@@ -180,7 +180,7 @@ run_iam_cmd() {
     if err_output="$("$@" 2>&1)"; then
       return 0
     fi
-    if grep -Eqi "does not exist|not found|concurrent policy changes|aborted|try again|invalid_argument" <<<"${err_output}" \
+    if grep -Eqi "does not exist|may not exist|not found|concurrent policy changes|aborted|try again|invalid_argument" <<<"${err_output}" \
       && (( attempt < max_attempts )); then
       echo "  Waiting ${delay}s for Google Cloud IAM propagation (attempt ${attempt}/${max_attempts})..."
       sleep "${delay}"
