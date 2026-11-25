@@ -89,6 +89,14 @@ export function loadStoredSession(): StoredAuthSession | null {
         user_id: principal["user_id"],
         display_name:
           typeof principal["display_name"] === "string" ? principal["display_name"] : null,
+        custom_display_name:
+          typeof principal["custom_display_name"] === "string"
+            ? principal["custom_display_name"]
+            : null,
+        account_display_name:
+          typeof principal["account_display_name"] === "string"
+            ? principal["account_display_name"]
+            : null,
         auth_provider: principal["auth_provider"],
       },
     };

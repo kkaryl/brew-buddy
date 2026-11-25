@@ -590,4 +590,140 @@ describe("Brew v2 Design System, 3-Space Shell, Illustrations, Accessibility, an
     expect(closePill).toHaveTextContent("5m Next Steps and Cadence");
     expect(openerPill.parentElement?.style.gridTemplateColumns).toContain("minmax(0,");
   });
+
+  it("allows a Google-authenticated user to set a custom display name and revert to their Google account name", async () => {
+    let storedCustomName: string | null = null;
+    const mayaContact: ContactResponse = {
+      id: "cnt_maya",
+      name: "Maya Lin",
+      title: "Principal SRE",
+      role: "Peer",
+      organization: "CloudScale",
+      context_notes: null,
+      version: 1,
+      created_at: "2026-11-25T01:00:00Z",
+      updated_at: "2026-11-25T01:00:00Z",
+    };
+
+    window.google = {
+      accounts: {
+        oauth2: {
+          initTokenClient: (cfg) => ({
+            requestAccessToken: () => {
+              cfg.callback({ access_token: "oauth_test.valid_google_token", expires_in: 3600 });
+            },
+          }),
+        },
+      },
+    };
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const rawUrl =
+        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const path = new URL(rawUrl, "http://localhost").pathname;
+      const method = (init?.method ?? "GET").toUpperCase();
+
+      if (path === "/api/health") return jsonResponse(HEALTH_OK);
+      if (path === "/api/auth/config") {
+        return jsonResponse({
+          ...LOCAL_AUTH_CONFIG,
+          auth_mode: "verified",
+          local_mock_enabled: false,
+          google_sign_in_enabled: true,
+          google_oauth_client_id: "987654321-web.apps.googleusercontent.com",
+          mock_personas: [],
+        } satisfies AuthClientConfigResponse);
+      }
+      if (path === "/api/v1/auth/me" && method === "GET") {
+        return jsonResponse({
+          user_id: "google:112233445566",
+          display_name: storedCustomName ?? "Kary Long",
+          custom_display_name: storedCustomName,
+          account_display_name: "Kary Long",
+          auth_provider: "verified",
+        });
+      }
+      if (path === "/api/v1/auth/me" && method === "PATCH") {
+        const body = JSON.parse(String(init?.body ?? "{}")) as { display_name: string | null };
+        storedCustomName = body.display_name;
+        return jsonResponse({
+          user_id: "google:112233445566",
+          display_name: storedCustomName ?? "Kary Long",
+          custom_display_name: storedCustomName,
+          account_display_name: "Kary Long",
+          auth_provider: "verified",
+        });
+      }
+      if (path === "/api/v1/contacts") return jsonResponse({ items: [mayaContact], total: 1 });
+      if (path === "/api/v1/meetings") return jsonResponse({ items: [], total: 0 });
+      if (path === "/api/v1/memories/proposals") {
+        return jsonResponse({
+          proposals: [],
+          total: 0,
+          skipped_duplicates: 0,
+          filtered_sensitive_count: 0,
+        });
+      }
+      if (path === "/api/v1/memories") return jsonResponse({ items: [], total: 0 });
+      return jsonResponse({}, 404);
+    });
+
+    render(<App />);
+    const googleBtn = await screen.findByRole("button", { name: /Continue with Google/i });
+    await waitFor(() => {
+      expect(googleBtn).not.toBeDisabled();
+    });
+    fireEvent.click(googleBtn);
+
+    // Initially uses default Google account name "Kary Long"
+    expect(
+      await screen.findByRole("heading", { level: 1, name: /Coffee Chat: Kary <> Maya Lin/i }),
+    ).toBeInTheDocument();
+
+    // Open Account & Coaching Style folio via the top-right user avatar
+    fireEvent.click(
+      screen.getByRole("button", { name: /Account and coaching style for Kary Long/i }),
+    );
+    await screen.findByRole("heading", { name: /My Coaching Style \(Kary Long\)/i });
+
+    const nameInput = screen.getByLabelText(/Preferred name in Brew/i);
+    expect(nameInput).toHaveValue("Kary Long");
+
+    // Client-side validation rejects blank whitespace name
+    fireEvent.change(nameInput, { target: { value: "   " } });
+    fireEvent.click(screen.getByRole("button", { name: /^Save Name$/i }));
+    expect(
+      await screen.findByText("Enter a display name between 1 and 120 characters."),
+    ).toBeInTheDocument();
+
+    // Save custom name "Karina" -> updates header avatar, account folio, and Clubhouse hero
+    fireEvent.change(nameInput, { target: { value: "Karina" } });
+    fireEvent.click(screen.getByRole("button", { name: /^Save Name$/i }));
+
+    expect(await screen.findByText("Display name updated")).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: /My Coaching Style \(Karina\)/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Account and coaching style for Karina/i }),
+    ).toBeInTheDocument();
+
+    const primaryNav = screen.getByRole("navigation", { name: /^Primary navigation$/i });
+    fireEvent.click(within(primaryNav).getByRole("button", { name: /^Clubhouse$/i }));
+    expect(
+      await screen.findByRole("heading", { level: 1, name: /Coffee Chat: Karina <> Maya Lin/i }),
+    ).toBeInTheDocument();
+
+    // Revert back to default Google account name
+    fireEvent.click(
+      screen.getByRole("button", { name: /Account and coaching style for Karina/i }),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Use Google name \(Kary Long\)/i }),
+    );
+    expect(await screen.findByText("Reverted to Google account name")).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: /My Coaching Style \(Kary Long\)/i }),
+    ).toBeInTheDocument();
+  });
 });

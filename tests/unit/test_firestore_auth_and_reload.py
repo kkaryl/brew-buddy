@@ -22,6 +22,8 @@ from app.composition.builders import build_service_container
 from app.config import AppSettings
 from app.domain.shared.errors import PersistenceOperationError
 from app.infrastructure.firestore.contacts import FirestoreContactRepository
+from app.infrastructure.firestore.operations import serialize_domain_model
+from app.infrastructure.firestore.preferences import FirestoreUserPreferencesRepository
 
 
 class _ExpiredAdcCredentials(Credentials):
@@ -167,3 +169,51 @@ def test_env_and_adc_update_rebuilds_container_and_preserves_mock_sessions(
     assert contacts_resp.status_code == 200
     assert contacts_resp.json()["items"] == []
     assert app.state.service_container is not initial_container
+
+
+@pytest.mark.asyncio
+async def test_firestore_user_preferences_repository_round_trips_preferred_display_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from datetime import UTC, datetime
+
+    from app.domain.memory.models import UserPreferences
+
+    monkeypatch.setenv("FIRESTORE_EMULATOR_HOST", "127.0.0.1:8085")
+    t0 = datetime(2026, 11, 25, 15, 0, 0, tzinfo=UTC)
+    prefs = UserPreferences(
+        id="default",
+        owner_user_id="google:112233",
+        preferred_display_name="Karina",
+        created_at=t0,
+        updated_at=t0,
+        version=1,
+    )
+    serialized = serialize_domain_model(prefs)
+    assert serialized["preferred_display_name"] == "Karina"
+
+    snap = MagicMock()
+    snap.exists = True
+    snap.to_dict.return_value = serialized
+
+    async def _doc_get() -> Any:
+        return snap
+
+    doc_ref = MagicMock()
+    doc_ref.get = _doc_get
+    subcoll_ref = MagicMock()
+    subcoll_ref.document.return_value = doc_ref
+    client = MagicMock()
+    client.collection.return_value.document.return_value.collection.return_value = subcoll_ref
+
+    repo = FirestoreUserPreferencesRepository(client, timeout_seconds=2.0)
+    loaded = await repo.get_by_owner("google:112233")
+    assert loaded is not None
+    assert loaded.preferred_display_name == "Karina"
+
+    # Legacy documents without preferred_display_name still deserialize cleanly with None
+    legacy_payload = {k: v for k, v in serialized.items() if k != "preferred_display_name"}
+    snap.to_dict.return_value = legacy_payload
+    legacy_loaded = await repo.get_by_owner("google:112233")
+    assert legacy_loaded is not None
+    assert legacy_loaded.preferred_display_name is None

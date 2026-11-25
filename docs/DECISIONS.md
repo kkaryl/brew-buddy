@@ -377,3 +377,18 @@ This document records significant architectural and technical decisions for **Br
 - **Consequences:**
   - *Positive:* A change to what may be staged, or to what context a brief sees, is made once. Tests of context now exercise the code production runs.
   - *Trade-off:* The two staging callers still differ on purpose (decision 3), so a reader has to know that the difference is policy and not drift. `tests/unit/test_memory_candidate_staging.py` pins both the shared rules and the intended differences.
+
+---
+
+## ADR-026: User-Configurable Custom Display Name Persisted in `UserPreferences`
+
+- **Date:** 2026-11-25
+- **Status:** Accepted
+- **Context:** Authenticated users previously had to use the default `name` (or email local-part) claim extracted from their Google OAuth / Firebase / IAP token across the Clubhouse header, avatar, Relationship Journal folio, and calendar invite matching. Users often go by a preferred first name or nickname in coffee chats rather than their formal Google corporate directory name.
+- **Decision:**
+  1. Persist an optional `preferred_display_name: ShortLabelText | None` on `UserPreferences` (`users/{uid}/preferences/default`), enforcing PII scrubbing, prompt-injection rejection, em-dash normalization, and optimistic version checks via `MemoryMaintenance.update_preferred_display_name`.
+  2. Expose `PATCH /api/v1/auth/me` (`UpdateAuthenticatedProfileRequest`) alongside `GET /api/v1/auth/me`, returning `display_name` (the effective name), `custom_display_name` (when overridden), and `account_display_name` (the underlying identity-provider name so users can reset cleanly with `{"display_name": null}`). If reading preferences degrades during `GET /api/v1/auth/me`, fall back gracefully to the token's `display_name`.
+  3. Match both `display_name` and `account_display_name` as self-identifiers during Google Calendar and `.ics` counterpart parsing so invites titled with the user's Google account name still identify the counterpart after a custom Brew name is set.
+- **Consequences:**
+  - *Positive:* Custom display names persist across sessions and devices in Firestore without introducing a new collection, preserve full backwards compatibility with existing `UserPreferences` documents, and allow one-click reversion to the Google account name.
+  - *Trade-off:* `GET /api/v1/auth/me` performs one bounded per-user preference lookup (`users/{uid}/preferences/default`) to resolve any custom override.

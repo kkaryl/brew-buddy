@@ -45,6 +45,17 @@ You are executing inside Brew's automated Meeting Preparation Workflow.
 def _format_baseline_context_payload(context: BriefPreparationContext) -> dict[str, object]:
     """Serialize verified pre-brief context as untrusted structured data for grounding."""
     prefs = context.user_preferences
+    prefs_payload: dict[str, object] | None = None
+    if prefs is not None:
+        prefs_payload = {
+            "default_tone": prefs.default_tone.value,
+            "default_duration_minutes": prefs.default_duration_minutes,
+            "preferred_question_count": prefs.preferred_question_count,
+            "communication_style_notes": prefs.communication_style_notes,
+            "focus_areas": list(prefs.focus_areas),
+        }
+        if prefs.preferred_display_name is not None:
+            prefs_payload["preferred_display_name"] = prefs.preferred_display_name
     return {
         "data_trust_level": "untrusted_user_data",
         "contact": {
@@ -55,17 +66,7 @@ def _format_baseline_context_payload(context: BriefPreparationContext) -> dict[s
             "organization": context.contact.organization,
             "context_notes": context.contact.context_notes,
         },
-        "user_preferences": (
-            {
-                "default_tone": prefs.default_tone.value,
-                "default_duration_minutes": prefs.default_duration_minutes,
-                "preferred_question_count": prefs.preferred_question_count,
-                "communication_style_notes": prefs.communication_style_notes,
-                "focus_areas": list(prefs.focus_areas),
-            }
-            if prefs is not None
-            else None
-        ),
+        "user_preferences": prefs_payload,
         "approved_preference_memories": [
             {
                 "memory_id": item.memory_id,

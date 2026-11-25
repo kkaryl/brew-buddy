@@ -125,7 +125,7 @@ Brew avoids thick or harsh black shadows in favor of diffused lavender and warm-
 Brew v2 organizes browsing around **three primary spaces**:
 1. **Clubhouse** (`ClubhouseScreen`): Calendar-aware Up-Next Coffee Chat hero, Quick Spark natural-language prompt bar, read-only Google Calendar / `.ics` upcoming & wrapped chat feed (`from GCal`), Keepsakes to Stamp card, and Warm Reconnect nudge.
 2. **Cue Studio** (`CueStudioScreen`): Proportional Run-of-Show pacing ribbon, warm icebreakers, 2x2 star-able Cue Cards (`Starred` for Pocket Glance), immutable `v1`/`v2` revision switcher, and sticky lavender `Tune on the fly` Brief Co-Pilot.
-3. **Relationship Journal** (`RelationshipJournalScreen`): Two-column Relationship Atlas pairing Counterpart Folios (approved keepsakes, earlier-notes toggle, and conversation timeline) with `My Coaching Style` defaults, calendar sync settings, and runtime health.
+3. **Relationship Journal** (`RelationshipJournalScreen`): Two-column Relationship Atlas pairing Counterpart Folios (approved keepsakes, earlier-notes toggle, and conversation timeline) with `My Coaching Style` defaults, custom display name override (with one-click reset to the default Google account name), calendar sync settings, and runtime health.
 
 - **Desktop / Tablet (`TopBarShell`)**: Sticky off-white bar with `BrewLogo` (`"brew."`) on the left, centered 3-space segmented pill (`#FFE9DE` active indicator + coral pending-keepsakes badge), `+ Quick Spark` coral pill CTA, and circular `#E9DFFC` user initial avatar on the right.
 - **Mobile (`MobileDock`)**: Floating pill dock (`Clubhouse`, `Studio`, `Journal`) paired with a circular `#EF8B70` coral `+` Quick Spark action button.

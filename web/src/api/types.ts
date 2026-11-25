@@ -104,7 +104,13 @@ export interface AuthClientConfigResponse {
 export interface AuthenticatedPrincipalResponse {
   readonly user_id: string;
   readonly display_name: string | null;
+  readonly custom_display_name?: string | null | undefined;
+  readonly account_display_name?: string | null | undefined;
   readonly auth_provider: string;
+}
+
+export interface UpdateAuthenticatedProfileRequest {
+  readonly display_name: string | null;
 }
 
 export interface MockSessionResponse {

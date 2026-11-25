@@ -67,6 +67,8 @@ def estimate_contact_and_prefs_chars(
         if optional_field:
             total += len(optional_field)
     if preferences is not None:
+        if preferences.preferred_display_name:
+            total += len(preferences.preferred_display_name)
         if preferences.communication_style_notes:
             total += len(preferences.communication_style_notes)
         total += sum(len(area) for area in preferences.focus_areas)
@@ -125,6 +127,17 @@ class MemoryRetrievalService:
     @property
     def default_budget(self) -> ContextBudget:
         return self._default_budget
+
+    async def get_user_preferences(
+        self,
+        *,
+        principal: AuthenticatedPrincipal,
+    ) -> UserPreferences | None:
+        """Return saved preferences strictly owned by ``principal``, or ``None`` if unset."""
+        prefs = await self._preferences_repo.get_by_owner(principal.user_id)
+        if prefs is not None and prefs.owner_user_id != principal.user_id:
+            raise AuthorizationError()
+        return prefs
 
     async def list_memories(
         self,

@@ -34,6 +34,7 @@ import type {
   ProposeMemoriesRequest,
   RejectMemoryProposalRequest,
   ReviseBriefRequest,
+  UpdateAuthenticatedProfileRequest,
   UpdateMemoryRequest,
 } from "./types";
 
@@ -326,6 +327,16 @@ export class BrewApiClient {
         ? { method: "GET" as const, requiresAuth: true, explicitBearerToken }
         : { method: "GET" as const, requiresAuth: true };
     return this.requestJson<AuthenticatedPrincipalResponse>("/api/v1/auth/me", reqInit);
+  }
+
+  public updateCurrentPrincipal(
+    payload: UpdateAuthenticatedProfileRequest,
+  ): Promise<AuthenticatedPrincipalResponse> {
+    return this.requestJson<AuthenticatedPrincipalResponse>("/api/v1/auth/me", {
+      method: "PATCH",
+      requiresAuth: true,
+      body: payload,
+    });
   }
 
   public listContacts(): Promise<ContactListResponse> {

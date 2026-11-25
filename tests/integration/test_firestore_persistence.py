@@ -265,6 +265,7 @@ async def test_firestore_document_paths_optimistic_locking_and_multi_user_isolat
         # 1. Persist preferences -> users/{uid}/preferences/default
         saved_prefs = await persistence_service.upsert_user_preferences(
             principal=alice,
+            preferred_display_name="Ally",
             preferred_question_count=4,
             communication_style_notes="Warm, concise coaching prompts.",
             focus_areas=["leadership", "architecture"],
@@ -273,6 +274,7 @@ async def test_firestore_document_paths_optimistic_locking_and_multi_user_isolat
         assert raw_pref_snap.exists
         raw_pref_dict = raw_pref_snap.to_dict()
         assert raw_pref_dict is not None
+        assert raw_pref_dict["preferred_display_name"] == "Ally"
         assert raw_pref_dict["preferred_question_count"] == 4
         assert saved_prefs.version == 1
 

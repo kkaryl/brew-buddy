@@ -75,7 +75,7 @@ export function classifyTemporalStatus(
 
 export function extractCounterpartDetails(
   summary: string,
-  selfDisplayName?: string | null,
+  selfDisplayName?: string | readonly string[] | null,
 ): {
   readonly counterpartName: string;
   readonly counterpartOrganization: string | null;
@@ -96,14 +96,28 @@ export function extractCounterpartDetails(
   const pairParts = body.split(/\s*(?:<>|<->|\/|\+|&|\bwith\b)\s*/i).map((p) => p.trim()).filter(Boolean);
   let chosenName = body;
   if (pairParts.length >= 2) {
-    const selfFirst = (selfDisplayName ?? "").trim().split(/\s+/)[0]?.toLowerCase() ?? "";
-    const selfFull = (selfDisplayName ?? "").trim().toLowerCase();
+    const rawNames = Array.isArray(selfDisplayName)
+      ? selfDisplayName
+      : typeof selfDisplayName === "string"
+        ? [selfDisplayName]
+        : [];
+    const selfCandidates = rawNames
+      .map((name) => name.trim().toLowerCase())
+      .filter((name) => name.length > 0)
+      .map((full) => ({
+        full,
+        first: full.split(/\s+/)[0] ?? "",
+      }));
     const other = pairParts.find((part) => {
       const lower = part.toLowerCase();
-      if (!selfFirst) {
+      if (selfCandidates.length === 0) {
         return true;
       }
-      return lower !== selfFull && lower !== selfFirst && !lower.startsWith(`${selfFirst} `);
+      return !selfCandidates.some(
+        (self) =>
+          lower === self.full ||
+          (self.first.length > 0 && (lower === self.first || lower.startsWith(`${self.first} `))),
+      );
     });
     chosenName = other ?? pairParts[pairParts.length - 1] ?? body;
   }
@@ -169,9 +183,9 @@ function unescapeIcsText(value: string): string {
 export function parseIcsCalendarEvents(
   rawIcs: string,
   options?: {
-    readonly nowMs?: number;
-    readonly selfDisplayName?: string | null;
-    readonly source?: CalendarEventSource;
+    readonly nowMs?: number | undefined;
+    readonly selfDisplayName?: string | readonly string[] | null | undefined;
+    readonly source?: CalendarEventSource | undefined;
   },
 ): CalendarCoffeeChatEvent[] {
   const nowMs = options?.nowMs ?? Date.now();

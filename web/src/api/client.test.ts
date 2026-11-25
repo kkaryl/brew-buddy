@@ -459,4 +459,36 @@ describe("BrewApiClient memory extraction jobs", () => {
       `GET ${JOB_PATH}`,
     ]);
   });
+
+  it("updates and persists custom principal display name via PATCH /api/v1/auth/me and session storage", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const rawUrl =
+        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const path = new URL(rawUrl, "http://localhost").pathname;
+      const method = (init?.method ?? "GET").toUpperCase();
+      expect(path).toBe("/api/v1/auth/me");
+      expect(method).toBe("PATCH");
+      const body = JSON.parse(String(init?.body ?? "{}")) as { display_name: string | null };
+      return jsonResponse({
+        user_id: "usr_alice",
+        display_name: body.display_name ?? "Alice Chen",
+        custom_display_name: body.display_name,
+        account_display_name: "Alice Chen",
+        auth_provider: "verified",
+      });
+    });
+
+    const client = createClient();
+    const updated = await client.updateCurrentPrincipal({ display_name: "Ally" });
+    expect(updated).toEqual({
+      user_id: "usr_alice",
+      display_name: "Ally",
+      custom_display_name: "Ally",
+      account_display_name: "Alice Chen",
+      auth_provider: "verified",
+    });
+
+    saveStoredSession({ ...SESSION, principal: updated });
+    expect(loadStoredSession()?.principal).toEqual(updated);
+  });
 });

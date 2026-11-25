@@ -25,6 +25,24 @@ from app.domain.shared.errors import (
 logger = logging.getLogger(__name__)
 
 
+def _validate_custom_display_name(raw_name: str) -> str:
+    normalized = raw_name.replace("\u2014", "-").strip()
+    if not normalized:
+        raise DomainValidationError("Display name must not be empty.")
+    if len(normalized) > 120:
+        raise DomainValidationError("Display name must be 120 characters or fewer.")
+    sanitized = sanitize_untrusted_text(normalized, max_chars=120)
+    if sanitized.injection_detected:
+        raise DomainValidationError(
+            "Display name contains disallowed instruction-override directives."
+        )
+    if sanitized.pii_redacted:
+        raise DomainValidationError(
+            "Display name cannot contain email addresses, phone numbers, or sensitive IDs."
+        )
+    return sanitized.text
+
+
 class MemoryMaintenance:
     """Upserts user preferences and updates or deletes approved memories."""
 
@@ -43,6 +61,8 @@ class MemoryMaintenance:
         self,
         *,
         principal: AuthenticatedPrincipal,
+        preferred_display_name: str | None = None,
+        clear_preferred_display_name: bool = False,
         default_tone: MeetingTone | None = None,
         default_duration_minutes: int | None = None,
         preferred_question_count: int | None = None,
@@ -54,11 +74,18 @@ class MemoryMaintenance:
         now = self._clock.now_utc()
         stored = await self._preferences_repo.get_by_owner(uid)
 
+        cleaned_display_name: str | None = None
+        if not clear_preferred_display_name and preferred_display_name is not None:
+            cleaned_display_name = _validate_custom_display_name(preferred_display_name)
+
         try:
             if stored is None:
                 prefs = UserPreferences(
                     id="default",
                     owner_user_id=uid,
+                    preferred_display_name=(
+                        None if clear_preferred_display_name else cleaned_display_name
+                    ),
                     default_tone=default_tone or MeetingTone.WARM_CASUAL,
                     default_duration_minutes=default_duration_minutes or 30,
                     preferred_question_count=(
@@ -72,9 +99,19 @@ class MemoryMaintenance:
                 )
                 return await self._preferences_repo.save(prefs)
 
+            resolved_display_name = (
+                None
+                if clear_preferred_display_name
+                else (
+                    cleaned_display_name
+                    if cleaned_display_name is not None
+                    else stored.preferred_display_name
+                )
+            )
             updated = UserPreferences(
                 id=stored.id,
                 owner_user_id=uid,
+                preferred_display_name=resolved_display_name,
                 default_tone=(default_tone if default_tone is not None else stored.default_tone),
                 default_duration_minutes=(
                     default_duration_minutes
@@ -100,6 +137,38 @@ class MemoryMaintenance:
             raise translate_pydantic_error(exc) from exc
 
         return await self._preferences_repo.save(updated, expected_version=stored.version)
+
+    async def update_preferred_display_name(
+        self,
+        *,
+        principal: AuthenticatedPrincipal,
+        display_name: str | None,
+    ) -> UserPreferences | None:
+        """Set or clear the caller's custom display name override."""
+        uid = principal.user_id
+        if display_name is None:
+            stored = await self._preferences_repo.get_by_owner(uid)
+            if stored is None or stored.preferred_display_name is None:
+                return stored
+            saved = await self.upsert_user_preferences(
+                principal=principal,
+                clear_preferred_display_name=True,
+            )
+            logger.info(
+                "Cleared custom user display name",
+                extra={"event_type": "user.display_name.cleared"},
+            )
+            return saved
+
+        saved = await self.upsert_user_preferences(
+            principal=principal,
+            preferred_display_name=display_name,
+        )
+        logger.info(
+            "Updated custom user display name",
+            extra={"event_type": "user.display_name.updated"},
+        )
+        return saved
 
     async def update_memory(
         self,

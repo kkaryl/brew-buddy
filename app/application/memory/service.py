@@ -6,7 +6,7 @@ from app.application.memory.persistence import MemoryPersistenceService
 from app.application.memory.proposals import MemoryProposalBatchResult
 from app.application.memory.retrieval import MemoryRetrievalService
 from app.domain.identity.models import AuthenticatedPrincipal
-from app.domain.memory.models import Memory, MemoryProposal
+from app.domain.memory.models import Memory, MemoryProposal, UserPreferences
 from app.domain.memory.types import (
     ConsentStatus,
     MemoryScope,
@@ -35,6 +35,24 @@ class MemoryService:
     @property
     def persistence(self) -> MemoryPersistenceService:
         return self._persistence
+
+    async def get_user_preferences(
+        self,
+        *,
+        principal: AuthenticatedPrincipal,
+    ) -> UserPreferences | None:
+        return await self._retrieval.get_user_preferences(principal=principal)
+
+    async def update_preferred_display_name(
+        self,
+        *,
+        principal: AuthenticatedPrincipal,
+        display_name: str | None,
+    ) -> UserPreferences | None:
+        return await self._persistence.update_preferred_display_name(
+            principal=principal,
+            display_name=display_name,
+        )
 
     async def propose_memories_batch(
         self,

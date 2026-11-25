@@ -88,6 +88,14 @@ class AuthSessionPrincipalResponse(BaseModel):
 
     user_id: str = Field(description="Canonical isolated user identifier.")
     display_name: str | None = Field(default=None, description="Display name for UI chrome.")
+    custom_display_name: str | None = Field(
+        default=None,
+        description="Custom display name chosen by the user, if set.",
+    )
+    account_display_name: str | None = Field(
+        default=None,
+        description="Default display name from the persona or identity provider.",
+    )
     auth_provider: Literal["verified", "local_mock"] = Field(
         description="Originating identity provider tier.",
     )
@@ -159,7 +167,7 @@ def get_auth_config(
     status_code=status.HTTP_201_CREATED,
     include_in_schema=False,
 )
-def create_local_mock_session(
+async def create_local_mock_session(
     settings: Annotated[AppSettings, Depends(get_app_settings)],
     container: Annotated[ServiceContainer, Depends(get_service_container)],
     payload: Annotated[CreateMockSessionRequest | None, Body()] = None,
@@ -180,12 +188,21 @@ def create_local_mock_session(
 
     resolved_payload = payload or CreateMockSessionRequest()
     issued = authenticator.issue_local_mock_session(resolved_payload.persona_id)
+    prefs = await container.preferences_repo.get_by_owner(issued.principal.user_id)
+    custom_name = (
+        prefs.preferred_display_name
+        if prefs is not None and prefs.owner_user_id == issued.principal.user_id
+        else None
+    )
+    effective_name = custom_name if custom_name is not None else issued.principal.display_name
     return MockSessionResponse(
         access_token=issued.access_token,
         expires_at=issued.expires_at,
         principal=AuthSessionPrincipalResponse(
             user_id=issued.principal.user_id,
-            display_name=issued.principal.display_name,
+            display_name=effective_name,
+            custom_display_name=custom_name,
+            account_display_name=issued.principal.display_name,
             auth_provider="local_mock",
         ),
     )

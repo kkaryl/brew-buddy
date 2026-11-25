@@ -84,8 +84,8 @@ export async function requestGoogleCalendarReadOnlyToken(clientId: string): Prom
 export async function fetchReadOnlyGoogleCalendarEvents(
   accessToken: string,
   options?: {
-    readonly nowMs?: number;
-    readonly selfDisplayName?: string | null;
+    readonly nowMs?: number | undefined;
+    readonly selfDisplayName?: string | readonly string[] | null | undefined;
   },
 ): Promise<CalendarCoffeeChatEvent[]> {
   const nowMs = options?.nowMs ?? Date.now();

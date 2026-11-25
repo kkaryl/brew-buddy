@@ -126,6 +126,8 @@ def test_deployed_environment_disables_mock_sessions_and_requires_verified_jwt(
         assert me_resp.json() == {
             "user_id": "firebase:fb_user_99",
             "display_name": "Verified Priya",
+            "custom_display_name": None,
+            "account_display_name": "Verified Priya",
             "auth_provider": "verified",
         }
 
@@ -281,6 +283,46 @@ def test_google_oauth_client_id_quote_cleaning_and_popup_access_token_verificati
         assert me_resp.json() == {
             "user_id": "google:112233445566",
             "display_name": "Kary Long",
+            "custom_display_name": None,
+            "account_display_name": "Kary Long",
+            "auth_provider": "verified",
+        }
+
+        # Logged-in Google user can customize their display name and reset it to default
+        set_name_resp = client.patch(
+            "/api/v1/auth/me",
+            headers={"Authorization": f"Bearer {valid_test_oauth_token}"},
+            json={"display_name": "Karina"},
+        )
+        assert set_name_resp.status_code == 200
+        assert set_name_resp.json() == {
+            "user_id": "google:112233445566",
+            "display_name": "Karina",
+            "custom_display_name": "Karina",
+            "account_display_name": "Kary Long",
+            "auth_provider": "verified",
+        }
+
+        me_after_set = client.get(
+            "/api/v1/auth/me",
+            headers={"Authorization": f"Bearer {valid_test_oauth_token}"},
+        )
+        assert me_after_set.status_code == 200
+        assert me_after_set.json()["display_name"] == "Karina"
+        assert me_after_set.json()["custom_display_name"] == "Karina"
+        assert me_after_set.json()["account_display_name"] == "Kary Long"
+
+        reset_name_resp = client.patch(
+            "/api/v1/auth/me",
+            headers={"Authorization": f"Bearer {valid_test_oauth_token}"},
+            json={"display_name": None},
+        )
+        assert reset_name_resp.status_code == 200
+        assert reset_name_resp.json() == {
+            "user_id": "google:112233445566",
+            "display_name": "Kary Long",
+            "custom_display_name": None,
+            "account_display_name": "Kary Long",
             "auth_provider": "verified",
         }
 
@@ -413,6 +455,8 @@ def test_deployed_adk_and_memory_routes_enforce_auth_ownership_and_hitl_governan
         assert iap_me.json() == {
             "user_id": "iap:99887766",
             "display_name": "iap-user",
+            "custom_display_name": None,
+            "account_display_name": "iap-user",
             "auth_provider": "verified",
         }
 

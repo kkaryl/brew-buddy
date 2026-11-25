@@ -100,12 +100,36 @@
       },
       "AuthenticatedPrincipalResponse": {
         "additionalProperties": false,
-        "description": "Serialized authenticated caller profile returned by ``GET /api/v1/auth/me``.",
+        "description": "Serialized authenticated caller profile returned by ``GET/PATCH /api/v1/auth/me``.",
         "properties": {
+          "account_display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Default display name supplied by the Google or local identity provider.",
+            "title": "Account Display Name"
+          },
           "auth_provider": {
             "description": "Authentication provider tier ('verified' or 'local_mock').",
             "title": "Auth Provider",
             "type": "string"
+          },
+          "custom_display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Custom display name chosen by the user, or null when using the default name.",
+            "title": "Custom Display Name"
           },
           "display_name": {
             "anyOf": [
@@ -116,7 +140,7 @@
                 "type": "null"
               }
             ],
-            "description": "Human-readable display name when present.",
+            "description": "Effective human-readable display name (custom user name when set, otherwise the default Google or identity provider name).",
             "title": "Display Name"
           },
           "user_id": {
@@ -1780,6 +1804,31 @@
         "title": "ReviseBriefRequest",
         "type": "object"
       },
+      "UpdateAuthenticatedProfileRequest": {
+        "additionalProperties": false,
+        "description": "Request payload for ``PATCH /api/v1/auth/me``.",
+        "properties": {
+          "display_name": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Custom display name (1 to 120 characters) to use instead of the default Google account name, or null to revert to the default account name.",
+            "title": "Display Name"
+          }
+        },
+        "required": [
+          "display_name"
+        ],
+        "title": "UpdateAuthenticatedProfileRequest",
+        "type": "object"
+      },
       "UpdateMemoryRequest": {
         "additionalProperties": false,
         "description": "Request payload for ``PATCH /api/v1/memories/{id}``.",
@@ -1927,7 +1976,7 @@
     },
     "/api/v1/auth/me": {
       "get": {
-        "description": "Verify the caller's Bearer token and return the resolved identity boundary.",
+        "description": "Verify the caller's Bearer token and return the resolved identity and custom display name.",
         "operationId": "get_authenticated_me_api_v1_auth_me_get",
         "responses": {
           "200": {
@@ -2027,6 +2076,121 @@
           }
         ],
         "summary": "Inspect the authenticated user principal",
+        "tags": [
+          "auth"
+        ]
+      },
+      "patch": {
+        "description": "Persist a custom display name override (or clear it when null) for the signed-in user.",
+        "operationId": "update_authenticated_me_api_v1_auth_me_patch",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateAuthenticatedProfileRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthenticatedPrincipalResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Missing, malformed, or invalid Bearer authentication credentials."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Authenticated user does not own the target resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Requested resource does not exist."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Optimistic concurrency version conflict or invalid lifecycle transition."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Request schema, domain invariant, or model output validation failure."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Coaching model execution or invocation budget failure."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Persistence backend unavailable."
+          },
+          "504": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Coaching model request deadline exceeded."
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Set or reset the authenticated user's custom display name",
         "tags": [
           "auth"
         ]

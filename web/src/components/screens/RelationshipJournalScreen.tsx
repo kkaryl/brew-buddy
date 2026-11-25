@@ -11,6 +11,7 @@ import {
 import { useEffect, useState, type ChangeEvent, type FormEvent, type JSX } from "react";
 import type { HealthPayload } from "../../api/health";
 import type {
+  AuthenticatedPrincipalResponse,
   ContactResponse,
   MeetingResponse,
   MeetingTone,
@@ -53,6 +54,8 @@ export type JournalFolioSelection =
 
 export interface RelationshipJournalScreenProps {
   readonly userDisplayName: string;
+  readonly customDisplayName?: string | null | undefined;
+  readonly accountDisplayName?: string | null | undefined;
   readonly userId: string;
   readonly isLocalMock: boolean;
   readonly contacts: readonly ContactResponse[];
@@ -80,6 +83,7 @@ export interface RelationshipJournalScreenProps {
   readonly onUpdateMemory: (memoryId: string, payload: UpdateMemoryRequest) => Promise<MemoryResponse>;
   readonly onDeleteMemory: (memoryId: string, expectedVersion: number) => Promise<void>;
   readonly onSaveStyleDefaults: (next: CoachingStyleDefaults) => void;
+  readonly onUpdateDisplayName?: ((displayName: string | null) => Promise<AuthenticatedPrincipalResponse>) | undefined;
   readonly onConnectGoogleCalendar: () => Promise<void>;
   readonly onImportIcsText: (icsText: string) => void;
   readonly onClearCalendarEvents: () => void;
@@ -91,6 +95,8 @@ const AVATAR_TONES = ["mint", "peach", "yellow", "lavender"] as const;
 
 export function RelationshipJournalScreen({
   userDisplayName,
+  customDisplayName = null,
+  accountDisplayName = null,
   userId,
   isLocalMock,
   contacts,
@@ -115,6 +121,7 @@ export function RelationshipJournalScreen({
   onUpdateMemory,
   onDeleteMemory,
   onSaveStyleDefaults,
+  onUpdateDisplayName,
   onConnectGoogleCalendar,
   onImportIcsText,
   onClearCalendarEvents,
@@ -138,6 +145,14 @@ export function RelationshipJournalScreen({
     styleDefaults.defaultStyleNotes,
   );
   const [savedDefaultsNotice, setSavedDefaultsNotice] = useState(false);
+
+  const [displayNameInput, setDisplayNameInput] = useState<string>(
+    customDisplayName ?? userDisplayName,
+  );
+  const [displayNameError, setDisplayNameError] = useState<string | null>(null);
+  const [savingDisplayName, setSavingDisplayName] = useState(false);
+  const [savedDisplayNameNotice, setSavedDisplayNameNotice] = useState<string | null>(null);
+
   const [feedback, setFeedback] = useState<FeedbackNotice | null>(null);
 
   useEffect(() => {
@@ -155,6 +170,10 @@ export function RelationshipJournalScreen({
     setDefaultTone(styleDefaults.defaultTone);
     setDefaultStyleNotes(styleDefaults.defaultStyleNotes);
   }, [styleDefaults]);
+
+  useEffect(() => {
+    setDisplayNameInput(customDisplayName ?? userDisplayName);
+  }, [customDisplayName, userDisplayName]);
 
   const userFirstName = userDisplayName.trim().split(/\s+/)[0] || "You";
   const normalizedQuery = searchQuery.trim().toLowerCase();
@@ -218,6 +237,53 @@ export function RelationshipJournalScreen({
       defaultStyleNotes: defaultStyleNotes.trim(),
     });
     setSavedDefaultsNotice(true);
+  };
+
+  const handleSaveDisplayName = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
+    event.preventDefault();
+    if (!onUpdateDisplayName) {
+      return;
+    }
+    const cleaned = displayNameInput.replace(/\u2014/g, "-").trim();
+    if (cleaned.length < 1 || cleaned.length > 120) {
+      setDisplayNameError("Enter a display name between 1 and 120 characters.");
+      setSavedDisplayNameNotice(null);
+      return;
+    }
+    setDisplayNameError(null);
+    setSavedDisplayNameNotice(null);
+    setFeedback(null);
+    setSavingDisplayName(true);
+    try {
+      const updated = await onUpdateDisplayName(cleaned);
+      setDisplayNameInput(updated.custom_display_name ?? updated.display_name ?? cleaned);
+      setSavedDisplayNameNotice("Display name updated");
+    } catch (err: unknown) {
+      setFeedback(errorToFeedbackNotice(err, "Could not update display name"));
+    } finally {
+      setSavingDisplayName(false);
+    }
+  };
+
+  const handleResetDisplayName = async (): Promise<void> => {
+    if (!onUpdateDisplayName) {
+      return;
+    }
+    setDisplayNameError(null);
+    setSavedDisplayNameNotice(null);
+    setFeedback(null);
+    setSavingDisplayName(true);
+    try {
+      const updated = await onUpdateDisplayName(null);
+      setDisplayNameInput(updated.display_name ?? "");
+      setSavedDisplayNameNotice(
+        isLocalMock ? "Reverted to default persona name" : "Reverted to Google account name",
+      );
+    } catch (err: unknown) {
+      setFeedback(errorToFeedbackNotice(err, "Could not reset display name"));
+    } finally {
+      setSavingDisplayName(false);
+    }
   };
 
   const handleUpdateMemoryWrapped = async (
@@ -750,6 +816,92 @@ export function RelationshipJournalScreen({
                   <span>Sign out</span>
                 </PillButton>
               </div>
+
+              {/* Display Name Customization Form */}
+              {onUpdateDisplayName && (
+                <form
+                  onSubmit={(e) => {
+                    void handleSaveDisplayName(e);
+                  }}
+                  className="space-y-4 rounded-[24px] border border-brew-border bg-brew-bg p-5"
+                >
+                  <div>
+                    <h3 className="font-serif text-[19px] font-bold text-brew-plum">
+                      Display Name
+                    </h3>
+                    <p className="text-xs text-brew-secondary">
+                      {customDisplayName && accountDisplayName
+                        ? `Custom name active across your Clubhouse and cue cards · Default ${isLocalMock ? "persona" : "Google"} name: ${accountDisplayName}`
+                        : `Choose how your name appears across your Clubhouse and cue cards instead of your default ${isLocalMock ? "persona" : "Google account"} name.`}
+                    </p>
+                  </div>
+
+                  <FormField
+                    htmlFor="profile-display-name"
+                    label="Preferred name in Brew"
+                    error={displayNameError}
+                  >
+                    <input
+                      id="profile-display-name"
+                      type="text"
+                      maxLength={120}
+                      value={displayNameInput}
+                      aria-invalid={displayNameError ? "true" : undefined}
+                      onChange={(e) => {
+                        setDisplayNameInput(e.target.value);
+                        setDisplayNameError(null);
+                        setSavedDisplayNameNotice(null);
+                      }}
+                      placeholder={accountDisplayName ?? "e.g., Karina"}
+                      className="brew-field-control"
+                    />
+                  </FormField>
+
+                  <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+                    {savedDisplayNameNotice ? (
+                      <span
+                        role="status"
+                        className="inline-flex items-center gap-1.5 text-xs font-bold text-[#215A45]"
+                      >
+                        <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
+                        <span>{savedDisplayNameNotice}</span>
+                      </span>
+                    ) : (
+                      <span />
+                    )}
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      {customDisplayName !== null && (
+                        <PillButton
+                          id="btn-reset-display-name"
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={savingDisplayName}
+                          onClick={() => {
+                            void handleResetDisplayName();
+                          }}
+                        >
+                          <span>
+                            {isLocalMock ? "Use default name" : "Use Google name"}
+                            {accountDisplayName ? ` (${accountDisplayName})` : ""}
+                          </span>
+                        </PillButton>
+                      )}
+
+                      <PrimaryButton
+                        id="btn-save-display-name"
+                        type="submit"
+                        shape="pill"
+                        disabled={savingDisplayName}
+                        className="!min-h-[40px] !px-5 !py-2 !text-xs"
+                      >
+                        {savingDisplayName ? "Saving..." : "Save Name"}
+                      </PrimaryButton>
+                    </div>
+                  </div>
+                </form>
+              )}
 
               {/* Default Coaching Style Form */}
               <form

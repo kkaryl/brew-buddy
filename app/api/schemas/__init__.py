@@ -28,6 +28,7 @@ from app.api.schemas.errors import (
 )
 from app.api.schemas.identity import (
     AuthenticatedPrincipalResponse,
+    UpdateAuthenticatedProfileRequest,
 )
 from app.api.schemas.meetings import (
     MeetingListResponse,
@@ -78,6 +79,7 @@ __all__ = [
     "ResponseModel",
     "ReviseBriefRequest",
     "StrictRequestModel",
+    "UpdateAuthenticatedProfileRequest",
     "UpdateMemoryRequest",
     "UserPreferencesInput",
 ]

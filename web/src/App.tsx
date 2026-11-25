@@ -4,6 +4,7 @@ import { fetchBackendHealth, type HealthPayload } from "./api/health";
 import type {
   ApproveMemoryProposalRequest,
   AuthClientConfigResponse,
+  AuthenticatedPrincipalResponse,
   ContactResponse,
   CreateContactRequest,
   GenerateBriefRequest,
@@ -119,7 +120,20 @@ export function App(): JSX.Element {
   const currentUserId = session?.principal.user_id ?? null;
   const currentDisplayName =
     session?.principal.display_name ?? session?.principal.user_id ?? "Guest";
+  const customDisplayName = session?.principal.custom_display_name ?? null;
+  const accountDisplayName = session?.principal.account_display_name ?? null;
   const isLocalMock = session?.principal.auth_provider === "local_mock";
+  const selfCalendarNames = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          [currentDisplayName, accountDisplayName]
+            .map((name) => (name ?? "").trim())
+            .filter((name) => name.length > 0),
+        ),
+      ),
+    [accountDisplayName, currentDisplayName],
+  );
 
   const [styleDefaults, setStyleDefaults] = useState<CoachingStyleDefaults>(() =>
     loadCoachingDefaults(currentUserId),
@@ -319,7 +333,25 @@ export function App(): JSX.Element {
       setLoadingWorkspace(true);
       setWorkspaceError(null);
       try {
-        await apiClient.verifyCurrentPrincipal();
+        const verifiedPrincipal = await apiClient.verifyCurrentPrincipal();
+        const currentSession = sessionRef.current;
+        if (
+          currentSession &&
+          currentSession.principal.user_id === verifiedPrincipal.user_id &&
+          (currentSession.principal.display_name !== verifiedPrincipal.display_name ||
+            (currentSession.principal.custom_display_name ?? null) !==
+              (verifiedPrincipal.custom_display_name ?? null) ||
+            (currentSession.principal.account_display_name ?? null) !==
+              (verifiedPrincipal.account_display_name ?? null))
+        ) {
+          const syncedSession: StoredAuthSession = {
+            ...currentSession,
+            principal: verifiedPrincipal,
+          };
+          saveStoredSession(syncedSession);
+          sessionRef.current = syncedSession;
+          setSession(syncedSession);
+        }
         const [contactsResp, proposalsResp, memoriesResp] = await Promise.all([
           apiClient.listContacts(),
           apiClient.listMemoryProposals({ status: "pending" }),
@@ -563,6 +595,26 @@ export function App(): JSX.Element {
     [currentUserId],
   );
 
+  const handleUpdateDisplayName = useCallback(
+    async (displayName: string | null): Promise<AuthenticatedPrincipalResponse> => {
+      const updatedPrincipal = await apiClient.updateCurrentPrincipal({
+        display_name: displayName,
+      });
+      const currentSession = sessionRef.current;
+      if (currentSession && currentSession.principal.user_id === updatedPrincipal.user_id) {
+        const nextSession: StoredAuthSession = {
+          ...currentSession,
+          principal: updatedPrincipal,
+        };
+        saveStoredSession(nextSession);
+        sessionRef.current = nextSession;
+        setSession(nextSession);
+      }
+      return updatedPrincipal;
+    },
+    [apiClient],
+  );
+
   const handleConnectGoogleCalendar = useCallback(async (): Promise<void> => {
     const clientId = authConfig?.google_oauth_client_id;
     if (!clientId) {
@@ -573,7 +625,7 @@ export function App(): JSX.Element {
     try {
       const calToken = await requestGoogleCalendarReadOnlyToken(clientId);
       const events = await fetchReadOnlyGoogleCalendarEvents(calToken, {
-        selfDisplayName: currentDisplayName,
+        selfDisplayName: selfCalendarNames,
       });
       setCalendarEvents(events);
       saveStoredCalendarEvents(currentUserId, events);
@@ -584,12 +636,12 @@ export function App(): JSX.Element {
     } finally {
       setCalendarSyncing(false);
     }
-  }, [authConfig?.google_oauth_client_id, currentDisplayName, currentUserId]);
+  }, [authConfig?.google_oauth_client_id, currentUserId, selfCalendarNames]);
 
   const handleImportIcsText = useCallback(
     (icsText: string): void => {
       const parsed = parseIcsCalendarEvents(icsText, {
-        selfDisplayName: currentDisplayName,
+        selfDisplayName: selfCalendarNames,
         source: "gcal",
       });
       if (parsed.length === 0) {
@@ -611,7 +663,7 @@ export function App(): JSX.Element {
       });
       setCalendarNotice(`Imported ${String(parsed.length)} calendar chat slot(s).`);
     },
-    [currentDisplayName, currentUserId],
+    [currentUserId, selfCalendarNames],
   );
 
   const handleClearCalendarEvents = useCallback((): void => {
@@ -853,6 +905,8 @@ export function App(): JSX.Element {
           {routeView.kind === "space" && routeView.space === "journal" && (
             <RelationshipJournalScreen
               userDisplayName={currentDisplayName}
+              customDisplayName={customDisplayName}
+              accountDisplayName={accountDisplayName}
               userId={session.principal.user_id}
               isLocalMock={isLocalMock}
               contacts={contacts}
@@ -891,6 +945,7 @@ export function App(): JSX.Element {
               onUpdateMemory={handleUpdateMemory}
               onDeleteMemory={handleDeleteMemory}
               onSaveStyleDefaults={handleSaveStyleDefaults}
+              onUpdateDisplayName={handleUpdateDisplayName}
               onConnectGoogleCalendar={handleConnectGoogleCalendar}
               onImportIcsText={handleImportIcsText}
               onClearCalendarEvents={handleClearCalendarEvents}

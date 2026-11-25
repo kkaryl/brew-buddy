@@ -74,6 +74,8 @@ class MemoryPersistenceService:
         self,
         *,
         principal: AuthenticatedPrincipal,
+        preferred_display_name: str | None = None,
+        clear_preferred_display_name: bool = False,
         default_tone: MeetingTone | None = None,
         default_duration_minutes: int | None = None,
         preferred_question_count: int | None = None,
@@ -83,11 +85,25 @@ class MemoryPersistenceService:
         """Create or update ``users/{uid}/preferences/default`` with version control."""
         return await self._maintenance.upsert_user_preferences(
             principal=principal,
+            preferred_display_name=preferred_display_name,
+            clear_preferred_display_name=clear_preferred_display_name,
             default_tone=default_tone,
             default_duration_minutes=default_duration_minutes,
             preferred_question_count=preferred_question_count,
             communication_style_notes=communication_style_notes,
             focus_areas=focus_areas,
+        )
+
+    async def update_preferred_display_name(
+        self,
+        *,
+        principal: AuthenticatedPrincipal,
+        display_name: str | None,
+    ) -> UserPreferences | None:
+        """Set or clear the caller's custom display name override."""
+        return await self._maintenance.update_preferred_display_name(
+            principal=principal,
+            display_name=display_name,
         )
 
     async def propose_memories_batch(

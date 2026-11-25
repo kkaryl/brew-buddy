@@ -348,5 +348,27 @@ describe("Brew v2 Unit Suite: Parsers, Calendar Sync, Stores, and Blueprint Math
       duration_minutes: "Duration must be between 5 and 180 minutes.",
       preferred_question_count: "Question count must be between 1 and 15.",
     });
+
+    // Recognizes both custom Brew display name and default Google account name as self on calendar invites
+    expect(
+      extractCounterpartDetails("Coffee Chat: Kary Long <> Maya Lin (CloudScale)", [
+        "Karina",
+        "Kary Long",
+      ]),
+    ).toEqual({
+      counterpartName: "Maya Lin",
+      counterpartOrganization: "CloudScale",
+      counterpartRole: null,
+    });
+    expect(
+      extractCounterpartDetails("Coffee Chat: Karina <> Maya Lin (CloudScale)", [
+        "Karina",
+        "Kary Long",
+      ]),
+    ).toEqual({
+      counterpartName: "Maya Lin",
+      counterpartOrganization: "CloudScale",
+      counterpartRole: null,
+    });
   });
 });

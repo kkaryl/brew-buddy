@@ -24,6 +24,7 @@ from app.domain.shared.types import (
     MeetingDurationMinutes,
     MemoryBodyText,
     RationaleText,
+    ShortLabelText,
     ShortTagText,
     SourceExcerptText,
     UtcDatetime,
@@ -36,6 +37,7 @@ class UserPreferences(ImmutableDomainModel):
 
     id: EntityId
     owner_user_id: EntityId
+    preferred_display_name: ShortLabelText | None = None
     default_tone: MeetingTone = MeetingTone.WARM_CASUAL
     default_duration_minutes: MeetingDurationMinutes = 30
     preferred_question_count: Annotated[int, Field(ge=1, le=15)] = 6
