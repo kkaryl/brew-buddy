@@ -11,6 +11,7 @@ from app.domain.models import Memory
 from app.domain.types import MemoryEpistemicStatus, MemoryScope, MemoryType
 
 _TOKEN_RE = re.compile(r"[a-z0-9]{2,}")
+_NUMBER_RE = re.compile(r"\d+(?:\.\d+)?")
 
 _MEMORY_STOPWORDS = frozenset(
     {
@@ -222,6 +223,11 @@ def _normalize_tokens(text: str, *, ignored_names: set[str]) -> set[str]:
     return normalized
 
 
+def _numeric_figures(text: str) -> frozenset[str]:
+    """Return every number written in ``text`` (word tokens drop one-digit figures)."""
+    return frozenset(_NUMBER_RE.findall(text))
+
+
 def _has_opposing_stance(candidate_text: str, existing_text: str) -> bool:
     cand_words = set(_TOKEN_RE.findall(candidate_text.lower()))
     exist_words = set(_TOKEN_RE.findall(existing_text.lower()))
@@ -274,8 +280,12 @@ def classify_candidate_against_existing(
     best_contradiction_overlap = 0
 
     for mem in active_same_partition:
+        # Word tokens need two characters, so "3 reports" and "5 reports" normalize to the
+        # same string. Figures are compared separately so a changed number is never read
+        # as a repeat.
+        same_figures = _numeric_figures(text) == _numeric_figures(mem.text)
         exist_norm_exact = " ".join(_TOKEN_RE.findall(mem.text.lower()))
-        if cand_norm_exact == exist_norm_exact:
+        if cand_norm_exact == exist_norm_exact and same_figures:
             return MemoryRelationResolution(
                 kind=MemoryRelationKind.DUPLICATE,
                 matched_memory=mem,
@@ -295,6 +305,13 @@ def classify_candidate_against_existing(
             continue
 
         if not opposing and jaccard >= 0.68:
+            if not same_figures:
+                # The same statement with a different figure ("12 engineers" -> "40
+                # engineers") is an update the user must review, not a repeat to drop.
+                if len(shared) >= best_contradiction_overlap:
+                    best_contradiction = mem
+                    best_contradiction_overlap = len(shared)
+                continue
             return MemoryRelationResolution(
                 kind=MemoryRelationKind.DUPLICATE,
                 matched_memory=mem,

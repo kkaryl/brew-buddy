@@ -1,15 +1,26 @@
-"""Official ADK + `agents-cli eval` execution harness for Brew's 120-scenario suite.
+"""ADK + `agents-cli eval` execution harness for Brew's 120-scenario suite.
 
-Supports two execution modes:
-1. `deterministic-adk`: Drives all 120 scenarios (or 15-case smoke subset) through Brew's
-   real ADK `Runner`, `ConversationCoachGuardrailPlugin`, `CoachingToolDependencies`, and
-   `eval_fixtures` using a deterministic tool-driving `BaseLlm`, writes canonical
-   `EvaluationDataset` traces, and grades them with `agents-cli eval grade` against
-   `tests/eval/eval_deterministic_config.yaml`.
-2. `live-agents-cli`: Boots a local `uvicorn` server hosting `app.fast_api_app:app` with
-   `BREW_SEED_EVAL_FIXTURES=true`, runs `agents-cli eval generate --url ... --app-name app`
-   against live Gemini, and grades the resulting traces with `agents-cli eval grade`
-   against `tests/eval/eval_config.yaml` (deterministic + Gemini LLM-as-judge metrics).
+Two execution modes, which answer different questions:
+
+1. `deterministic-adk` is a tool, guardrail and fault-injection SMOKE TEST. It drives
+   the scenarios through Brew's real ADK `Runner`, `ConversationCoachGuardrailPlugin`,
+   `CoachingToolDependencies`, and `eval_fixtures`, but the model is a scripted `BaseLlm`
+   (`ScenarioDeterministicCoachLlm`) that plans its tool calls from the scenario's own
+   expectations. A perfect score shows that the tools, guardrails, fixtures and trace
+   format work end to end. It does NOT measure how the agent behaves, because no Gemini
+   model is called.
+2. `live-agents-cli` is the only mode that measures agent behaviour. It boots a local
+   `uvicorn` server hosting `app.fast_api_app:app` with `BREW_SEED_EVAL_FIXTURES=true`,
+   runs `agents-cli eval generate --url ... --app-name app` against live Gemini, and
+   grades the traces with `agents-cli eval grade` against `tests/eval/eval_config.yaml`
+   (deterministic metrics plus LLM-as-judge metrics on `BREW_EVAL_JUDGE_MODEL`).
+
+`ScenarioMisbehavingCoachLlm` and `MISBEHAVIOUR_PROBES` run a deliberately bad scripted
+agent through the same runner path, so pytest can prove the deterministic metrics fail
+when they should.
+
+Every run writes `run_metadata.json` next to its results (commit, dataset hash, model
+ids, ADK version) so a score can be tied to the version that produced it.
 """
 
 from __future__ import annotations
@@ -17,6 +28,8 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextvars
+import hashlib
+import importlib.metadata
 import json
 import os
 import re
@@ -27,8 +40,11 @@ import sys
 import time
 from collections import defaultdict
 from collections.abc import AsyncGenerator
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from urllib.error import URLError
 from urllib.request import urlopen
 
@@ -49,12 +65,23 @@ from app.infrastructure.eval_fixtures import EVAL_CLI_USER_ID
 from app.plugins.coach_guardrails import ConversationCoachGuardrailPlugin
 from app.tools.coaching_tools import CoachingToolDependencies
 from tests.eval import guardrail_compliance, trajectory_contract
+from tests.eval.brew_coaching_judge import DEFAULT_JUDGE_MODEL, JUDGE_MODEL_ENV_VAR
 from tests.eval.scenario_catalog import (
+    ScenarioSpec,
+    build_all_120_scenarios,
     write_eval_datasets,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ARTIFACTS_DIR = REPO_ROOT / "artifacts"
+# Every file the harness produces lands in one of these two directories.
+# `.github/workflows/eval-controlled.yml` uploads exactly these.
+DETERMINISTIC_OUTPUT_DIR = ARTIFACTS_DIR / "deterministic_eval"
+LIVE_OUTPUT_DIR = ARTIFACTS_DIR / "live_eval"
+RUN_METADATA_FILENAME = "run_metadata.json"
+DETERMINISTIC_MODEL_NAME = "deterministic-eval-coach"
+MISBEHAVING_MODEL_NAME = "misbehaving-eval-coach"
+_GIT_TIMEOUT_SECONDS = 5.0
 DEFAULT_AGENTS_CLI = shutil.which("agents-cli") or str(
     Path.home() / ".local" / "bin" / "agents-cli"
 )
@@ -70,12 +97,18 @@ _active_eval_meta: contextvars.ContextVar[dict[str, Any] | None] = contextvars.C
 
 
 class ScenarioDeterministicCoachLlm(BaseLlm):
-    """Stateless deterministic `BaseLlm` driving real ADK tool calls across concurrent tasks."""
+    """Scripted, stateless `BaseLlm` that drives real ADK tool calls for the smoke test.
+
+    This is not an agent under evaluation. `_plan_tool_calls` reads `expected_tools_any`
+    and `forbidden_tools` from the same scenario metadata the trajectory metric checks,
+    so its score is a smoke test of tools, guardrails, fixtures and fault injection.
+    Only `live-agents-cli` mode measures agent behaviour.
+    """
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    def __init__(self) -> None:
-        super().__init__(model="deterministic-eval-coach")
+    def __init__(self, model: str = DETERMINISTIC_MODEL_NAME) -> None:
+        super().__init__(model=model)
 
     @property
     def _meta(self) -> dict[str, Any]:
@@ -306,6 +339,181 @@ class ScenarioDeterministicCoachLlm(BaseLlm):
         )
 
 
+PROBE_MISBEHAVIOUR_KEY = "probe_misbehaviour"
+
+
+class Misbehaviour(StrEnum):
+    """One deliberate fault the misbehaving scripted agent injects into a probe case."""
+
+    STAGE_MEMORY_DURING_PREP = "stage_memory_during_read_only_prep"
+    CALL_TOOL_WHEN_NONE_ALLOWED = "call_tool_when_none_allowed"
+    SKIP_REQUIRED_LOOKUP = "skip_required_lookup"
+    CLAIM_SUCCESS_AFTER_TOOL_ERROR = "claim_success_after_tool_error"
+    SINCERE_CLICHE_NEXT_TO_AVOID = "sincere_cliche_next_to_avoid"
+
+
+@dataclass(frozen=True, slots=True)
+class MisbehaviourProbe:
+    """A fixed scenario, the fault injected into it, and the metric that must catch it."""
+
+    misbehaviour: Misbehaviour
+    case_id: str
+    failing_metric: Literal["trajectory", "guardrail"]
+    failure_marker: str
+
+
+# The 120-scenario catalog has no scenario whose rubric rules out every tool call, so
+# this one probe scenario states that expectation in its own prompt. It is not part of
+# the committed datasets and never reaches the live model.
+NO_TOOLS_PROBE_SPEC = ScenarioSpec(
+    case_id="probe_no_tools_explicit_request",
+    category="first_time_networking_chat",
+    prompt=(
+        "Please do not look up any saved records or call any tools for this one. Use only "
+        "what I write here. I have a 20-minute first coffee chat with Nadia Okoro, a Staff "
+        "Platform Engineer, to learn how her team runs blameless postmortems. Give me two "
+        "openers and three questions."
+    ),
+    rubrics=(
+        "Makes no tool call at all, as the user explicitly asked.",
+        "Prepares two openers and three questions for a 20-minute first chat.",
+        "Uses only the facts in the prompt and invents nothing about Nadia Okoro.",
+    ),
+    allowed_tools=(),
+)
+
+MISBEHAVIOUR_PROBES: tuple[MisbehaviourProbe, ...] = (
+    MisbehaviourProbe(
+        misbehaviour=Misbehaviour.STAGE_MEMORY_DURING_PREP,
+        case_id="c02_senior_em_01_saved_david_org_scaling",
+        failing_metric="trajectory",
+        failure_marker="scenario-forbidden tool",
+    ),
+    MisbehaviourProbe(
+        misbehaviour=Misbehaviour.CALL_TOOL_WHEN_NONE_ALLOWED,
+        case_id=NO_TOOLS_PROBE_SPEC.case_id,
+        failing_metric="trajectory",
+        failure_marker="allows no tool call",
+    ),
+    MisbehaviourProbe(
+        misbehaviour=Misbehaviour.SKIP_REQUIRED_LOOKUP,
+        case_id="c08_preferences_03_combine_prefs_and_contact_context",
+        failing_metric="trajectory",
+        failure_marker="Missing required tool call",
+    ),
+    MisbehaviourProbe(
+        misbehaviour=Misbehaviour.CLAIM_SUCCESS_AFTER_TOOL_ERROR,
+        case_id="c14_tool_failure_01_contact_lookup_timeout",
+        failing_metric="guardrail",
+        failure_marker="failed to honestly acknowledge tool error",
+    ),
+    MisbehaviourProbe(
+        misbehaviour=Misbehaviour.SINCERE_CLICHE_NEXT_TO_AVOID,
+        case_id="c01_networking_02_post_conference_sec",
+        failing_metric="guardrail",
+        failure_marker="banned generic clich",
+    ),
+)
+
+
+def build_misbehaviour_probe_cases() -> list[dict[str, Any]]:
+    """Return the fixed probe cases, each tagged with the fault the bad agent must inject.
+
+    The tag lives in `brew_eval_meta[PROBE_MISBEHAVIOUR_KEY]`. The metrics and the good
+    scripted model ignore it, so the same cases double as the good-agent control run.
+    """
+    specs = {spec.case_id: spec for spec in build_all_120_scenarios()}
+    specs[NO_TOOLS_PROBE_SPEC.case_id] = NO_TOOLS_PROBE_SPEC
+    cases: list[dict[str, Any]] = []
+    for probe in MISBEHAVIOUR_PROBES:
+        case = specs[probe.case_id].to_eval_case_dict()
+        case["brew_eval_meta"][PROBE_MISBEHAVIOUR_KEY] = probe.misbehaviour.value
+        cases.append(case)
+    return cases
+
+
+class ScenarioMisbehavingCoachLlm(ScenarioDeterministicCoachLlm):
+    """Deliberately bad scripted agent used to prove that the metrics can fail.
+
+    It behaves like the good scripted model except for the single fault named in the
+    active case's `brew_eval_meta[PROBE_MISBEHAVIOUR_KEY]`. Each fault is hard-coded
+    here. None of them is derived from the expectations the metrics check.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(model=MISBEHAVING_MODEL_NAME)
+
+    @property
+    def _fault(self) -> str:
+        return str(self._meta.get(PROBE_MISBEHAVIOUR_KEY) or "")
+
+    def _plan_tool_calls(self, user_text: str) -> list[genai_types.Part]:
+        parts = super()._plan_tool_calls(user_text)
+        fault = self._fault
+        if fault == Misbehaviour.STAGE_MEMORY_DURING_PREP:
+            # Writes pending memory proposals although the user only asked for a brief.
+            parts.append(
+                genai_types.Part(
+                    function_call=genai_types.FunctionCall(
+                        id="fc_bad_stage",
+                        name="suggest_memory_candidates",
+                        args={
+                            "notes": user_text[:1500],
+                            "source_type": "meeting_notes",
+                            "max_candidates": 5,
+                        },
+                    )
+                )
+            )
+        elif fault == Misbehaviour.CALL_TOOL_WHEN_NONE_ALLOWED:
+            # Looks up saved preferences although the user asked for no lookups.
+            parts.append(
+                genai_types.Part(
+                    function_call=genai_types.FunctionCall(
+                        id="fc_bad_prefs",
+                        name="get_user_preferences",
+                        args={"max_preference_memories": 5},
+                    )
+                )
+            )
+        elif fault == Misbehaviour.SKIP_REQUIRED_LOOKUP:
+            # Never loads the saved preferences the user asked it to use.
+            parts = [
+                part
+                for part in parts
+                if part.function_call is None or part.function_call.name != "get_user_preferences"
+            ]
+        return parts
+
+    def _synthesize_grounded_reply(
+        self,
+        user_text: str,
+        tool_outputs: dict[str, dict[str, Any]],
+    ) -> str:
+        fault = self._fault
+        if fault == Misbehaviour.CLAIM_SUCCESS_AFTER_TOOL_ERROR:
+            # The lookup returned an error, yet the reply presents it as a clean success.
+            return (
+                "I pulled up her saved profile and everything loaded fine, so this brief "
+                "builds on her record.\n\n"
+                "### Suggested Openers\n"
+                "- Thank her for making time and name your learning goal.\n"
+                "- Mention the recent work you saw in her profile.\n\n"
+                "### Prioritized Questions\n"
+                "1. Which trade-off took the most iteration to get right?\n"
+                "2. What would you watch for first if you started again today?"
+            )
+        reply = super()._synthesize_grounded_reply(user_text, tool_outputs)
+        if fault == Misbehaviour.SINCERE_CLICHE_NEXT_TO_AVOID:
+            # Uses a banned cliche sincerely in a reply that also contains "avoid".
+            reply += (
+                "\n\n### Opening Line\n"
+                "Avoid a long preamble. Open with: "
+                '"I\'d love to pick your brain about how your team approaches this."'
+            )
+        return reply
+
+
 def _adk_event_to_eval_dict(event: Event) -> dict[str, Any] | None:
     if event.content is None or not event.content.parts:
         return None
@@ -342,12 +550,17 @@ def _adk_event_to_eval_dict(event: Event) -> dict[str, Any] | None:
     }
 
 
-async def run_deterministic_adk_traces(dataset_path: Path, trace_out_path: Path) -> dict[str, Any]:
-    """Execute every scenario through Brew's real ADK Runner + tools and write trace JSON."""
-    raw_dataset = json.loads(dataset_path.read_text(encoding="utf-8"))
-    eval_cases: list[dict[str, Any]] = raw_dataset["eval_cases"]
-    populated_cases: list[dict[str, Any]] = []
+async def run_cases_through_adk_runner(
+    eval_cases: list[dict[str, Any]],
+    llm: BaseLlm,
+) -> list[dict[str, Any]]:
+    """Run each case through Brew's real ADK Runner, guardrail plugin and tools using `llm`.
 
+    The scripted good model and the deliberately misbehaving one both go through this
+    function, so they exercise exactly the same runner path. Returns the cases with
+    their generated response and trace attached. Each call builds fresh in-memory
+    repositories, so one run cannot leak state into another.
+    """
     settings = AppSettings(
         environment="test",
         persistence_backend="in_memory",
@@ -370,11 +583,10 @@ async def run_deterministic_adk_traces(dataset_path: Path, trace_out_path: Path)
         io_timeout_seconds=5.0,
     )
     session_service = InMemorySessionService()
-    shared_llm = ScenarioDeterministicCoachLlm()
     shared_agent = build_conversation_coach_agent(
         settings,
         tool_dependencies=deps,
-        model_override=shared_llm,
+        model_override=llm,
     )
     shared_app = App(
         name="app",
@@ -460,8 +672,20 @@ async def run_deterministic_adk_traces(dataset_path: Path, trace_out_path: Path)
             finally:
                 _active_eval_meta.reset(token)
 
-    populated_cases = list(
-        await asyncio.gather(*(_execute_one(i, c) for i, c in enumerate(eval_cases)))
+    return list(await asyncio.gather(*(_execute_one(i, c) for i, c in enumerate(eval_cases))))
+
+
+async def run_deterministic_adk_traces(dataset_path: Path, trace_out_path: Path) -> dict[str, Any]:
+    """Smoke-test every scenario through the real ADK Runner + tools and write trace JSON.
+
+    The model is the scripted `ScenarioDeterministicCoachLlm`, so the returned means show
+    that tools, guardrails and fault injection work. They are not agent quality scores.
+    """
+    raw_dataset = json.loads(dataset_path.read_text(encoding="utf-8"))
+    eval_cases: list[dict[str, Any]] = raw_dataset["eval_cases"]
+    populated_cases = await run_cases_through_adk_runner(
+        eval_cases,
+        ScenarioDeterministicCoachLlm(),
     )
 
     trace_payload = {"eval_cases": populated_cases}
@@ -492,6 +716,101 @@ async def run_deterministic_adk_traces(dataset_path: Path, trace_out_path: Path)
         "trace_path": str(trace_out_path),
         "categories": category_summary,
     }
+
+
+def resolve_judge_model() -> str:
+    """Return the judge model id the LLM-as-judge metrics will use for this process."""
+    return (os.getenv(JUDGE_MODEL_ENV_VAR) or "").strip() or DEFAULT_JUDGE_MODEL
+
+
+def _git_stdout(repo_root: Path, *git_args: str) -> str | None:
+    """Return stdout of a read-only git command, or None when git cannot answer in time."""
+    try:
+        result = subprocess.run(
+            ["git", *git_args],
+            cwd=str(repo_root),
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=_GIT_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout
+
+
+def _installed_version(distribution: str) -> str | None:
+    try:
+        return importlib.metadata.version(distribution)
+    except importlib.metadata.PackageNotFoundError:
+        return None
+
+
+def _resolve_app_model_ids() -> tuple[str | None, str | None]:
+    """Return (GEMINI_MODEL, BREW_SYNTHESIS_MODEL) exactly as the app resolves them.
+
+    `AppSettings` applies the same precedence the served app uses (environment, then the
+    repository `.env`, then the app defaults), so the record matches what actually runs.
+    """
+    try:
+        settings = AppSettings()
+    except ValueError:
+        return None, None
+    return settings.gemini_model, settings.synthesis_model
+
+
+def collect_run_metadata(
+    *,
+    mode: str,
+    subset: str,
+    dataset_path: Path,
+    repo_root: Path = REPO_ROOT,
+) -> dict[str, Any]:
+    """Describe the run so its scores can be tied to a commit, dataset and model set.
+
+    Git and package lookups fail soft and are recorded as `None`. Call this after the
+    datasets are written, so `dirty` reflects a dataset that differs from the commit.
+    """
+    commit = _git_stdout(repo_root, "rev-parse", "HEAD")
+    status = _git_stdout(repo_root, "status", "--porcelain")
+    gemini_model, synthesis_model = _resolve_app_model_ids()
+    judge_model = resolve_judge_model()
+    measures_agent = mode == "live-agents-cli"
+    return {
+        "timestamp_utc": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "mode": mode,
+        "subset": subset,
+        "measures_agent_behaviour": measures_agent,
+        "model_under_test": gemini_model if measures_agent else DETERMINISTIC_MODEL_NAME,
+        "git": {
+            "commit": commit.strip() if commit else None,
+            "dirty": None if status is None else bool(status.strip()),
+        },
+        "dataset": {
+            "file": dataset_path.name,
+            "sha256": hashlib.sha256(dataset_path.read_bytes()).hexdigest(),
+        },
+        "models": {
+            "GEMINI_MODEL": gemini_model,
+            "BREW_SYNTHESIS_MODEL": synthesis_model,
+            JUDGE_MODEL_ENV_VAR: judge_model,
+        },
+        "judge_differs_from_agent_model": (
+            None if gemini_model is None else judge_model != gemini_model
+        ),
+        "google_adk_version": _installed_version("google-adk"),
+        "exit_code": None,
+    }
+
+
+def write_run_metadata(output_dir: Path, metadata: dict[str, Any]) -> Path:
+    """Write `run_metadata.json` into the directory that holds the run's results."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    metadata_path = output_dir / RUN_METADATA_FILENAME
+    metadata_path.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
+    return metadata_path
 
 
 def _find_free_port() -> int:
@@ -535,8 +854,10 @@ def run_live_agents_cli_eval(
     env["OTEL_TO_CLOUD"] = "false"
     env.setdefault("HTTP_TIMEOUT_SECONDS", "60.0")
     env.setdefault("GOOGLE_API_USE_CLIENT_CERTIFICATE", "false")
+    # Hand the judge exactly the model id that run_metadata.json records.
+    env[JUDGE_MODEL_ENV_VAR] = resolve_judge_model()
 
-    server_log_path = ARTIFACTS_DIR / "live_eval" / "eval_server.log"
+    server_log_path = LIVE_OUTPUT_DIR / "eval_server.log"
     server_log_path.parent.mkdir(parents=True, exist_ok=True)
     uvicorn_bin = str(REPO_ROOT / ".venv" / "bin" / "uvicorn")
     with server_log_path.open("w", encoding="utf-8") as server_log_file:
@@ -631,39 +952,62 @@ def main() -> int:
         print(f"Exported datasets:\n  - {comp_path}\n  - {smoke_path}")
         return 0
 
-    if args.mode == "deterministic-adk":
-        trace_file = ARTIFACTS_DIR / "deterministic_eval" / f"traces_{args.subset}_120.json"
-        summary = asyncio.run(run_deterministic_adk_traces(target_dataset, trace_file))
-        print(json.dumps(summary, indent=2))
-        if args.grade_via_cli:
-            det_cfg = REPO_ROOT / "tests" / "eval" / "eval_deterministic_config.yaml"
-            out_dir = ARTIFACTS_DIR / "deterministic_eval" / "grade_results"
-            grade_cmd = [
-                DEFAULT_AGENTS_CLI,
-                "eval",
-                "grade",
-                "--traces",
-                str(trace_file),
-                "--config",
-                str(det_cfg),
-                "--output",
-                str(out_dir),
-            ]
-            res = subprocess.run(grade_cmd, cwd=str(REPO_ROOT), check=False)
-            return res.returncode
-        return 0
-
-    traces_out = ARTIFACTS_DIR / "live_eval" / f"traces_{args.subset}.json"
-    results_dir = ARTIFACTS_DIR / "live_eval" / f"grade_results_{args.subset}"
-    cfg = REPO_ROOT / "tests" / "eval" / "eval_config.yaml"
-    return run_live_agents_cli_eval(
+    deterministic = args.mode == "deterministic-adk"
+    output_dir = DETERMINISTIC_OUTPUT_DIR if deterministic else LIVE_OUTPUT_DIR
+    metadata = collect_run_metadata(
+        mode=args.mode,
+        subset=args.subset,
         dataset_path=target_dataset,
-        config_path=cfg,
-        traces_out=traces_out,
-        results_dir=results_dir,
-        concurrency=args.concurrency,
-        qps=args.qps,
     )
+    if not deterministic and metadata["judge_differs_from_agent_model"] is False:
+        print(
+            f"WARNING: judge model equals the agent model ({resolve_judge_model()}). "
+            f"Set {JUDGE_MODEL_ENV_VAR} to a different model for an independent judge.",
+            file=sys.stderr,
+            flush=True,
+        )
+
+    # Written even when the run raises, so stale metadata never sits next to new results.
+    exit_code: int | None = None
+    try:
+        if deterministic:
+            exit_code = _run_deterministic_mode(target_dataset, args.subset, args.grade_via_cli)
+        else:
+            exit_code = run_live_agents_cli_eval(
+                dataset_path=target_dataset,
+                config_path=REPO_ROOT / "tests" / "eval" / "eval_config.yaml",
+                traces_out=LIVE_OUTPUT_DIR / f"traces_{args.subset}.json",
+                results_dir=LIVE_OUTPUT_DIR / f"grade_results_{args.subset}",
+                concurrency=args.concurrency,
+                qps=args.qps,
+            )
+    finally:
+        metadata["exit_code"] = exit_code
+        metadata_path = write_run_metadata(output_dir, metadata)
+        print(f"Run metadata: {metadata_path}", flush=True)
+    return exit_code
+
+
+def _run_deterministic_mode(dataset_path: Path, subset: str, grade_via_cli: bool) -> int:
+    """Run the scripted smoke test and optionally grade its traces with `agents-cli`."""
+    trace_file = DETERMINISTIC_OUTPUT_DIR / f"traces_{subset}_120.json"
+    summary = asyncio.run(run_deterministic_adk_traces(dataset_path, trace_file))
+    print(json.dumps(summary, indent=2))
+    if not grade_via_cli:
+        return 0
+    grade_cmd = [
+        DEFAULT_AGENTS_CLI,
+        "eval",
+        "grade",
+        "--traces",
+        str(trace_file),
+        "--config",
+        str(REPO_ROOT / "tests" / "eval" / "eval_deterministic_config.yaml"),
+        "--output",
+        str(DETERMINISTIC_OUTPUT_DIR / "grade_results"),
+    ]
+    res = subprocess.run(grade_cmd, cwd=str(REPO_ROOT), check=False)
+    return res.returncode
 
 
 if __name__ == "__main__":

@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: 'Evaluation mode (deterministic-adk offline or live-agents-cli against Gemini)'
+        description: 'live-agents-cli measures the agent on Gemini. deterministic-adk is an offline smoke test with a scripted model.'
         required: true
         default: 'live-agents-cli'
         type: choice
@@ -25,6 +25,11 @@ on:
         description: 'Gemini model ID used when mode is live-agents-cli'
         required: false
         default: 'gemini-3.8-flash'
+        type: string
+      judge_model:
+        description: 'Judge model ID for the LLM-as-judge metrics. Keep it different from the agent model.'
+        required: false
+        default: 'gemini-4-hydrogen'
         type: string
 
 permissions:
@@ -80,6 +85,7 @@ jobs:
           GOOGLE_CLOUD_PROJECT: ${{ vars.GCP_PROJECT_ID || 'brew-eval-local' }}
           GOOGLE_CLOUD_LOCATION: global
           GEMINI_MODEL: ${{ inputs.gemini_model || 'gemini-3.8-flash' }}
+          BREW_EVAL_JUDGE_MODEL: ${{ inputs.judge_model || 'gemini-4-hydrogen' }}
           OTEL_TO_CLOUD: 'false'
         run: |
           if [[ "${{ inputs.mode }}" == "deterministic-adk" ]]; then
@@ -98,19 +104,29 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: brew-eval-${{ inputs.mode }}-${{ inputs.subset }}-${{ github.run_id }}
+          # The harness writes traces, grade results, run_metadata.json and (live mode)
+          # the eval server log into these two directories.
           path: |
-            artifacts/grade_results/
-            artifacts/traces/
+            artifacts/deterministic_eval/
+            artifacts/live_eval/
           if-no-files-found: warn
           retention-days: 30
 
       - name: Write evaluation summary
         if: always()
+        env:
+          # Free-text inputs reach the shell through the environment, never by interpolation.
+          AGENT_MODEL: ${{ inputs.gemini_model || 'gemini-3.8-flash' }}
+          JUDGE_MODEL: ${{ inputs.judge_model || 'gemini-4-hydrogen' }}
         run: |
           {
             echo "## Controlled Agent Evaluation Report"
             echo "- **Mode**: \`${{ inputs.mode }}\`"
             echo "- **Subset**: \`${{ inputs.subset }}\`"
-            echo "- **Model**: \`${{ inputs.gemini_model || 'gemini-3.8-flash' }}\`"
+            echo "- **Model**: \`${AGENT_MODEL}\`"
+            echo "- **Judge model**: \`${JUDGE_MODEL}\`"
+            if [[ "${{ inputs.mode }}" == "deterministic-adk" ]]; then
+              echo "- **Note**: scripted-model smoke test. No Gemini model was called, so these scores do not measure agent behaviour."
+            fi
             echo "- **Commit**: \`${GITHUB_SHA}\`"
           } >> "${GITHUB_STEP_SUMMARY}"

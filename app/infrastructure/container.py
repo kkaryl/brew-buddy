@@ -15,6 +15,7 @@ from app.domain.ports import (
 from app.infrastructure.adk_brief_coach import AdkConversationCoachBriefAdapter
 from app.infrastructure.adk_memory_extractor import AdkMemoryProposalAdapter
 from app.infrastructure.auth import build_runtime_authenticator
+from app.infrastructure.background_jobs import InProcessBackgroundJobRunner
 from app.infrastructure.clock import SystemUtcClock
 from app.infrastructure.fakes import (
     FakeBriefCoachAgent,
@@ -27,6 +28,7 @@ from app.infrastructure.firestore_repositories import (
     FirestoreBriefRepository,
     FirestoreContactRepository,
     FirestoreMeetingRepository,
+    FirestoreMemoryExtractionJobRepository,
     FirestoreMemoryProposalRepository,
     FirestoreMemoryRepository,
     FirestoreUserPreferencesRepository,
@@ -141,6 +143,13 @@ def build_firestore_service_container(
         brief_agent=resolved_brief_agent,
         proposal_agent=resolved_proposal_agent,
         idempotency_repo=idempotency_repo,
+        job_repo=FirestoreMemoryExtractionJobRepository(
+            resolved_client,
+            timeout_seconds=timeout,
+        ),
+        job_runner=InProcessBackgroundJobRunner(
+            max_concurrency=settings.memory_job_max_concurrency,
+        ),
     )
 
 
@@ -155,6 +164,9 @@ def build_service_container(
 
     container = FakeServiceContainer()
     container.authenticator = build_runtime_authenticator(settings, clock=container.clock)
+    container.job_runner = InProcessBackgroundJobRunner(
+        max_concurrency=settings.memory_job_max_concurrency,
+    )
     if settings.seed_eval_fixtures:
         from app.infrastructure.eval_fixtures import populate_in_memory_eval_fixtures
 

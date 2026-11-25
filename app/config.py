@@ -31,6 +31,7 @@ _RESERVED_DOMAIN_COLLECTIONS = frozenset(
         "memories",
         "deletedMemories",
         "memoryProposals",
+        "memoryJobs",
         "workflowIdempotency",
     }
 )
@@ -57,6 +58,22 @@ class AppSettings(BaseSettings):
         default="gemini-3.8-flash",
         min_length=1,
         validation_alias="GEMINI_MODEL",
+    )
+    # Per-stage model routing (see app/model_routing.py and ADR-021). Synthesis is the one
+    # multi-constraint reasoning step, so it gets the advanced model. The optional stages
+    # fall back to ``gemini_model`` when unset.
+    synthesis_model: str = Field(
+        default="gemini-4-hydrogen",
+        min_length=1,
+        validation_alias="BREW_SYNTHESIS_MODEL",
+    )
+    refinement_model: str | None = Field(
+        default=None,
+        validation_alias="BREW_REFINEMENT_MODEL",
+    )
+    memory_extraction_model: str | None = Field(
+        default=None,
+        validation_alias="BREW_MEMORY_EXTRACTION_MODEL",
     )
     google_genai_use_enterprise: bool = Field(
         default=True,
@@ -130,9 +147,28 @@ class AppSettings(BaseSettings):
         validation_alias="BREW_WORKFLOW_MAX_TOOL_RETRIES",
     )
 
+    memory_job_max_concurrency: int = Field(
+        default=4,
+        ge=1,
+        le=32,
+        validation_alias="BREW_MEMORY_JOB_MAX_CONCURRENCY",
+    )
+    memory_job_stale_after_seconds: float = Field(
+        default=300.0,
+        gt=0.0,
+        le=3600.0,
+        validation_alias="BREW_MEMORY_JOB_STALE_AFTER_SECONDS",
+    )
+
     persistence_backend: PersistenceBackendName = Field(
         default="in_memory",
         validation_alias="BREW_PERSISTENCE_BACKEND",
+    )
+    # In-memory storage loses every contact, brief and memory on restart. A deployed
+    # service only reports ready on it when this is set on purpose (CI container smoke).
+    allow_ephemeral_persistence: bool = Field(
+        default=False,
+        validation_alias="BREW_ALLOW_EPHEMERAL_PERSISTENCE",
     )
     firestore_database: str = Field(
         default="(default)",
@@ -227,14 +263,21 @@ class AppSettings(BaseSettings):
             return None
         return text
 
-    @field_validator("gemini_model")
+    @field_validator("gemini_model", "synthesis_model")
     @classmethod
     def _strip_and_validate_model(cls, value: str) -> str:
         cleaned = value.strip()
         if not cleaned:
-            msg = "GEMINI_MODEL must not be blank."
+            msg = "Model identifiers must not be blank."
             raise ValueError(msg)
         return cleaned
+
+    @field_validator("refinement_model", "memory_extraction_model", mode="before")
+    @classmethod
+    def _blank_optional_model_means_unset(cls, value: object) -> object:
+        if isinstance(value, str):
+            return value.strip() or None
+        return value
 
     @field_validator("adk_firestore_root_collection")
     @classmethod
@@ -273,6 +316,13 @@ class AppSettings(BaseSettings):
         if self.environment in {"staging", "production"}:
             return True
         return bool(os.environ.get("K_SERVICE") or os.environ.get("CLOUD_RUN_JOB"))
+
+    @property
+    def persistence_is_acceptable_for_environment(self) -> bool:
+        """Return False when a deployed service would silently run on ephemeral storage."""
+        if self.persistence_backend == "firestore":
+            return True
+        return (not self.is_deployed_environment) or self.allow_ephemeral_persistence
 
     @property
     def local_mock_auth_enabled(self) -> bool:

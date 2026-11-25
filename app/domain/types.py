@@ -193,6 +193,20 @@ class ProposalStatus(StrEnum):
     REJECTED = "rejected"
 
 
+class MemoryExtractionJobStatus(StrEnum):
+    """Lifecycle of a background memory-extraction job."""
+
+    QUEUED = "queued"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+
+    @property
+    def is_terminal(self) -> bool:
+        """Return ``True`` once the job can no longer change."""
+        return self in {MemoryExtractionJobStatus.SUCCEEDED, MemoryExtractionJobStatus.FAILED}
+
+
 class MemoryLifecycleState(StrEnum):
     """Canonical lifecycle state across staged proposals and durable memories."""
 
@@ -239,3 +253,14 @@ class BriefWorkflowOperation(StrEnum):
 
     GENERATE = "generate"
     REVISE = "revise"
+
+
+BRIEF_SYNTHESIZER_AGENT_NAME = "brief_synthesizer"
+BRIEF_REFINER_AGENT_NAME = "brief_refiner"
+
+
+def brief_specialist_agent_name(operation: BriefWorkflowOperation) -> str:
+    """Return the name of the specialist agent that serves ``operation``."""
+    if operation is BriefWorkflowOperation.GENERATE:
+        return BRIEF_SYNTHESIZER_AGENT_NAME
+    return BRIEF_REFINER_AGENT_NAME

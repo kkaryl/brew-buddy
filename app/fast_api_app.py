@@ -10,7 +10,7 @@ import re
 import time
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from pathlib import Path
-from urllib.parse import unquote
+from urllib.parse import parse_qsl, unquote
 
 from a2a.server.tasks import InMemoryTaskStore
 from dotenv import load_dotenv
@@ -35,7 +35,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from app.api.auth import router as auth_router
 from app.api.dependencies import (
     get_service_container,
-    resolve_authenticated_principal_from_request,
+    resolve_authenticated_principal_off_event_loop,
 )
 from app.api.errors import (
     build_domain_error_json_response,
@@ -61,7 +61,7 @@ from app.application.telemetry import (
     set_safe_span_attributes,
 )
 from app.config import REPO_ROOT, AppSettings, get_settings
-from app.domain.errors import AuthorizationError, BrewDomainError
+from app.domain.errors import AuthorizationError, BrewDomainError, DomainValidationError
 from app.infrastructure.container import build_service_container
 from app.infrastructure.fakes import ServiceContainer
 from app.infrastructure.observability import (
@@ -96,6 +96,7 @@ _RESERVED_BACKEND_PREFIXES = (
 )
 _ADK_APPS_USER_PATH_RE = re.compile(r"^/apps/[^/]+/users/([^/]+)(?:/|$)")
 _ADK_APPS_MEMORY_PATH_RE = re.compile(r"^/apps/[^/]+/users/[^/]+/memory/?$")
+_ADK_RUN_INVOCATION_PATHS = frozenset({"/run", "/run_sse"})
 _CLOUD_TRACE_HEADER_RE = re.compile(r"^([0-9a-fA-F]{32})(?:/([0-9]{1,20}))?(?:;o=([01]))?$")
 _TRACE_ERROR_CODES_4XX = frozenset(
     {
@@ -142,7 +143,7 @@ async def _enforce_adk_and_memory_route_security(request: Request) -> Response |
     if _ADK_APPS_MEMORY_PATH_RE.match(path) and method in {"PATCH", "POST", "PUT", "DELETE"}:
         try:
             container = get_service_container(request)
-            resolve_authenticated_principal_from_request(request, container)
+            await resolve_authenticated_principal_off_event_loop(request, container)
             raise AuthorizationError(
                 "Direct unreviewed memory writes are disabled. Submit candidates via "
                 "POST /api/v1/memories/propose and approve via POST /api/v1/memories/{id}/approve.",
@@ -165,7 +166,7 @@ async def _enforce_adk_and_memory_route_security(request: Request) -> Response |
 
     try:
         container = get_service_container(request)
-        principal = resolve_authenticated_principal_from_request(request, container)
+        principal = await resolve_authenticated_principal_off_event_loop(request, container)
 
         user_match = _ADK_APPS_USER_PATH_RE.match(path)
         if user_match:
@@ -176,28 +177,68 @@ async def _enforce_adk_and_memory_route_security(request: Request) -> Response |
                     code="FORBIDDEN",
                 )
 
-        if path in {"/run", "/run_sse"} and method == "POST":
-            raw_body = await request.body()
-            if raw_body:
-                try:
-                    parsed_body = json.loads(raw_body)
-                except ValueError:
-                    parsed_body = None
-                if isinstance(parsed_body, dict):
-                    requested_user_id = str(parsed_body.get("user_id") or "").strip()
-                    if requested_user_id and requested_user_id != principal.user_id:
-                        raise AuthorizationError(
-                            "Authenticated user cannot invoke the agent as another user_id.",
-                            code="FORBIDDEN",
-                        )
+        if path in _ADK_RUN_INVOCATION_PATHS and method == "POST":
+            _require_run_request_targets_principal(await request.body(), principal.user_id)
     except BrewDomainError as exc:
         return build_domain_error_json_response(request, exc)
 
     return None
 
 
+def _is_user_identity_key(key: str) -> bool:
+    """Return True for every spelling of the ADK caller-identity field.
+
+    ADK request models declare ``user_id`` and also accept its camelCase alias ``userId``
+    (``populate_by_name=True``), and the alias wins when both are supplied. Matching on the
+    normalized key keeps this check aligned with whichever spelling ADK ends up honoring.
+    """
+    return key.replace("_", "").replace("-", "").lower() == "userid"
+
+
+def _require_run_request_targets_principal(raw_body: bytes, principal_user_id: str) -> None:
+    """Reject ``/run`` and ``/run_sse`` bodies that do not name exactly the authenticated user.
+
+    Fails closed: a body that is not a JSON object, names no user, or names any user other
+    than the verified principal under any accepted spelling never reaches the ADK runner.
+    """
+    try:
+        parsed_body = json.loads(raw_body) if raw_body else None
+    except ValueError:
+        parsed_body = None
+    if not isinstance(parsed_body, dict):
+        raise DomainValidationError(
+            "Agent run requests must be a JSON object naming the caller's own user_id."
+        )
+
+    # Compared exactly, without trimming: ADK uses the value verbatim as the session owner.
+    requested_user_ids = [
+        value if isinstance(value, str) else None
+        for key, value in parsed_body.items()
+        if _is_user_identity_key(key)
+    ]
+    if not requested_user_ids:
+        raise DomainValidationError("Agent run requests must include the caller's own user_id.")
+    if any(requested != principal_user_id for requested in requested_user_ids):
+        raise AuthorizationError(
+            "Authenticated user cannot invoke the agent as another user_id.",
+            code="FORBIDDEN",
+        )
+
+
+def _websocket_targets_principal(query_string: bytes, principal_user_id: str) -> bool:
+    """Return True only when every ``user_id`` query value equals the authenticated user."""
+    requested_user_ids = [
+        value
+        for key, value in parse_qsl(query_string.decode("latin-1"), keep_blank_values=True)
+        if _is_user_identity_key(key)
+    ]
+    return bool(requested_user_ids) and all(
+        requested == principal_user_id for requested in requested_user_ids
+    )
+
+
 class _DeployedWebSocketAuthMiddleware:
-    """Block unauthenticated WebSocket upgrades to ADK ``/run_live`` in deployed environments."""
+    """Bind ADK ``/run_live`` WebSocket upgrades to the authenticated user when deployed."""
 
     def __init__(self, app: ASGIApp, fastapi_app: FastAPI) -> None:
         self._app = app
@@ -205,13 +246,14 @@ class _DeployedWebSocketAuthMiddleware:
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope.get("type") == "websocket" and scope.get("path") == "/run_live":
+            query_string: bytes = scope.get("query_string", b"")
             pseudo_request = Request(
                 {
                     "type": "http",
                     "method": "GET",
                     "path": "/run_live",
                     "headers": scope.get("headers", []),
-                    "query_string": scope.get("query_string", b""),
+                    "query_string": query_string,
                     "app": self._fastapi_app,
                 }
             )
@@ -219,8 +261,14 @@ class _DeployedWebSocketAuthMiddleware:
             if not active_settings.local_mock_auth_enabled:
                 try:
                     container = get_service_container(pseudo_request)
-                    resolve_authenticated_principal_from_request(pseudo_request, container)
+                    principal = await resolve_authenticated_principal_off_event_loop(
+                        pseudo_request,
+                        container,
+                    )
                 except BrewDomainError:
+                    await send({"type": "websocket.close", "code": 1008})
+                    return
+                if not _websocket_targets_principal(query_string, principal.user_id):
                     await send({"type": "websocket.close", "code": 1008})
                     return
         await self._app(scope, receive, send)
@@ -474,7 +522,11 @@ def create_app(
                 "result_status": "ok",
             },
         )
-        yield
+        try:
+            yield
+        finally:
+            # Give in-flight background jobs a short grace period before the loop closes.
+            await resolved_container.job_runner.drain(timeout_seconds=5.0)
 
     effective_session_uri = (
         "memory://"

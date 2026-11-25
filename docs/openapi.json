@@ -886,6 +886,145 @@
         "title": "MemoryEpistemicStatus",
         "type": "string"
       },
+      "MemoryExtractionJobErrorResponse": {
+        "additionalProperties": false,
+        "description": "Client-safe reason a background memory-extraction job failed.",
+        "properties": {
+          "code": {
+            "description": "Machine-readable failure code, for example 'MODEL_TIMEOUT'.",
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "description": "Human-readable explanation safe to show the user.",
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "MemoryExtractionJobErrorResponse",
+        "type": "object"
+      },
+      "MemoryExtractionJobResponse": {
+        "additionalProperties": false,
+        "description": "State of a background memory-extraction job started from post-meeting notes.",
+        "properties": {
+          "brief_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Preparation brief the notes were submitted for, when one was given.",
+            "title": "Brief Id"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "UTC time the job reached a terminal status.",
+            "title": "Completed At"
+          },
+          "contact_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Contact the notes were submitted for, when one was given.",
+            "title": "Contact Id"
+          },
+          "created_at": {
+            "description": "UTC time the job was accepted.",
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MemoryExtractionJobErrorResponse"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Failure reason. Present only when status is 'failed'."
+          },
+          "id": {
+            "description": "Unique memory-extraction job identifier.",
+            "title": "Id",
+            "type": "string"
+          },
+          "meeting_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Meeting the notes were submitted for, when one was given.",
+            "title": "Meeting Id"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MemoryProposalBatchResponse"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Pending proposals staged for review. Present only when status is 'succeeded'."
+          },
+          "status": {
+            "$ref": "#/components/schemas/MemoryExtractionJobStatus",
+            "description": "'queued', 'running', 'succeeded', or 'failed'."
+          },
+          "updated_at": {
+            "description": "UTC time of the last status change.",
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "MemoryExtractionJobResponse",
+        "type": "object"
+      },
+      "MemoryExtractionJobStatus": {
+        "description": "Lifecycle of a background memory-extraction job.",
+        "enum": [
+          "queued",
+          "running",
+          "succeeded",
+          "failed"
+        ],
+        "title": "MemoryExtractionJobStatus",
+        "type": "string"
+      },
       "MemoryLifecycleState": {
         "description": "Canonical lifecycle state across staged proposals and durable memories.",
         "enum": [
@@ -2970,6 +3109,246 @@
           }
         ],
         "summary": "List approved memories",
+        "tags": [
+          "memories"
+        ]
+      }
+    },
+    "/api/v1/memories/extraction-jobs": {
+      "post": {
+        "description": "Accept notes, return at once, and extract candidate memories in the background.\n\nOwnership of the referenced contact, meeting and brief is checked before the job is\naccepted, so a wrong or foreign id is still rejected immediately. Poll\n``GET /api/v1/memories/extraction-jobs/{id}`` for the result. Proposals are staged as\n``pending`` and need explicit approval before they become memories.",
+        "operationId": "start_memory_extraction_job_api_v1_memories_extraction_jobs_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProposeMemoriesRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryExtractionJobResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Missing, malformed, or invalid Bearer authentication credentials."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Authenticated user does not own the target resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Requested resource does not exist."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Optimistic concurrency version conflict or invalid lifecycle transition."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Request schema, domain invariant, or model output validation failure."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Coaching model execution or invocation budget failure."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Persistence backend unavailable."
+          },
+          "504": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Coaching model request deadline exceeded."
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Start background extraction of candidate memories",
+        "tags": [
+          "memories"
+        ]
+      }
+    },
+    "/api/v1/memories/extraction-jobs/{id}": {
+      "get": {
+        "description": "Return the job's status and, once it has succeeded, the pending proposals it staged.",
+        "operationId": "get_memory_extraction_job_api_v1_memories_extraction_jobs__id__get",
+        "parameters": [
+          {
+            "description": "Memory-extraction job identifier.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "Memory-extraction job identifier.",
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+              "title": "Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryExtractionJobResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Missing, malformed, or invalid Bearer authentication credentials."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Authenticated user does not own the target resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Requested resource does not exist."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Optimistic concurrency version conflict or invalid lifecycle transition."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Request schema, domain invariant, or model output validation failure."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Coaching model execution or invocation budget failure."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Persistence backend unavailable."
+          },
+          "504": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Coaching model request deadline exceeded."
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Poll a background memory-extraction job",
         "tags": [
           "memories"
         ]

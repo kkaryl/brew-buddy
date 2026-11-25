@@ -202,19 +202,19 @@ class MemoryPersistenceService:
             )
             return result
 
-    async def _propose_memories_batch_impl(
+    async def _resolve_proposal_references(
         self,
+        uid: str,
         *,
-        principal: AuthenticatedPrincipal,
-        notes: str,
-        source_type: MemorySourceType,
         meeting_id: str | None,
         contact_id: str | None,
         brief_id: str | None,
-        tracker: SpanOutcomeTracker,
-    ) -> MemoryProposalBatchResult:
-        uid = principal.user_id
+    ) -> tuple[Meeting | None, PreparationBrief | None, Contact | None]:
+        """Load the meeting, brief and contact a proposal request names, enforcing ownership.
 
+        Raises ``AuthorizationError`` for another user's record, ``EntityNotFoundError`` for
+        an unknown one, and ``DomainValidationError`` when the three do not belong together.
+        """
         meeting: Meeting | None = None
         if meeting_id is not None:
             meeting = await self._meeting_repo.get_for_owner(uid, meeting_id)
@@ -255,6 +255,47 @@ class MemoryPersistenceService:
                 if await self._contact_repo.exists_for_any_owner(contact_id):
                     raise AuthorizationError()
                 raise EntityNotFoundError(entity_name="Contact", entity_id=contact_id)
+
+        return meeting, brief, contact
+
+    async def validate_proposal_references(
+        self,
+        *,
+        principal: AuthenticatedPrincipal,
+        meeting_id: str | None = None,
+        contact_id: str | None = None,
+        brief_id: str | None = None,
+    ) -> None:
+        """Check a proposal request's references without running extraction.
+
+        Lets a caller reject a wrong or foreign id immediately, before any model call is
+        scheduled.
+        """
+        await self._resolve_proposal_references(
+            principal.user_id,
+            meeting_id=meeting_id,
+            contact_id=contact_id,
+            brief_id=brief_id,
+        )
+
+    async def _propose_memories_batch_impl(
+        self,
+        *,
+        principal: AuthenticatedPrincipal,
+        notes: str,
+        source_type: MemorySourceType,
+        meeting_id: str | None,
+        contact_id: str | None,
+        brief_id: str | None,
+        tracker: SpanOutcomeTracker,
+    ) -> MemoryProposalBatchResult:
+        uid = principal.user_id
+        meeting, brief, contact = await self._resolve_proposal_references(
+            uid,
+            meeting_id=meeting_id,
+            contact_id=contact_id,
+            brief_id=brief_id,
+        )
 
         raw_segments, _ = split_safe_note_segments(notes)
         filtered_sensitive = 0
@@ -661,12 +702,10 @@ class MemoryPersistenceService:
             )
             return existing_active_mem
 
-        if (
-            target_supersede_memory is None
-            and relation.kind is MemoryRelationKind.SUPERSEDES
-            and relation.matched_memory is not None
-        ):
-            target_supersede_memory = relation.matched_memory
+        # A heuristic SUPERSEDES verdict computed here is deliberately not applied. The only
+        # memory an approval may deactivate is one the user was shown as the target: staged
+        # on the proposal at review time, or named in this approval request. Anything the
+        # classifier notices only now stays active alongside the new memory.
 
         memory_id = self._id_generator.new_id("mem")
 

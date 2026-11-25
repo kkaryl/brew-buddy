@@ -188,6 +188,7 @@ jobs:
             -e PORT=8080 \
             -e APP_ENV=production \
             -e BREW_PERSISTENCE_BACKEND=in_memory \
+            -e BREW_ALLOW_EPHEMERAL_PERSISTENCE=true \
             -e BREW_SESSION_BACKEND=in_memory \
             -e OTEL_TO_CLOUD=false \
             -e GOOGLE_OAUTH_CLIENT_ID=ci-smoke-client.apps.googleusercontent.com \

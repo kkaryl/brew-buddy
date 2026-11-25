@@ -1,4 +1,9 @@
-"""ADK ``conversation_coach`` adapter implementing ``BriefCoachAgentPort`` for brief workflows."""
+"""ADK brief-specialist adapter implementing ``BriefCoachAgentPort`` for brief workflows.
+
+Two specialist agents serve the workflow, each routed to its own model:
+``brief_synthesizer`` writes the first draft on the synthesis model, and ``brief_refiner``
+applies one revision on the refinement model (see ``app/model_routing.py``).
+"""
 
 from __future__ import annotations
 
@@ -42,10 +47,21 @@ from app.domain.models import (
     PreparationBrief,
 )
 from app.domain.ports import BriefAttemptMetrics, GeneratedBriefContent
-from app.domain.types import MeetingDurationMinutes, MeetingTone
+from app.domain.types import (
+    BriefWorkflowOperation,
+    MeetingDurationMinutes,
+    MeetingTone,
+    brief_specialist_agent_name,
+)
 from app.infrastructure.observability import build_adk_telemetry_config
+from app.model_routing import ModelStage, build_gemini_model, resolve_model_id
 from app.plugins.coach_guardrails import ConversationCoachGuardrailPlugin
 from app.plugins.workflow_safeguards import WorkflowSafeguardPlugin
+from app.prompts import (
+    BRIEF_REFINER_INSTRUCTION,
+    BRIEF_SPECIALIST_VERSION,
+    BRIEF_SYNTHESIZER_INSTRUCTION,
+)
 from app.tools.coaching_tools import CoachingToolDependencies, build_coaching_tools
 
 logger = logging.getLogger(__name__)
@@ -250,8 +266,27 @@ def _build_refinement_prompt(
     return prompt
 
 
+_SPECIALIST_STAGE: dict[BriefWorkflowOperation, ModelStage] = {
+    BriefWorkflowOperation.GENERATE: ModelStage.BRIEF_SYNTHESIS,
+    BriefWorkflowOperation.REVISE: ModelStage.BRIEF_REFINEMENT,
+}
+_SPECIALIST_INSTRUCTION: dict[BriefWorkflowOperation, str] = {
+    BriefWorkflowOperation.GENERATE: BRIEF_SYNTHESIZER_INSTRUCTION,
+    BriefWorkflowOperation.REVISE: BRIEF_REFINER_INSTRUCTION,
+}
+_SPECIALIST_DESCRIPTION: dict[BriefWorkflowOperation, str] = {
+    BriefWorkflowOperation.GENERATE: (
+        "Brew Brief Synthesizer. Writes the first structured preparation brief, grounded in "
+        "user-approved context."
+    ),
+    BriefWorkflowOperation.REVISE: (
+        "Brew Brief Refiner. Applies one revision instruction to an existing preparation brief."
+    ),
+}
+
+
 class AdkConversationCoachBriefAdapter:
-    """Executes Brew's ADK ``conversation_coach`` agent and tools to synthesize/refine briefs."""
+    """Runs Brew's ``brief_synthesizer`` and ``brief_refiner`` specialists with read tools."""
 
     def __init__(
         self,
@@ -272,31 +307,23 @@ class AdkConversationCoachBriefAdapter:
         )
         self._max_total_tool_calls = max_total_tool_calls
 
-    def _build_workflow_agent(self) -> Agent:
-        from app.agent import (
-            CONVERSATION_COACH_INSTRUCTION,
-            CONVERSATION_COACH_NAME,
-            build_gemini_model,
-        )
-
+    def _build_workflow_agent(self, operation: BriefWorkflowOperation) -> Agent:
+        """Build the specialist for ``operation`` on the model routed to its stage."""
         timeout_ms = int(self._model_timeout_seconds * 1000)
         active_model = (
             self._model_override
             if self._model_override is not None
-            else build_gemini_model(self._settings)
+            else build_gemini_model(self._settings, stage=_SPECIALIST_STAGE[operation])
         )
         return Agent(
-            name=CONVERSATION_COACH_NAME,
-            description=(
-                "Brew Conversation Coach — synthesizes and refines structured preparation "
-                "briefs grounded in user-approved context."
-            ),
+            name=brief_specialist_agent_name(operation),
+            description=_SPECIALIST_DESCRIPTION[operation],
             model=active_model,
             generate_content_config=types.GenerateContentConfig(
                 temperature=0.2,
                 http_options=types.HttpOptions(timeout=timeout_ms),
             ),
-            instruction=CONVERSATION_COACH_INSTRUCTION + BRIEF_WORKFLOW_JSON_CONTRACT,
+            instruction=_SPECIALIST_INSTRUCTION[operation] + BRIEF_WORKFLOW_JSON_CONTRACT,
             tools=build_coaching_tools(
                 self._tool_dependencies,
                 include_memory_staging=False,
@@ -306,13 +333,12 @@ class AdkConversationCoachBriefAdapter:
     async def _run_coach_turn(
         self,
         *,
+        operation: BriefWorkflowOperation,
         owner_user_id: str,
         prompt: str,
         span_name: str,
         attempt_metrics: BriefAttemptMetrics | None,
     ) -> GeneratedBriefContent:
-        from app.agent import CONVERSATION_COACH_VERSION
-
         corr = resolve_or_create_correlation()
         metrics = attempt_metrics if attempt_metrics is not None else BriefAttemptMetrics()
 
@@ -322,16 +348,16 @@ class AdkConversationCoachBriefAdapter:
                 code="MODEL_INVOCATION_LIMIT_EXCEEDED",
             )
 
-        coach_agent = self._build_workflow_agent()
-        resolved_model_name = (
-            getattr(coach_agent.model, "model", None) or self._settings.gemini_model
+        coach_agent = self._build_workflow_agent(operation)
+        resolved_model_name = getattr(coach_agent.model, "model", None) or resolve_model_id(
+            self._settings, _SPECIALIST_STAGE[operation]
         )
         safeguard_plugin = WorkflowSafeguardPlugin(
             attempt_metrics=metrics,
             max_total_tool_calls=self._max_total_tool_calls,
         )
         guardrail_plugin = ConversationCoachGuardrailPlugin(
-            agent_version=CONVERSATION_COACH_VERSION,
+            agent_version=BRIEF_SPECIALIST_VERSION,
             model_name=str(resolved_model_name),
         )
         adk_app = App(
@@ -391,7 +417,7 @@ class AdkConversationCoachBriefAdapter:
             operation_name=span_name,
             tracer_name=__name__,
             agent_name=coach_agent.name,
-            agent_version=CONVERSATION_COACH_VERSION,
+            agent_version=BRIEF_SPECIALIST_VERSION,
             model_name=str(resolved_model_name),
         ) as turn_tracker:
             try:
@@ -401,12 +427,12 @@ class AdkConversationCoachBriefAdapter:
                 )
             except TimeoutError as exc:
                 logger.error(
-                    f"ADK conversation_coach timed out after {self._model_timeout_seconds}s",
+                    f"ADK {coach_agent.name} timed out after {self._model_timeout_seconds}s",
                     extra={
                         "event_type": "workflow.model.timeout",
                         "operation_name": span_name,
                         "agent_name": coach_agent.name,
-                        "agent_version": CONVERSATION_COACH_VERSION,
+                        "agent_version": BRIEF_SPECIALIST_VERSION,
                         "model_name": str(resolved_model_name),
                         "request_id": corr.request_id,
                         "trace_id": corr.trace_id,
@@ -437,12 +463,12 @@ class AdkConversationCoachBriefAdapter:
                         code="MODEL_INVOCATION_LIMIT_EXCEEDED",
                     ) from exc
                 logger.error(
-                    "ADK conversation_coach failed during brief execution",
+                    f"ADK {coach_agent.name} failed during brief execution",
                     extra={
                         "event_type": "workflow.model.error",
                         "operation_name": span_name,
                         "agent_name": coach_agent.name,
-                        "agent_version": CONVERSATION_COACH_VERSION,
+                        "agent_version": BRIEF_SPECIALIST_VERSION,
                         "model_name": str(resolved_model_name),
                         "request_id": corr.request_id,
                         "trace_id": corr.trace_id,
@@ -470,7 +496,7 @@ class AdkConversationCoachBriefAdapter:
                 operation_name="output.validate",
                 tracer_name=__name__,
                 agent_name=coach_agent.name,
-                agent_version=CONVERSATION_COACH_VERSION,
+                agent_version=BRIEF_SPECIALIST_VERSION,
                 model_name=str(resolved_model_name),
                 attributes={ATTR_VALIDATION_STAGE: "json_schema"},
             ) as val_tracker:
@@ -551,13 +577,14 @@ class AdkConversationCoachBriefAdapter:
         corrective_feedback: Sequence[str] | None = None,
         attempt_metrics: BriefAttemptMetrics | None = None,
     ) -> GeneratedBriefContent:
-        """Synthesize an initial preparation brief via Brew's ADK ``conversation_coach``."""
+        """Synthesize an initial preparation brief via the ``brief_synthesizer`` specialist."""
         prompt = _build_generation_prompt(
             meeting=meeting,
             context=context,
             corrective_feedback=corrective_feedback,
         )
         return await self._run_coach_turn(
+            operation=BriefWorkflowOperation.GENERATE,
             owner_user_id=context.owner_user_id,
             prompt=prompt,
             span_name="coach.workflow.generate_brief",
@@ -576,7 +603,7 @@ class AdkConversationCoachBriefAdapter:
         corrective_feedback: Sequence[str] | None = None,
         attempt_metrics: BriefAttemptMetrics | None = None,
     ) -> GeneratedBriefContent:
-        """Refine an existing preparation brief via Brew's ADK ``conversation_coach``."""
+        """Refine an existing preparation brief via the ``brief_refiner`` specialist."""
         prompt = _build_refinement_prompt(
             current_brief=current_brief,
             meeting=meeting,
@@ -587,6 +614,7 @@ class AdkConversationCoachBriefAdapter:
             corrective_feedback=corrective_feedback,
         )
         return await self._run_coach_turn(
+            operation=BriefWorkflowOperation.REVISE,
             owner_user_id=context.owner_user_id,
             prompt=prompt,
             span_name="coach.workflow.revise_brief",

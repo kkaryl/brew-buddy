@@ -114,6 +114,19 @@ Non-sensitive configuration is passed via `--update-env-vars`:
 
 Auth client credentials (`GOOGLE_OAUTH_CLIENT_ID`, optional `FIREBASE_WEB_API_KEY`) are stored in **Secret Manager** (`brew-google-oauth-client-id`, `brew-firebase-web-api-key`) and mounted via `--update-secrets`.
 
+### 4.2.1 Settings Added on 2026-11-25
+
+| Variable | Default | Purpose |
+| :--- | :--- | :--- |
+| `BREW_SYNTHESIS_MODEL` | `gemini-4-hydrogen` | Model for initial brief synthesis. Set by both deploy paths. Confirm the model is served in `GOOGLE_CLOUD_LOCATION` before the first deploy (ADR-021). |
+| `BREW_REFINEMENT_MODEL`, `BREW_MEMORY_EXTRACTION_MODEL` | unset | Optional per-stage overrides. Unset means `GEMINI_MODEL`. |
+| `BREW_ALLOW_EPHEMERAL_PERSISTENCE` | `false` | A deployed service on `BREW_PERSISTENCE_BACKEND=in_memory` fails `/readyz` unless this is `true`. Only the CI container smoke test should set it (ADR-023). |
+| `BREW_MEMORY_JOB_MAX_CONCURRENCY` | `4` | Background memory-extraction jobs allowed to run at once per instance. |
+| `BREW_MEMORY_JOB_STALE_AFTER_SECONDS` | `300` | A job with no progress for this long is reported as failed. |
+
+> [!WARNING]
+> Background memory extraction (ADR-022) runs inside the serving instance. With `min-instances=0` both deploy paths enable request-based CPU billing (`--cpu-throttling`), which starves a background task between requests. For dependable extraction, deploy with `CLOUD_RUN_MIN_INSTANCES=1` (both paths then pass `--no-cpu-throttling`). This raises idle cost above zero and has not been changed for you.
+
 ### 4.3 Browser Authentication Options
 1. **Option A — Private Cloud Run + Identity-Aware Proxy (Recommended Default)**:
    - Cloud Run remains strictly private (`allUsers` is never granted `roles/run.invoker`); IAP authenticates the browser user at Google's edge and forwards a signed `X-Goog-IAP-JWT-Assertion` header (`iap:<subject>`).

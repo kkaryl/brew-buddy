@@ -2,22 +2,28 @@
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from google.adk.events.event import Event
+from google.adk.runners import Runner
 from pydantic import ValidationError
+from starlette.websockets import WebSocketDisconnect
 
 from app.config import AppSettings
 from app.domain.errors import AuthenticationError
+from app.domain.models import AuthenticatedPrincipal
 from app.fast_api_app import create_app
 from app.infrastructure.auth import (
     FirebaseGoogleTokenAuthenticator,
     RuntimeAuthenticator,
     build_runtime_authenticator,
 )
-from app.infrastructure.fakes import FakeServiceContainer
+from app.infrastructure.fakes import FakeAuthenticator, FakeServiceContainer
 
 
 class ManualUtcClock:
@@ -310,6 +316,7 @@ def test_deployed_adk_and_memory_routes_enforce_auth_ownership_and_hitl_governan
     settings = AppSettings(
         environment="production",
         persistence_backend="in_memory",
+        allow_ephemeral_persistence=True,
         session_backend="in_memory",
         firebase_project_id="brew-prod",
         iap_jwt_audience="/projects/123456/locations/us-east1/services/brew",
@@ -435,3 +442,263 @@ def test_readiness_returns_503_when_deployed_without_verified_auth_provider(
         body = ready.json()
         assert body["status"] == "not_ready"
         assert body["checks"]["auth_ready"] is False
+
+
+_ALICE_BEARER = {"Authorization": "Bearer hdr.alice_prod.sig"}
+_ALICE_UID = "firebase:uid_alice"
+_OTHER_UID = "firebase:uid_other"
+_USER_MESSAGE = {"role": "user", "parts": [{"text": "Hi"}]}
+
+
+def _build_verified_adk_surface_client(tmp_path: Path) -> TestClient:
+    """Build a deployed-mode app whose only valid Bearer token resolves to Alice."""
+
+    def fake_firebase_verifier(token: str) -> dict[str, object]:
+        if token == "hdr.alice_prod.sig":
+            return {"user_id": "uid_alice", "name": "Alice Prod"}
+        raise ValueError("Invalid token")
+
+    settings = AppSettings(
+        environment="production",
+        persistence_backend="in_memory",
+        session_backend="in_memory",
+        firebase_project_id="brew-prod",
+        app_url="https://brew-123456.us-east1.run.app",
+        otel_to_cloud=False,
+        web_dist_dir=tmp_path / "no-dist",
+    )
+    runtime_auth = build_runtime_authenticator(
+        settings,
+        firebase_verifier_override=fake_firebase_verifier,
+    )
+    container = FakeServiceContainer(authenticator=runtime_auth)
+    return TestClient(create_app(settings, service_container=container))
+
+
+def _record_runner_invocations(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Replace ADK Runner.run_async with a recorder so no model call is ever made."""
+    invoked_user_ids: list[str] = []
+
+    async def _recording_run_async(
+        self: Runner,
+        **kwargs: object,
+    ) -> AsyncGenerator[Event, None]:
+        del self
+        invoked_user_ids.append(str(kwargs.get("user_id")))
+        return
+        yield  # pragma: no cover - marks this function as an async generator
+
+    monkeypatch.setattr(Runner, "run_async", _recording_run_async)
+    return invoked_user_ids
+
+
+@pytest.mark.parametrize("path", ["/run", "/run_sse"])
+@pytest.mark.parametrize(
+    "identity_fields",
+    [
+        pytest.param({"userId": _OTHER_UID}, id="camel_case_alias_only"),
+        pytest.param({"user_id": _ALICE_UID, "userId": _OTHER_UID}, id="own_snake_other_camel"),
+        pytest.param({"user_id": _OTHER_UID, "userId": _ALICE_UID}, id="other_snake_own_camel"),
+        pytest.param({"user_id": _OTHER_UID}, id="snake_case_only"),
+    ],
+)
+def test_deployed_run_endpoints_reject_spoofed_user_id_in_every_accepted_spelling(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    path: str,
+    identity_fields: dict[str, str],
+) -> None:
+    monkeypatch.delenv("K_SERVICE", raising=False)
+    invoked_user_ids = _record_runner_invocations(monkeypatch)
+
+    with _build_verified_adk_surface_client(tmp_path) as client:
+        resp = client.post(
+            path,
+            headers=_ALICE_BEARER,
+            json={
+                "appName": "app",
+                "sessionId": "ses_spoof",
+                "newMessage": _USER_MESSAGE,
+                **identity_fields,
+            },
+        )
+
+    assert resp.status_code == 403
+    assert resp.json()["error"]["code"] == "FORBIDDEN"
+    assert invoked_user_ids == []
+
+
+@pytest.mark.parametrize("path", ["/run", "/run_sse"])
+@pytest.mark.parametrize(
+    "raw_body",
+    [
+        pytest.param(b'{"appName": "app", "sessionId": "s1"}', id="no_identity_field"),
+        pytest.param(b'["userId", "firebase:uid_alice"]', id="json_array"),
+        pytest.param(b"not-json", id="malformed_json"),
+        pytest.param(b"", id="empty_body"),
+    ],
+)
+def test_deployed_run_endpoints_reject_bodies_without_a_verifiable_user_id(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    path: str,
+    raw_body: bytes,
+) -> None:
+    monkeypatch.delenv("K_SERVICE", raising=False)
+    invoked_user_ids = _record_runner_invocations(monkeypatch)
+
+    with _build_verified_adk_surface_client(tmp_path) as client:
+        resp = client.post(
+            path,
+            headers={**_ALICE_BEARER, "Content-Type": "application/json"},
+            content=raw_body,
+        )
+
+    assert resp.status_code == 422
+    assert resp.json()["error"]["code"] == "VALIDATION_ERROR"
+    assert invoked_user_ids == []
+
+
+@pytest.mark.parametrize(
+    "identity_fields",
+    [
+        pytest.param({"user_id": _ALICE_UID}, id="snake_case"),
+        pytest.param({"userId": _ALICE_UID}, id="camel_case"),
+        pytest.param({"user_id": _ALICE_UID, "userId": _ALICE_UID}, id="both_agree"),
+    ],
+)
+def test_deployed_run_endpoint_runs_agent_as_authenticated_owner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    identity_fields: dict[str, str],
+) -> None:
+    monkeypatch.delenv("K_SERVICE", raising=False)
+    invoked_user_ids = _record_runner_invocations(monkeypatch)
+
+    with _build_verified_adk_surface_client(tmp_path) as client:
+        resp = client.post(
+            "/run",
+            headers=_ALICE_BEARER,
+            json={
+                "appName": "app",
+                "sessionId": "ses_owner",
+                "newMessage": _USER_MESSAGE,
+                **identity_fields,
+            },
+        )
+
+    assert resp.status_code == 200
+    assert invoked_user_ids == [_ALICE_UID]
+
+
+@pytest.mark.parametrize(
+    ("query", "headers"),
+    [
+        pytest.param(f"user_id={_OTHER_UID}", _ALICE_BEARER, id="other_user"),
+        pytest.param(
+            f"user_id={_ALICE_UID}&user_id={_OTHER_UID}",
+            _ALICE_BEARER,
+            id="repeated_user_id",
+        ),
+        pytest.param("", _ALICE_BEARER, id="missing_user_id"),
+        pytest.param(f"user_id={_ALICE_UID}", {}, id="no_credentials"),
+    ],
+)
+def test_deployed_run_live_websocket_rejects_unbound_or_spoofed_user_id(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    query: str,
+    headers: dict[str, str],
+) -> None:
+    monkeypatch.delenv("K_SERVICE", raising=False)
+    url = f"/run_live?app_name=app&session_id=ses_live&modalities=TEXT&{query}"
+
+    with (
+        _build_verified_adk_surface_client(tmp_path) as client,
+        pytest.raises(WebSocketDisconnect) as rejected,
+        client.websocket_connect(url, headers=headers),
+    ):
+        pass
+
+    assert rejected.value.code == 1008
+
+
+def test_deployed_run_live_websocket_accepts_authenticated_owner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("K_SERVICE", raising=False)
+    live_user_ids: list[str] = []
+
+    async def _recording_run_live(
+        self: Runner,
+        **kwargs: object,
+    ) -> AsyncGenerator[Event, None]:
+        del self
+        live_user_ids.append(str(kwargs.get("user_id")))
+        return
+        yield  # pragma: no cover - marks this function as an async generator
+
+    monkeypatch.setattr(Runner, "run_live", _recording_run_live)
+    url = f"/run_live?app_name=app&session_id=ses_live&modalities=TEXT&user_id={_ALICE_UID}"
+
+    with (
+        _build_verified_adk_surface_client(tmp_path) as client,
+        client.websocket_connect(url, headers=_ALICE_BEARER) as websocket,
+    ):
+        websocket.close()
+
+    assert set(live_user_ids) <= {_ALICE_UID}
+
+
+class _EventLoopAwareAuthenticator(FakeAuthenticator):
+    """Records whether token verification ran on the asyncio event-loop thread."""
+
+    def __init__(self, tokens: dict[str, AuthenticatedPrincipal]) -> None:
+        super().__init__(tokens)
+        self.calls_on_event_loop = 0
+        self.calls_off_event_loop = 0
+
+    def authenticate_bearer_token(self, token: str) -> AuthenticatedPrincipal:
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            self.calls_off_event_loop += 1
+        else:
+            self.calls_on_event_loop += 1
+        return super().authenticate_bearer_token(token)
+
+
+def test_token_verification_never_runs_on_the_event_loop(tmp_path: Path) -> None:
+    """Verification does blocking HTTPS to Google, so it must run on a worker thread."""
+    authenticator = _EventLoopAwareAuthenticator(
+        {"tok_alice": AuthenticatedPrincipal(user_id="usr_alice", display_name="Alice")}
+    )
+    settings = AppSettings(
+        environment="test",
+        auth_mode="verified",
+        persistence_backend="in_memory",
+        session_backend="in_memory",
+        otel_to_cloud=False,
+        web_dist_dir=tmp_path / "no-dist",
+    )
+    container = FakeServiceContainer(authenticator=authenticator)
+    bearer = {"Authorization": "Bearer tok_alice"}
+
+    with TestClient(create_app(settings, service_container=container)) as client:
+        # 1. FastAPI dependency path used by every /api/v1 route.
+        assert client.get("/api/v1/auth/me", headers=bearer).status_code == 200
+        # 2. HTTP middleware path guarding the raw ADK surface.
+        assert client.get("/list-apps", headers=bearer).status_code == 200
+        # 3. ASGI WebSocket middleware path guarding /run_live.
+        with (
+            pytest.raises(WebSocketDisconnect),
+            client.websocket_connect(
+                "/run_live?app_name=app&session_id=s1&modalities=TEXT&user_id=usr_other",
+                headers=bearer,
+            ),
+        ):
+            pass
+
+    assert authenticator.calls_on_event_loop == 0
+    assert authenticator.calls_off_event_loop == 3

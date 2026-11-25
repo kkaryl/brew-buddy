@@ -21,6 +21,7 @@ import type {
   FirebaseClientConfigResponse,
   GenerateBriefRequest,
   MeetingListResponse,
+  MemoryExtractionJobResponse,
   MemoryListResponse,
   MemoryProposalBatchResponse,
   MemoryProposalResponse,
@@ -38,6 +39,9 @@ import type {
 
 const DEFAULT_TIMEOUT_MS = 12_000;
 const WORKFLOW_TIMEOUT_MS = 90_000;
+const DEFAULT_MEMORY_EXTRACTION_POLL_INTERVAL_MS = 1_000;
+// A failed extraction job is reported inside a successful HTTP 200 poll response.
+const MEMORY_EXTRACTION_JOB_HTTP_STATUS = 200;
 
 export class BrewApiError extends Error {
   public readonly status: number;
@@ -132,11 +136,27 @@ async function parseErrorFromResponse(response: Response): Promise<BrewApiError>
   });
 }
 
+function createRequestTimeoutError(timeoutMs: number): BrewApiError {
+  return new BrewApiError({
+    status: 504,
+    code: "REQUEST_TIMEOUT",
+    message: `Request timed out after ${String(Math.round(timeoutMs / 1000))}s. Please try again.`,
+  });
+}
+
+function delay(durationMs: number): Promise<void> {
+  return new Promise<void>((resolve) => {
+    globalThis.setTimeout(resolve, durationMs);
+  });
+}
+
 export interface BrewApiClientOptions {
   readonly getSession: () => StoredAuthSession | null;
   readonly getFirebaseConfig?: () => FirebaseClientConfigResponse | null;
   readonly onSessionUpdated?: (session: StoredAuthSession) => void;
   readonly onUnauthorized?: (reason: string) => void;
+  /** Delay between memory extraction job status polls. Defaults to 1000 ms. */
+  readonly memoryExtractionPollIntervalMs?: number;
 }
 
 export class BrewApiClient {
@@ -257,11 +277,7 @@ export class BrewApiClient {
         throw err;
       }
       if (err instanceof DOMException && err.name === "AbortError") {
-        throw new BrewApiError({
-          status: 504,
-          code: "REQUEST_TIMEOUT",
-          message: `Request timed out after ${String(Math.round(timeoutMs / 1000))}s. Please try again.`,
-        });
+        throw createRequestTimeoutError(timeoutMs);
       }
       throw new BrewApiError({
         status: 503,
@@ -387,13 +403,90 @@ export class BrewApiClient {
     );
   }
 
-  public proposeMemories(payload: ProposeMemoriesRequest): Promise<MemoryProposalBatchResponse> {
-    return this.requestJson<MemoryProposalBatchResponse>("/api/v1/memories/propose", {
+  public startMemoryExtraction(
+    payload: ProposeMemoriesRequest,
+  ): Promise<MemoryExtractionJobResponse> {
+    return this.requestJson<MemoryExtractionJobResponse>("/api/v1/memories/extraction-jobs", {
       method: "POST",
       requiresAuth: true,
       body: payload,
-      timeoutMs: WORKFLOW_TIMEOUT_MS,
     });
+  }
+
+  public getMemoryExtractionJob(jobId: string): Promise<MemoryExtractionJobResponse> {
+    return this.requestMemoryExtractionJob(jobId, DEFAULT_TIMEOUT_MS);
+  }
+
+  private requestMemoryExtractionJob(
+    jobId: string,
+    timeoutMs: number,
+  ): Promise<MemoryExtractionJobResponse> {
+    return this.requestJson<MemoryExtractionJobResponse>(
+      `/api/v1/memories/extraction-jobs/${encodeURIComponent(jobId)}`,
+      {
+        method: "GET",
+        requiresAuth: true,
+        timeoutMs,
+      },
+    );
+  }
+
+  /**
+   * Starts a background memory extraction job and polls it until it finishes.
+   * The whole operation (start, waits, and polls) is bounded by WORKFLOW_TIMEOUT_MS.
+   */
+  public async proposeMemories(
+    payload: ProposeMemoriesRequest,
+  ): Promise<MemoryProposalBatchResponse> {
+    const deadlineAtMs = Date.now() + WORKFLOW_TIMEOUT_MS;
+    const pollIntervalMs =
+      this.options.memoryExtractionPollIntervalMs ?? DEFAULT_MEMORY_EXTRACTION_POLL_INTERVAL_MS;
+
+    let job = await this.startMemoryExtraction(payload);
+
+    while (job.status !== "succeeded" && job.status !== "failed") {
+      // Time left for the next poll request once the wait between polls has elapsed.
+      const pollBudgetMs = deadlineAtMs - Date.now() - pollIntervalMs;
+      if (pollBudgetMs <= 0) {
+        throw createRequestTimeoutError(WORKFLOW_TIMEOUT_MS);
+      }
+      await delay(pollIntervalMs);
+      try {
+        job = await this.requestMemoryExtractionJob(
+          job.id,
+          Math.min(DEFAULT_TIMEOUT_MS, pollBudgetMs),
+        );
+      } catch (err: unknown) {
+        if (
+          err instanceof BrewApiError &&
+          err.code === "REQUEST_TIMEOUT" &&
+          Date.now() >= deadlineAtMs
+        ) {
+          throw createRequestTimeoutError(WORKFLOW_TIMEOUT_MS);
+        }
+        throw err;
+      }
+    }
+
+    if (job.status === "failed") {
+      throw new BrewApiError({
+        status: MEMORY_EXTRACTION_JOB_HTTP_STATUS,
+        code: job.error?.code ?? "MEMORY_EXTRACTION_FAILED",
+        message:
+          job.error?.message ??
+          "Brew could not finish suggesting keepsakes from these notes. Please try again.",
+      });
+    }
+
+    if (!job.result) {
+      throw new BrewApiError({
+        status: MEMORY_EXTRACTION_JOB_HTTP_STATUS,
+        code: "MEMORY_EXTRACTION_RESULT_MISSING",
+        message: "Brew finished reading your notes but returned no suggestions. Please try again.",
+      });
+    }
+
+    return job.result;
   }
 
   public listMemoryProposals(params?: {

@@ -1,5 +1,5 @@
 import { Calendar, ChevronDown, Plus, Sparkles } from "lucide-react";
-import { useEffect, useState, type FormEvent, type JSX } from "react";
+import { useEffect, useRef, useState, type FormEvent, type JSX } from "react";
 import type {
   ContactResponse,
   CreateContactRequest,
@@ -102,11 +102,15 @@ export function QuickSparkSetupScreen({
   const [apiNotice, setApiNotice] = useState<FeedbackNotice | null>(null);
   const [submitting, setSubmitting] = useState<boolean>(false);
 
-  // Hydrate initial seed when entering setup
+  // Apply each seed object exactly once. This effect also re-runs when its other
+  // dependencies change (every keystroke in the objective field, a refreshed contact
+  // list), and re-applying the seed then would overwrite what the user just edited.
+  const appliedSeedRef = useRef<QuickSparkSetupInitialSeed | null>(null);
   useEffect(() => {
-    if (!initialSeed) {
+    if (!initialSeed || appliedSeedRef.current === initialSeed) {
       return;
     }
+    appliedSeedRef.current = initialSeed;
     if (initialSeed.calendarEvent) {
       const ev = initialSeed.calendarEvent;
       setSelectedSlotId(ev.id);

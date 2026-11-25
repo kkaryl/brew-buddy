@@ -5,6 +5,7 @@ import type {
   AuthClientConfigResponse,
   ContactResponse,
   MeetingResponse,
+  MemoryExtractionJobResponse,
   MemoryProposalResponse,
   MemoryResponse,
   PreparationBriefResponse,
@@ -129,6 +130,7 @@ interface MockBackendState {
   revisionsById: Map<string, PreparationBriefResponse[]>;
   proposals: MemoryProposalResponse[];
   memories: MemoryResponse[];
+  extractionJob?: MemoryExtractionJobResponse | null;
   nextCreateContactError?: Response | null;
   nextReviseError?: Response | null;
   forceUnauthorizedOnNextContacts?: boolean;
@@ -317,10 +319,33 @@ function createStatefulFetchMock(state: MockBackendState) {
       });
     }
 
-    if (path === "/api/v1/memories/propose" && method === "POST") {
+    if (path === "/api/v1/memories/extraction-jobs" && method === "POST") {
       const reqBody = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
-      const cid =
-        typeof reqBody["contact_id"] === "string" ? reqBody["contact_id"] : "cnt_alex";
+      const queuedJob: MemoryExtractionJobResponse = {
+        id: "job_extract_1",
+        status: "queued",
+        contact_id: typeof reqBody["contact_id"] === "string" ? reqBody["contact_id"] : null,
+        meeting_id: typeof reqBody["meeting_id"] === "string" ? reqBody["meeting_id"] : null,
+        brief_id: typeof reqBody["brief_id"] === "string" ? reqBody["brief_id"] : null,
+        result: null,
+        error: null,
+        created_at: "2026-11-24T06:10:00Z",
+        updated_at: "2026-11-24T06:10:00Z",
+        completed_at: null,
+      };
+      state.extractionJob = queuedJob;
+      return jsonResponse(queuedJob, 202);
+    }
+
+    if (path.startsWith("/api/v1/memories/extraction-jobs/") && method === "GET") {
+      const job = state.extractionJob;
+      if (!job || path.split("/")[5] !== job.id) {
+        return jsonResponse(
+          { error: { code: "NOT_FOUND", message: "Not found", trace_id: "t1", details: [] } },
+          404,
+        );
+      }
+      const cid = job.contact_id ?? "cnt_alex";
       const p1: MemoryProposalResponse = {
         id: "prop_ai",
         scope: "contact",
@@ -376,15 +401,20 @@ function createStatefulFetchMock(state: MockBackendState) {
         version: 1,
       };
       state.proposals = [p1, p2];
-      return jsonResponse(
-        {
+      const succeededJob: MemoryExtractionJobResponse = {
+        ...job,
+        status: "succeeded",
+        result: {
           proposals: state.proposals,
           total: 2,
           skipped_duplicates: 1,
           filtered_sensitive_count: 0,
         },
-        201,
-      );
+        updated_at: "2026-11-24T06:10:01Z",
+        completed_at: "2026-11-24T06:10:01Z",
+      };
+      state.extractionJob = succeededJob;
+      return jsonResponse(succeededJob);
     }
 
     if (path.startsWith("/api/v1/memories/") && path.endsWith("/approve") && method === "POST") {
@@ -785,7 +815,15 @@ describe("Brew v2 Integration & Feature-Parity Regression Suite", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: /Suggest Keepsakes/i }));
 
-    expect(await screen.findByText(/2 suggested keepsakes staged/i)).toBeInTheDocument();
+    // The extraction job runs in the background: the submit button shows progress while polling
+    expect(
+      await screen.findByRole("button", { name: /Suggesting Keepsakes/i }),
+    ).toBeDisabled();
+
+    // Allow for the client's default 1000 ms job poll interval before the batch arrives
+    expect(
+      await screen.findByText(/2 suggested keepsakes staged/i, undefined, { timeout: 4000 }),
+    ).toBeInTheDocument();
     expect(screen.getByText(/Updates earlier AI adoption note/i)).toBeInTheDocument();
 
     // Edit & Stamp Keep on first proposal

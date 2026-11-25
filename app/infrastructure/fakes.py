@@ -30,6 +30,7 @@ from app.domain.models import (
     ConversationQuestion,
     Meeting,
     Memory,
+    MemoryExtractionJob,
     MemoryProposal,
     PreparationBrief,
     TimeBoxedAgendaItem,
@@ -38,6 +39,7 @@ from app.domain.models import (
 )
 from app.domain.ports import (
     AuthenticatorPort,
+    BackgroundJobRunnerPort,
     BriefAttemptMetrics,
     BriefCoachAgentPort,
     BriefRepository,
@@ -45,6 +47,7 @@ from app.domain.ports import (
     GeneratedBriefContent,
     IdGeneratorPort,
     MeetingRepository,
+    MemoryExtractionJobRepository,
     MemoryProposalAgentPort,
     MemoryProposalRepository,
     MemoryRepository,
@@ -63,6 +66,7 @@ from app.domain.types import (
     MemoryType,
     ProposalStatus,
 )
+from app.infrastructure.background_jobs import InProcessBackgroundJobRunner
 from app.infrastructure.clock import SystemUtcClock
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
@@ -394,6 +398,27 @@ class InMemoryWorkflowIdempotencyRepository:
                 (record.owner_user_id, record.operation.value, record.idempotency_key)
             ] = record
             return record
+
+
+class InMemoryMemoryExtractionJobRepository:
+    """Async fake repository mirroring ``users/{uid}/memoryJobs/{jobId}``."""
+
+    def __init__(self) -> None:
+        self._lock = asyncio.Lock()
+        self._jobs: dict[tuple[str, str], MemoryExtractionJob] = {}
+
+    async def get_for_owner(
+        self,
+        owner_user_id: str,
+        job_id: str,
+    ) -> MemoryExtractionJob | None:
+        async with self._lock:
+            return self._jobs.get((owner_user_id, job_id))
+
+    async def save(self, job: MemoryExtractionJob) -> MemoryExtractionJob:
+        async with self._lock:
+            self._jobs[(job.owner_user_id, job.id)] = job
+            return job
 
 
 class InMemoryMemoryProposalRepository:
@@ -1118,6 +1143,8 @@ class ServiceContainer:
         brief_agent: BriefCoachAgentPort,
         proposal_agent: MemoryProposalAgentPort,
         idempotency_repo: WorkflowIdempotencyRepository | None = None,
+        job_repo: MemoryExtractionJobRepository | None = None,
+        job_runner: BackgroundJobRunnerPort | None = None,
     ) -> None:
         self.clock = clock
         self.id_generator = id_generator
@@ -1134,6 +1161,12 @@ class ServiceContainer:
             idempotency_repo
             if idempotency_repo is not None
             else InMemoryWorkflowIdempotencyRepository()
+        )
+        self.job_repo: MemoryExtractionJobRepository = (
+            job_repo if job_repo is not None else InMemoryMemoryExtractionJobRepository()
+        )
+        self.job_runner: BackgroundJobRunnerPort = (
+            job_runner if job_runner is not None else InProcessBackgroundJobRunner()
         )
 
 

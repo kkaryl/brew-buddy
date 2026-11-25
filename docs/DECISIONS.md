@@ -31,7 +31,7 @@ This document records significant architectural and technical decisions for **Br
 ## ADR-003: Strategic Gemini Model Routing (Pro vs. Flash)
 
 - **Date:** 2026-11-22
-- **Status:** Accepted
+- **Status:** Accepted. Implemented on 2026-11-25 as described in ADR-021, which records the actual models and routes.
 - **Context:** Not every LLM call in Brew has the same reasoning depth, latency sensitivity, or cost profile. Initial brief generation synthesizes counterpart background, meeting archetype nuances, strict duration budgets, and historical memories, whereas conversational tweaks and note extraction require fast turnaround and structured extraction.
 - **Decision:** Route workloads explicitly by stage via injected model configuration:
   - **Gemini Pro** for `BriefSynthesizerAgent` (initial multi-constraint conversation preparation).
@@ -45,7 +45,7 @@ This document records significant architectural and technical decisions for **Br
 ## ADR-004: Asynchronous Memory Extraction with Mandatory Human-in-the-Loop (HITL) Approval
 
 - **Date:** 2026-11-22
-- **Status:** Accepted
+- **Status:** Accepted. Implemented on 2026-11-25 as described in ADR-022, which records the actual API and its limits.
 - **Context:** Extracting candidate memories from post-meeting notes involves PII scrubbing and LLM inference, which would stall the UI if run synchronously. Worse, silently committing LLM-inferred personal facts or user preferences into durable cross-session memory risks hallucination propagation and erodes user trust.
 - **Decision:**
   1. Persist PII-scrubbed notes immediately and execute memory extraction asynchronously in the background (`202 Accepted` + status polling/SSE).
@@ -192,6 +192,9 @@ This document records significant architectural and technical decisions for **Br
 - **Consequences:**
   - *Positive:* Strict human-in-the-loop memory governance, preserved meeting/note provenance and timestamps across all 5 states, automatic exclusion of rejected/superseded/deleted memories from future session retrieval, and end-to-end verification across two distinct Firestore-persisted ADK sessions (`tests/unit/test_memory_lifecycle.py` and `tests/integration/test_firestore_persistence.py`).
   - *Trade-off:* Maintaining immutable `deletedMemories` tombstones adds one subcollection write per deletion transaction in exchange for complete lifecycle provenance and verifiable non-retrieval from `users/{uid}/memories`.
+- **Amendment (2026-11-25):** Two rules were tightened after code review:
+  1. Approval supersedes only a memory the user was shown as the target: the `supersedes_memory_id` staged on the proposal at review time, or the one named in the approval request. A contradiction the classifier detects only at approval time is no longer applied, so both memories stay active and the user resolves it. Previously a one-word overlap with an opposing word could archive an unrelated approved memory.
+  2. A candidate that repeats an active memory with a different figure (for example "12 engineers" and "40 engineers") is classified as an update for review, not a duplicate to skip.
 
 ---
 
@@ -285,4 +288,48 @@ This document records significant architectural and technical decisions for **Br
   - *Positive:* Near-zero idle cost (`$0` compute when idle, no VPC/NAT/Cloud SQL/GCLB overhead), zero downloadable JSON keys, defense-in-depth protection even if ingress settings are changed, and deterministic CI gates without unexpected PR LLM spend.
   - *Trade-off:* `min-instances=0` incurs a ~2–4s cold start on the first request after idle periods (operators can set `CLOUD_RUN_MIN_INSTANCES=1` when warm capacity is preferred).
 
+---
+
+## ADR-021: Per-Stage Model Routing and Brief Specialist Agents
+
+- **Date:** 2026-11-25
+- **Status:** Accepted
+- **Context:** ADR-003 called for routing by task, but every agent used the single `GEMINI_MODEL`, and the brief workflow reused the conversational coach's instruction, which told the model to call a memory-staging tool that the workflow had removed. Initial brief synthesis is the one step that weighs every constraint together (objective, counterpart context, preferences, time budget). Refinement is one targeted edit, and memory extraction is short structured output.
+- **Decision:**
+  1. Route by stage in one place, [`app/model_routing.py`](../app/model_routing.py). `ModelStage.BRIEF_SYNTHESIS` uses `BREW_SYNTHESIS_MODEL` (default `gemini-4-hydrogen`, chosen by the project owner on 2026-11-25). `BRIEF_REFINEMENT` and `MEMORY_EXTRACTION` use `BREW_REFINEMENT_MODEL` and `BREW_MEMORY_EXTRACTION_MODEL`, each falling back to `GEMINI_MODEL` (default `gemini-3.8-flash`). Conversation and history summarization stay on `GEMINI_MODEL`.
+  2. Replace the single workflow agent with two specialists built by `AdkConversationCoachBriefAdapter`: `brief_synthesizer` for generation and `brief_refiner` for revision. Each has its own instruction in [`app/prompts.py`](../app/prompts.py), shares the grounding, security and privacy principles with the coach, keeps the three read-only tools, and is never told about memory staging.
+  3. Keep `conversation_coach` unchanged for the raw ADK chat and A2A surface. Its instruction text is preserved byte for byte.
+  4. Orchestration stays in the deterministic Python `MeetingPreparationWorkflow`. This is specialist agents behind a deterministic orchestrator, not an ADK `SequentialAgent` or workflow graph.
+- **Consequences:**
+  - *Positive:* The advanced model is used for at most the initial draft and its single corrective regeneration. Routes are settings, so an environment can change a model without a code change. The prompt and the toolset now agree on the brief path.
+  - *Trade-off:* Synthesis now depends on a second model being served in the configured location. `gemini-4-hydrogen` could not be verified from the development environment, and no evaluation has been run on it yet, so the first live call and a smoke eval are required before relying on it. Setting `BREW_SYNTHESIS_MODEL` to the base model restores the previous behaviour.
+
+---
+
+## ADR-022: Background Memory Extraction Jobs
+
+- **Date:** 2026-11-25
+- **Status:** Accepted
+- **Context:** ADR-004 called for asynchronous extraction, but `POST /api/v1/memories/propose` ran the extraction model inside the request. A slow model held the HTTP request and the debrief screen open.
+- **Decision:**
+  1. Add `POST /api/v1/memories/extraction-jobs` (202 Accepted with a job) and `GET /api/v1/memories/extraction-jobs/{id}` for polling. Ownership of the referenced contact, meeting and brief is checked before the job is accepted, so 403, 404 and 422 are still returned immediately.
+  2. `MemoryExtractionJobService` ([`app/application/memory_jobs.py`](../app/application/memory_jobs.py)) records a job under `users/{uid}/memoryJobs/{jobId}` and hands the model call to a `BackgroundJobRunnerPort`. The job record never stores the notes. A finished job only references `pending` proposals, so human approval is unchanged.
+  3. The default runner, `InProcessBackgroundJobRunner`, runs the job as an asyncio task on the serving loop with bounded concurrency (`BREW_MEMORY_JOB_MAX_CONCURRENCY`, default 4) and a short drain at shutdown.
+  4. A job that is still `queued` or `running` after `BREW_MEMORY_JOB_STALE_AFTER_SECONDS` (default 300) is closed as `failed` with `MEMORY_EXTRACTION_STALLED` when it is next read, so a client never polls forever after an instance is lost.
+  5. The SPA uses the job API. The synchronous `POST /api/v1/memories/propose` stays for compatibility.
+- **Consequences:**
+  - *Positive:* The request returns in milliseconds, failures are reported on the job with a client-safe code, and the UI is no longer tied to one long request.
+  - *Trade-off:* An in-process task is lost if its instance stops, and on Cloud Run with request-based billing (the default when `min-instances=0`) CPU is throttled between requests, so a job only progresses while another request, such as the client's poll, is in flight. Run with `CLOUD_RUN_MIN_INSTANCES=1` or `--no-cpu-throttling` for dependable background work, or replace the runner with a queue such as Cloud Tasks behind the same port. Job records have no TTL yet.
+
+---
+
+## ADR-023: Readiness Fails Closed on Ephemeral Storage in Deployed Environments
+
+- **Date:** 2026-11-25
+- **Status:** Accepted
+- **Context:** `BREW_PERSISTENCE_BACKEND` defaults to `in_memory`. A staging, production or Cloud Run service started without it accepted writes, reported ready, and lost every contact, brief and memory on restart.
+- **Decision:** `/readyz` reports `persistence_ready=false` (HTTP 503) when the environment is deployed and the backend is not Firestore, unless `BREW_ALLOW_EPHEMERAL_PERSISTENCE=true` is set on purpose. The CI container smoke test sets that flag because it boots a production image on in-memory stores.
+- **Consequences:**
+  - *Positive:* A misconfigured deployment fails its startup probe instead of silently discarding user data.
+  - *Trade-off:* Any deliberate in-memory deployment (for example a throwaway demo) must set the flag explicitly.
 

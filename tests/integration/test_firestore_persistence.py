@@ -37,12 +37,13 @@ from app.domain.errors import (
     EntityNotFoundError,
     VersionConflictError,
 )
-from app.domain.models import AuthenticatedPrincipal, Meeting
+from app.domain.models import AuthenticatedPrincipal, Meeting, MemoryExtractionJob
 from app.domain.types import (
     MeetingPurpose,
     MeetingStatus,
     MeetingTone,
     MemoryEpistemicStatus,
+    MemoryExtractionJobStatus,
     MemoryLifecycleState,
     ProposalStatus,
 )
@@ -60,6 +61,7 @@ from app.infrastructure.firestore_repositories import (
     FirestoreBriefRepository,
     FirestoreContactRepository,
     FirestoreMeetingRepository,
+    FirestoreMemoryExtractionJobRepository,
     FirestoreMemoryProposalRepository,
     FirestoreMemoryRepository,
     FirestoreUserPreferencesRepository,
@@ -1371,3 +1373,44 @@ def test_firestore_emulator_idempotency_and_cross_tenant_authorization_bounds(
             client.get(f"/api/v1/meetings?contact_id={contact_id}", headers=bob_h).status_code
             == 403
         )
+
+
+@pytest.mark.asyncio
+async def test_memory_extraction_job_round_trip_is_owner_scoped_and_stores_no_notes(
+    firestore_emulator_env: str,
+) -> None:
+    assert firestore_emulator_env
+    project = f"brew-emulator-jobs-{int(time.time() * 1000)}"
+    raw_client = create_firestore_async_client(project=project, database="(default)")
+    with contextlib.closing(raw_client) as client:
+        job_repo = FirestoreMemoryExtractionJobRepository(client)
+        now = datetime(2026, 11, 25, 9, 0, 0, tzinfo=UTC)
+        queued = MemoryExtractionJob(
+            id="mjob_emulator_1",
+            owner_user_id="usr_alice",
+            contact_id="cnt_alex",
+            created_at=now,
+            updated_at=now,
+        )
+
+        await job_repo.save(queued)
+        loaded = await job_repo.get_for_owner("usr_alice", queued.id)
+        assert loaded == queued
+        assert await job_repo.get_for_owner("usr_bob", queued.id) is None
+        assert await job_repo.get_for_owner("usr_alice", "mjob_missing") is None
+
+        finished = queued.mark_running(started_at=now).mark_succeeded(
+            proposal_ids=["prop_1", "prop_2"],
+            skipped_duplicates=1,
+            filtered_sensitive_count=0,
+            completed_at=now + timedelta(seconds=3),
+        )
+        await job_repo.save(finished)
+        reloaded = await job_repo.get_for_owner("usr_alice", queued.id)
+        assert reloaded is not None
+        assert reloaded.status is MemoryExtractionJobStatus.SUCCEEDED
+        assert reloaded.proposal_ids == ["prop_1", "prop_2"]
+
+        raw_doc = await client.document(f"users/usr_alice/memoryJobs/{queued.id}").get()
+        assert raw_doc.exists
+        assert "notes" not in (raw_doc.to_dict() or {})

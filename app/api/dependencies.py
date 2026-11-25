@@ -5,10 +5,12 @@ from __future__ import annotations
 from typing import Annotated
 
 from fastapi import Depends, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.api.health import get_app_settings
 from app.application.brief_workflow import BriefWorkflowSafeguardConfig
+from app.application.memory_jobs import MemoryExtractionJobService
 from app.application.memory_persistence_service import MemoryPersistenceService
 from app.application.memory_retrieval_service import MemoryRetrievalService
 from app.application.services import (
@@ -83,16 +85,35 @@ def resolve_authenticated_principal_from_request(
     raise AuthenticationError("Missing Authorization Bearer header.")
 
 
+async def resolve_authenticated_principal_off_event_loop(
+    request: Request,
+    container: ServiceContainer,
+    credentials: HTTPAuthorizationCredentials | None = None,
+) -> AuthenticatedPrincipal:
+    """Resolve the caller's identity on a worker thread.
+
+    Token verification is synchronous and may call Google over HTTPS (signing certificates,
+    ``tokeninfo``, ``userinfo``). Running it inline in an ``async`` handler would stall every
+    other in-flight request on the event loop for the duration of those calls.
+    """
+    return await run_in_threadpool(
+        resolve_authenticated_principal_from_request,
+        request,
+        container,
+        credentials,
+    )
+
+
 async def get_current_principal(
     request: Request,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_security)],
     container: Annotated[ServiceContainer, Depends(get_service_container)],
 ) -> AuthenticatedPrincipal:
     """Resolve user identity strictly from verified HTTP Bearer or IAP authentication."""
-    return resolve_authenticated_principal_from_request(
+    return await resolve_authenticated_principal_off_event_loop(
         request,
         container,
-        credentials=credentials,
+        credentials,
     )
 
 
@@ -184,4 +205,24 @@ def get_memory_service(
     return MemoryService(
         retrieval=memory_retrieval,
         persistence=memory_persistence,
+    )
+
+
+def get_memory_extraction_job_service(
+    request: Request,
+    container: Annotated[ServiceContainer, Depends(get_service_container)],
+    memory_persistence: Annotated[
+        MemoryPersistenceService, Depends(get_memory_persistence_service)
+    ],
+) -> MemoryExtractionJobService:
+    """Construct ``MemoryExtractionJobService`` over the shared job store and runner."""
+    settings: AppSettings = getattr(request.app.state, "settings", None) or get_settings()
+    return MemoryExtractionJobService(
+        persistence=memory_persistence,
+        job_repo=container.job_repo,
+        proposal_repo=container.proposal_repo,
+        job_runner=container.job_runner,
+        clock=container.clock,
+        id_generator=container.id_generator,
+        stale_after_seconds=settings.memory_job_stale_after_seconds,
     )

@@ -202,10 +202,14 @@ def read_readiness(
         and getattr(request.app.state, "session_service", None) is not None
     )
 
-    if settings.persistence_backend == "firestore":
-        persistence_ready = container.memory_repo is not None and container.brief_repo is not None
-    else:
-        persistence_ready = True
+    # Fail closed: a deployed service on in-memory storage would accept writes and lose
+    # them on the next restart, so it must not pass its readiness probe unless that was
+    # requested explicitly with BREW_ALLOW_EPHEMERAL_PERSISTENCE.
+    persistence_ready = (
+        container.memory_repo is not None
+        and container.brief_repo is not None
+        and settings.persistence_is_acceptable_for_environment
+    )
 
     if settings.local_mock_auth_enabled:
         auth_ready = True

@@ -41,6 +41,7 @@ from app.domain.models import Contact, Meeting, Memory
 from app.domain.ports import BriefAttemptMetrics, ProposedMemoryCandidate
 from app.domain.types import MemoryScope, MemoryType
 from app.infrastructure.observability import build_adk_telemetry_config
+from app.model_routing import ModelStage, build_gemini_model, resolve_model_id
 from app.plugins.coach_guardrails import ConversationCoachGuardrailPlugin
 from app.plugins.workflow_safeguards import WorkflowSafeguardPlugin
 
@@ -145,13 +146,11 @@ class AdkMemoryProposalAdapter:
         )
 
     def _build_extractor_agent(self) -> Agent:
-        from app.agent import build_gemini_model
-
         timeout_ms = int(self._model_timeout_seconds * 1000)
         active_model = (
             self._model_override
             if self._model_override is not None
-            else build_gemini_model(self._settings)
+            else build_gemini_model(self._settings, stage=ModelStage.MEMORY_EXTRACTION)
         )
         return Agent(
             name=MEMORY_EXTRACTOR_AGENT_NAME,
@@ -177,8 +176,8 @@ class AdkMemoryProposalAdapter:
         corr = resolve_or_create_correlation()
         metrics = BriefAttemptMetrics(remaining_model_budget=2, max_tool_retries=0)
         extractor_agent = self._build_extractor_agent()
-        resolved_model_name = (
-            getattr(extractor_agent.model, "model", None) or self._settings.gemini_model
+        resolved_model_name = getattr(extractor_agent.model, "model", None) or resolve_model_id(
+            self._settings, ModelStage.MEMORY_EXTRACTION
         )
         safeguard_plugin = WorkflowSafeguardPlugin(
             attempt_metrics=metrics,

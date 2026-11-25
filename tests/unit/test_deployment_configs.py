@@ -9,6 +9,9 @@ from pathlib import Path
 from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+# The setup scripts need agents-cli or uvx on PATH. Prepend ~/.local/bin to the caller's
+# PATH so dry-runs work across local user-tool installs and CI runners alike.
+_SCRIPT_PATH = f"{Path.home() / '.local' / 'bin'}:{os.environ.get('PATH', '/usr/bin:/bin')}"
 
 
 def _load_yaml(path: Path) -> dict[object, Any]:
@@ -81,7 +84,7 @@ def test_gcloud_setup_script_syntax_dry_run_and_zero_key_guarantees() -> None:
         capture_output=True,
         text=True,
         env={
-            "PATH": f"{Path.home() / '.local' / 'bin'}:{os.environ.get('PATH', '/usr/bin:/bin')}",
+            "PATH": _SCRIPT_PATH,
             "PROJECT_ID": "brew-unit-dryrun",
             "GITHUB_REPO": "acme/brew",
             "ENABLE_IAP": "true",
@@ -92,6 +95,24 @@ def test_gcloud_setup_script_syntax_dry_run_and_zero_key_guarantees() -> None:
     assert "--region asia-southeast1" in dry_run.stdout
     assert "--startup-probe=httpGet.path=/readyz" in dry_run.stdout
     assert "--liveness-probe=httpGet.path=/healthz" in dry_run.stdout
+    # Per-stage model routing and durable storage reach the deployed service.
+    assert "GEMINI_MODEL=gemini-3.8-flash" in dry_run.stdout
+    assert "BREW_SYNTHESIS_MODEL=gemini-4-hydrogen" in dry_run.stdout
+    assert "BREW_PERSISTENCE_BACKEND=firestore" in dry_run.stdout
+    assert "BREW_ALLOW_EPHEMERAL_PERSISTENCE" not in dry_run.stdout
+
+
+def test_deploy_workflow_routes_models_and_only_ci_smoke_allows_ephemeral_storage() -> None:
+    workflows_dir = REPO_ROOT / ".github" / "workflows"
+    deploy_raw = (workflows_dir / "deploy.yml").read_text(encoding="utf-8")
+    ci_raw = (workflows_dir / "ci.yml").read_text(encoding="utf-8")
+
+    assert "BREW_SYNTHESIS_MODEL=${BREW_SYNTHESIS_MODEL}" in deploy_raw
+    assert "vars.BREW_SYNTHESIS_MODEL || 'gemini-4-hydrogen'" in deploy_raw
+    assert "BREW_PERSISTENCE_BACKEND=firestore" in deploy_raw
+    assert "BREW_ALLOW_EPHEMERAL_PERSISTENCE" not in deploy_raw
+    # The container smoke test boots a production image on in-memory stores on purpose.
+    assert "BREW_ALLOW_EPHEMERAL_PERSISTENCE=true" in ci_raw
 
 
 def test_github_workflows_enforce_pr_gates_wif_auth_and_controlled_eval() -> None:
@@ -149,7 +170,7 @@ def test_iap_setup_script_syntax_dry_run_and_domain_guardrails() -> None:
     assert syntax_res.returncode == 0, syntax_res.stderr
 
     base_env = {
-        "PATH": f"{Path.home() / '.local' / 'bin'}:{os.environ.get('PATH', '/usr/bin:/bin')}",
+        "PATH": _SCRIPT_PATH,
         "PROJECT_ID": "brew-unit-dryrun",
         "REGION": "asia-southeast1",
         "IAP_CLIENT_ID": "123456-iap.apps.googleusercontent.com",

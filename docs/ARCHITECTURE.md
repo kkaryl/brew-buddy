@@ -131,6 +131,16 @@ brew/
 
 ## 4. ADK 2.x Multi-Agent & Workflow Architecture
 
+> [!IMPORTANT]
+> **Implementation status (2026-11-25).** Sections 4.1 to 4.3 describe the original target design. What runs today differs in names and shape:
+> - **Specialist agents.** `brief_synthesizer` writes the first draft and `brief_refiner` applies one revision. Both are ADK `LlmAgent`s built in [`app/infrastructure/adk_brief_coach.py`](../app/infrastructure/adk_brief_coach.py) with instructions from [`app/prompts.py`](../app/prompts.py) and three read-only tools. `memory_candidate_extractor` has no tools. `conversation_coach` ([`app/agent.py`](../app/agent.py)) serves the raw ADK chat and A2A surface.
+> - **Model routing.** [`app/model_routing.py`](../app/model_routing.py) routes synthesis to `BREW_SYNTHESIS_MODEL` (default `gemini-4-hydrogen`) and everything else to `GEMINI_MODEL` (default `gemini-3.8-flash`) unless a stage override is set. See ADR-021.
+> - **Orchestration.** A deterministic Python class, `MeetingPreparationWorkflow` ([`app/application/brief_workflow.py`](../app/application/brief_workflow.py)), assembles context, calls the specialist, validates its JSON, and allows one corrective regeneration. There is no `BrewCoordinatorWorkflow`, `ContextAssemblerNode`, ADK workflow graph or `output_schema`. Each attempt uses a fresh in-memory ADK session, so refinement history compaction does not apply on this path.
+> - **Background extraction.** `POST /api/v1/memories/extraction-jobs` returns 202 and the extractor runs as a background job. See ADR-022.
+> - **Plugins.** `ConversationCoachGuardrailPlugin` and `WorkflowSafeguardPlugin` stand in for the `BrewGuardrailPlugin` named below.
+>
+> Section 4.4 (tool contract) is accurate. See the current agent design in [`README.md`](../README.md) and ADRs 021–025 in [`DECISIONS.md`](DECISIONS.md).
+
 Rather than using a monolithic single-agent prompt, Brew decomposes agentic responsibilities across specialized ADK 2.x components with **strategic model routing**, **explicit JSON schemas**, **runner-wide safety plugins**, and **Human-in-the-Loop memory approval**.
 
 ### 4.1 Agent Roster & Model Routing

@@ -1,4 +1,8 @@
-"""Rubric-aware LLM-as-judge for Brew's 15 coaching & safety evaluation categories."""
+"""Rubric-aware LLM-as-judge for Brew's 15 coaching & safety evaluation categories.
+
+Live mode only. The judge model comes from `BREW_EVAL_JUDGE_MODEL` (default
+`gemini-4-hydrogen`), never from the agent's `GEMINI_MODEL`.
+"""
 
 from __future__ import annotations
 
@@ -12,7 +16,15 @@ from google.genai import types
 from pydantic import BaseModel
 
 _local = threading.local()
-DEFAULT_EVAL_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
+# The judge has its own model setting so it does not grade the agent under test with the
+# agent's own model. `GEMINI_MODEL` (the agent's model) is deliberately not consulted.
+JUDGE_MODEL_ENV_VAR = "BREW_EVAL_JUDGE_MODEL"
+DEFAULT_JUDGE_MODEL = "gemini-4-hydrogen"
+
+
+def resolve_judge_model() -> str:
+    """Return the judge model id: `BREW_EVAL_JUDGE_MODEL` when set, else the default."""
+    return (os.getenv(JUDGE_MODEL_ENV_VAR) or "").strip() or DEFAULT_JUDGE_MODEL
 
 
 class _RubricVerdict(BaseModel):
@@ -100,7 +112,7 @@ def evaluate(instance: dict[str, Any]) -> dict[str, Any]:
     )
 
     response = _client().models.generate_content(
-        model=DEFAULT_EVAL_MODEL,
+        model=resolve_judge_model(),
         contents=judge_prompt,
         config=types.GenerateContentConfig(
             temperature=0,

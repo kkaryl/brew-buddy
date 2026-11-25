@@ -282,6 +282,26 @@ export interface MemoryProposalBatchResponse {
   readonly filtered_sensitive_count: number;
 }
 
+export type MemoryExtractionJobStatus = "queued" | "running" | "succeeded" | "failed";
+
+export interface MemoryExtractionJobError {
+  readonly code: string;
+  readonly message: string;
+}
+
+export interface MemoryExtractionJobResponse {
+  readonly id: string;
+  readonly status: MemoryExtractionJobStatus;
+  readonly contact_id: string | null;
+  readonly meeting_id: string | null;
+  readonly brief_id: string | null;
+  readonly result: MemoryProposalBatchResponse | null;
+  readonly error: MemoryExtractionJobError | null;
+  readonly created_at: string;
+  readonly updated_at: string;
+  readonly completed_at: string | null;
+}
+
 export interface ApproveMemoryProposalRequest {
   readonly expected_version?: number;
   readonly edited_text?: string | null;

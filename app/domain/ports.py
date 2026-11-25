@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from typing import Protocol, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -14,6 +14,7 @@ from app.domain.models import (
     ConversationQuestion,
     Meeting,
     Memory,
+    MemoryExtractionJob,
     MemoryProposal,
     PreparationBrief,
     TimeBoxedAgendaItem,
@@ -391,3 +392,32 @@ class MemoryProposalAgentPort(Protocol):
         existing_memories: Sequence[Memory],
     ) -> list[ProposedMemoryCandidate]:
         """Extract candidate memories requiring human-in-the-loop approval."""
+
+
+class MemoryExtractionJobRepository(Protocol):
+    """Async persistence port for background memory-extraction job records."""
+
+    async def get_for_owner(
+        self,
+        owner_user_id: str,
+        job_id: str,
+    ) -> MemoryExtractionJob | None:
+        """Fetch a job by ID, returning None when it is absent or owned by another user."""
+
+    async def save(self, job: MemoryExtractionJob) -> MemoryExtractionJob:
+        """Create or replace the job record at its owner-scoped path."""
+
+
+class BackgroundJobRunnerPort(Protocol):
+    """Port that runs a coroutine after the current request has returned."""
+
+    def submit(
+        self,
+        job: Callable[[], Awaitable[None]],
+        *,
+        name: str,
+    ) -> None:
+        """Schedule job to run in the background. Must not block and must not raise."""
+
+    async def drain(self, *, timeout_seconds: float) -> None:
+        """Wait up to timeout_seconds for scheduled jobs to finish (used at shutdown)."""

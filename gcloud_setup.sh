@@ -51,6 +51,7 @@ Key Environment Variables:
   SERVICE_NAME                 Cloud Run service name (default: brew).
   AR_REPO                      Artifact Registry Docker repository (default: brew).
   GEMINI_MODEL                 Configured Gemini model ID (default: gemini-3.8-flash).
+  BREW_SYNTHESIS_MODEL         Model for initial brief synthesis (default: gemini-4-hydrogen).
   CLOUD_RUN_CPU                vCPU limit per instance (default: 1).
   CLOUD_RUN_MEMORY             Memory limit per instance (default: 1Gi).
   CLOUD_RUN_CONCURRENCY        Max concurrent requests per instance (default: 8).
@@ -104,6 +105,7 @@ FIRESTORE_DATABASE="${FIRESTORE_DATABASE:-(default)}"
 SERVICE_NAME="${SERVICE_NAME:-brew}"
 AR_REPO="${AR_REPO:-brew}"
 GEMINI_MODEL="${GEMINI_MODEL:-gemini-3.8-flash}"
+BREW_SYNTHESIS_MODEL="${BREW_SYNTHESIS_MODEL:-gemini-4-hydrogen}"
 GOOGLE_CLOUD_LOCATION="${GOOGLE_CLOUD_LOCATION:-global}"
 
 RUNTIME_SA_NAME="${RUNTIME_SA_NAME:-brew-runtime}"
@@ -806,6 +808,7 @@ RUNTIME_ENV_VARS=(
   "GOOGLE_CLOUD_LOCATION=${GOOGLE_CLOUD_LOCATION}"
   "GOOGLE_GENAI_USE_ENTERPRISE=true"
   "GEMINI_MODEL=${GEMINI_MODEL}"
+  "BREW_SYNTHESIS_MODEL=${BREW_SYNTHESIS_MODEL}"
   "BREW_PERSISTENCE_BACKEND=firestore"
   "FIRESTORE_DATABASE=${FIRESTORE_DATABASE}"
   "BREW_SESSION_BACKEND=firestore"

@@ -87,6 +87,8 @@ from app.domain.ports import (
     WorkflowIdempotencyRepository,
 )
 from app.domain.types import (
+    BRIEF_REFINER_AGENT_NAME,
+    BRIEF_SYNTHESIZER_AGENT_NAME,
     BriefWorkflowOperation,
     BriefWorkflowTerminalState,
     EntityId,
@@ -101,6 +103,7 @@ from app.domain.types import (
     ShortTagText,
     UtcDatetime,
     VersionNumber,
+    brief_specialist_agent_name,
 )
 
 logger = logging.getLogger(__name__)
@@ -694,7 +697,7 @@ class MeetingPreparationWorkflow:
                     "brew.output.validate",
                     operation_name="output.validate",
                     tracer_name=__name__,
-                    agent_name="conversation_coach",
+                    agent_name=brief_specialist_agent_name(operation),
                     agent_version="1.0.0",
                     attributes={
                         ATTR_VALIDATION_STAGE: "domain_and_quality",
@@ -773,7 +776,7 @@ class MeetingPreparationWorkflow:
                     "brew.workflow.corrective_regeneration",
                     operation_name="workflow.corrective_regeneration",
                     tracer_name=__name__,
-                    agent_name="conversation_coach",
+                    agent_name=brief_specialist_agent_name(operation),
                     agent_version="1.0.0",
                     attributes={
                         ATTR_REGENERATION_ATTEMPT: attempt - 1,
@@ -812,7 +815,7 @@ class MeetingPreparationWorkflow:
                     extra={
                         "event_type": "workflow.brief.corrective_regeneration",
                         "operation_name": "workflow.corrective_regeneration",
-                        "agent_name": "conversation_coach",
+                        "agent_name": brief_specialist_agent_name(operation),
                         "attempt_count": attempt,
                         "regeneration_count": counters.regeneration_count,
                         "error_classification": "OUTPUT_VALIDATION_ERROR",
@@ -902,7 +905,7 @@ class MeetingPreparationWorkflow:
                 "brew.workflow.generate_brief",
                 operation_name="workflow.generate_brief",
                 tracer_name=__name__,
-                agent_name="conversation_coach",
+                agent_name=BRIEF_SYNTHESIZER_AGENT_NAME,
                 agent_version="1.0.0",
             ) as wf_tracker,
         ):
@@ -1129,7 +1132,7 @@ class MeetingPreparationWorkflow:
                             "operation_name": "workflow.generate_brief",
                             "request_id": corr.request_id,
                             "trace_id": corr.trace_id,
-                            "agent_name": "conversation_coach",
+                            "agent_name": BRIEF_SYNTHESIZER_AGENT_NAME,
                             "agent_version": "1.0.0",
                             "result_status": terminal_state.value,
                             "memory_retrieved_count": counters.memories_retrieved,
@@ -1190,7 +1193,7 @@ class MeetingPreparationWorkflow:
                 "brew.workflow.revise_brief",
                 operation_name="workflow.revise_brief",
                 tracer_name=__name__,
-                agent_name="conversation_coach",
+                agent_name=BRIEF_REFINER_AGENT_NAME,
                 agent_version="1.0.0",
             ) as wf_tracker,
         ):
@@ -1457,7 +1460,7 @@ class MeetingPreparationWorkflow:
                             "operation_name": "workflow.revise_brief",
                             "request_id": corr.request_id,
                             "trace_id": corr.trace_id,
-                            "agent_name": "conversation_coach",
+                            "agent_name": BRIEF_REFINER_AGENT_NAME,
                             "agent_version": "1.0.0",
                             "result_status": terminal_state.value,
                             "memory_retrieved_count": counters.memories_retrieved,

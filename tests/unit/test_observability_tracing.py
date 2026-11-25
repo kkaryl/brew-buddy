@@ -675,7 +675,7 @@ def test_scenario_1_successful_brief_generation_full_correlated_trace_and_privac
     # 2. Workflow, Context & Memory Retrieval, Agent, Tool, Model, Validation, Firestore
     assert "brew.workflow.generate_brief" in span_names
     assert "brew.context.retrieve" in span_names
-    assert "invoke_agent conversation_coach" in span_names
+    assert "invoke_agent brief_synthesizer" in span_names
     assert "execute_tool get_meeting_history" in span_names
     assert "generate_content deterministic-mock-gemini" in span_names
     assert "brew.output.validate" in span_names
@@ -690,9 +690,9 @@ def test_scenario_1_successful_brief_generation_full_correlated_trace_and_privac
     ctx_span = next(s for s in spans if s.name == "brew.context.retrieve")
     assert dict(ctx_span.attributes or {})[ATTR_MEMORY_RETRIEVED_COUNT] == 1
 
-    agent_span = next(s for s in spans if s.name == "invoke_agent conversation_coach")
+    agent_span = next(s for s in spans if s.name == "invoke_agent brief_synthesizer")
     agent_attrs = dict(agent_span.attributes or {})
-    assert agent_attrs[ATTR_AGENT_NAME] == "conversation_coach"
+    assert agent_attrs[ATTR_AGENT_NAME] == "brief_synthesizer"
     assert agent_attrs[ATTR_AGENT_VERSION] == "1.0.0"
     assert agent_attrs[ATTR_MODEL_NAME] == "deterministic-mock-gemini"
     assert isinstance(agent_attrs[ATTR_DURATION_MS], float)
