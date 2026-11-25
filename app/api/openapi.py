@@ -10,7 +10,7 @@ from fastapi import FastAPI
 from fastapi.openapi.utils import get_openapi
 
 from app.api.health import router as health_router
-from app.api.v1 import router as v1_router
+from app.api.routers.api_v1 import router as v1_router
 from app.config import REPO_ROOT, AppSettings
 
 DEFAULT_OPENAPI_PATH = REPO_ROOT / "docs" / "openapi.json"

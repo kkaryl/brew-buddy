@@ -59,11 +59,11 @@ from google.genai import types as genai_types
 from pydantic import ConfigDict
 
 from app.agent import build_conversation_coach_agent
+from app.agents.plugins.coach_guardrails import ConversationCoachGuardrailPlugin
+from app.agents.tools.dependencies import CoachingToolDependencies
+from app.composition.builders import build_service_container
 from app.config import AppSettings
-from app.infrastructure.container import build_service_container
-from app.infrastructure.eval_fixtures import EVAL_CLI_USER_ID
-from app.plugins.coach_guardrails import ConversationCoachGuardrailPlugin
-from app.tools.coaching_tools import CoachingToolDependencies
+from app.infrastructure.stubs.eval_fixtures import EVAL_CLI_USER_ID
 from tests.eval import guardrail_compliance, trajectory_contract
 from tests.eval.brew_coaching_judge import DEFAULT_JUDGE_MODEL, JUDGE_MODEL_ENV_VAR
 from tests.eval.scenario_catalog import (

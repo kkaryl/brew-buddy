@@ -18,14 +18,14 @@ from opentelemetry.sdk.resources import OTELResourceDetector, Resource
 from opentelemetry.sdk.trace import ReadableSpan, SpanProcessor, TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanExporter
 
-from app.application.correlation import get_workflow_correlation
-from app.application.telemetry import (
+from app.application.shared.correlation import get_workflow_correlation
+from app.application.shared.telemetry import (
     classify_telemetry_error,
     is_forbidden_telemetry_key,
     scrub_sensitive_telemetry_text,
 )
 from app.config import AppSettings, get_settings
-from app.domain.errors import BrewDomainError
+from app.domain.shared.errors import BrewDomainError
 
 logger = logging.getLogger(__name__)
 

@@ -28,50 +28,45 @@ from google.genai import types as genai_types
 from pydantic import ConfigDict, PrivateAttr
 
 from app.agent import build_adk_app, build_conversation_coach_agent
-from app.application.memory_persistence_service import MemoryPersistenceService
-from app.application.memory_retrieval_service import MemoryRetrievalService
-from app.application.services import BriefService, ContactService, MeetingService, MemoryService
+from app.agents.memory_extractor import AdkMemoryProposalAdapter
+from app.agents.tools.dependencies import CoachingToolDependencies
+from app.application.briefs.service import BriefService
+from app.application.contacts.service import ContactService
+from app.application.meetings.service import MeetingService
+from app.application.memory.persistence import MemoryPersistenceService
+from app.application.memory.retrieval import MemoryRetrievalService
+from app.application.memory.service import MemoryService
+from app.composition.builders import build_firestore_service_container
 from app.config import AppSettings
-from app.domain.errors import (
-    AuthorizationError,
-    EntityNotFoundError,
-    VersionConflictError,
-)
-from app.domain.models import AuthenticatedPrincipal, Meeting, MemoryExtractionJob
-from app.domain.types import (
-    MeetingPurpose,
-    MeetingStatus,
-    MeetingTone,
+from app.domain.identity.models import AuthenticatedPrincipal
+from app.domain.meetings.models import Meeting
+from app.domain.meetings.types import MeetingPurpose, MeetingStatus, MeetingTone
+from app.domain.memory.jobs import MemoryExtractionJob
+from app.domain.memory.types import (
     MemoryEpistemicStatus,
     MemoryExtractionJobStatus,
     MemoryLifecycleState,
     ProposalStatus,
 )
+from app.domain.shared.errors import AuthorizationError, EntityNotFoundError, VersionConflictError
 from app.fast_api_app import create_app
-from app.infrastructure.adk_memory_extractor import AdkMemoryProposalAdapter
-from app.infrastructure.container import build_firestore_service_container
-from app.infrastructure.fakes import (
-    FakeAuthenticator,
-    FakeBriefCoachAgent,
-    FakeMemoryProposalAgent,
-    SequentialIdGenerator,
-    UuidIdGenerator,
-)
-from app.infrastructure.firestore_repositories import (
-    FirestoreBriefRepository,
-    FirestoreContactRepository,
-    FirestoreMeetingRepository,
-    FirestoreMemoryExtractionJobRepository,
-    FirestoreMemoryProposalRepository,
-    FirestoreMemoryRepository,
-    FirestoreUserPreferencesRepository,
-)
-from app.infrastructure.session_service_factory import (
+from app.infrastructure.firestore.briefs import FirestoreBriefRepository
+from app.infrastructure.firestore.contacts import FirestoreContactRepository
+from app.infrastructure.firestore.meetings import FirestoreMeetingRepository
+from app.infrastructure.firestore.memories import FirestoreMemoryRepository
+from app.infrastructure.firestore.memory_jobs import FirestoreMemoryExtractionJobRepository
+from app.infrastructure.firestore.memory_proposals import FirestoreMemoryProposalRepository
+from app.infrastructure.firestore.preferences import FirestoreUserPreferencesRepository
+from app.infrastructure.ids import SequentialIdGenerator, UuidIdGenerator
+from app.infrastructure.sessions import (
     SessionServiceFactory,
     create_adk_firestore_session_service,
     create_firestore_async_client,
 )
-from app.tools.coaching_tools import CoachingToolDependencies
+from app.infrastructure.stubs.authenticator import FakeAuthenticator
+from app.infrastructure.stubs.brief_coach import FakeBriefCoachAgent
+from app.infrastructure.stubs.memory_extractor import FakeMemoryProposalAgent
+from tests.support.brief_context import assemble_brief_context
 
 
 class AdvancingEmulatorClock:
@@ -345,7 +340,8 @@ async def test_firestore_document_paths_optimistic_locking_and_multi_user_isolat
         assert raw_mem_dict["consent_status"] == "approved"
 
         # 5. Pre-brief retrieval loads preferences, contact, recent meeting, and approved memory
-        assembled_ctx = await retrieval_service.build_brief_context(
+        assembled_ctx = await assemble_brief_context(
+            retrieval_service,
             principal=alice,
             contact_id=alice_contact.id,
             purpose=MeetingPurpose.MENTORSHIP,
@@ -366,9 +362,12 @@ async def test_firestore_document_paths_optimistic_locking_and_multi_user_isolat
         with pytest.raises(AuthorizationError):
             await brief_service.get_brief(principal=bob, brief_id=brief_v1.id)
         with pytest.raises(AuthorizationError):
-            await retrieval_service.build_brief_context(
+            await assemble_brief_context(
+                retrieval_service,
                 principal=bob,
                 contact_id=alice_contact.id,
+                purpose=MeetingPurpose.COFFEE_CHAT,
+                objective="Ownership check only.",
             )
         with pytest.raises(AuthorizationError):
             await persistence_service.approve_proposal(

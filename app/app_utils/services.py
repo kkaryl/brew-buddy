@@ -16,10 +16,7 @@ from google.adk.cli.service_registry import get_service_registry
 from google.adk.sessions import BaseSessionService
 
 from app.config import get_settings
-from app.infrastructure.session_service_factory import (
-    SessionServiceFactory,
-    register_firestore_session_scheme,
-)
+from app.infrastructure.sessions import SessionServiceFactory, register_firestore_session_scheme
 
 SESSION_SERVICE_URI = "shared://session"
 ARTIFACT_SERVICE_URI = "shared://artifact"

@@ -6,23 +6,23 @@ import pytest
 from pydantic import ValidationError
 
 from app.agent import CONVERSATION_COACH_INSTRUCTION, build_conversation_coach_agent
+from app.agents.brief_specialists import AdkConversationCoachBriefAdapter
+from app.agents.memory_extractor import AdkMemoryProposalAdapter
+from app.agents.model_routing import ModelStage, build_gemini_model, resolve_model_id
+from app.agents.prompts import (
+    BRIEF_REFINER_INSTRUCTION,
+    BRIEF_SYNTHESIZER_INSTRUCTION,
+    SHARED_COACHING_PRINCIPLES,
+)
+from app.agents.tools.dependencies import CoachingToolDependencies
+from app.composition.container import FakeServiceContainer
 from app.config import AppSettings
-from app.domain.types import (
+from app.domain.briefs.types import (
     BRIEF_REFINER_AGENT_NAME,
     BRIEF_SYNTHESIZER_AGENT_NAME,
     BriefWorkflowOperation,
     brief_specialist_agent_name,
 )
-from app.infrastructure.adk_brief_coach import AdkConversationCoachBriefAdapter
-from app.infrastructure.adk_memory_extractor import AdkMemoryProposalAdapter
-from app.infrastructure.fakes import FakeServiceContainer
-from app.model_routing import ModelStage, build_gemini_model, resolve_model_id
-from app.prompts import (
-    BRIEF_REFINER_INSTRUCTION,
-    BRIEF_SYNTHESIZER_INSTRUCTION,
-    SHARED_COACHING_PRINCIPLES,
-)
-from app.tools.coaching_tools import CoachingToolDependencies
 
 BASE_MODEL = "base-flash-under-test"
 SYNTHESIS_MODEL = "advanced-synthesis-under-test"

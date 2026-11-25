@@ -9,22 +9,20 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.api.health import get_app_settings
-from app.application.brief_workflow import BriefWorkflowSafeguardConfig
-from app.application.memory_jobs import MemoryExtractionJobService
-from app.application.memory_persistence_service import MemoryPersistenceService
-from app.application.memory_retrieval_service import MemoryRetrievalService
-from app.application.services import (
-    BriefService,
-    ContactService,
-    MeetingService,
-    MemoryService,
-)
+from app.application.briefs.inputs import BriefWorkflowSafeguardConfig
+from app.application.briefs.service import BriefService
+from app.application.contacts.service import ContactService
+from app.application.meetings.service import MeetingService
+from app.application.memory.jobs import MemoryExtractionJobService
+from app.application.memory.persistence import MemoryPersistenceService
+from app.application.memory.retrieval import MemoryRetrievalService
+from app.application.memory.service import MemoryService
+from app.composition.builders import build_service_container
+from app.composition.container import ServiceContainer
 from app.config import AppSettings, get_settings
-from app.domain.errors import AuthenticationError
-from app.domain.models import AuthenticatedPrincipal
-from app.infrastructure.auth import RuntimeAuthenticator
-from app.infrastructure.container import build_service_container
-from app.infrastructure.fakes import ServiceContainer
+from app.domain.identity.models import AuthenticatedPrincipal
+from app.domain.shared.errors import AuthenticationError
+from app.infrastructure.identity.runtime import RuntimeAuthenticator
 
 bearer_security = HTTPBearer(
     auto_error=False,

@@ -15,22 +15,32 @@ from google.adk.tools.tool_context import ToolContext
 from google.genai import types as genai_types
 from pydantic import ValidationError
 
-from app.application.untrusted_data import (
+from app.agents.plugins.coach_guardrails import (
+    FORBIDDEN_IDENTITY_ARG_NAMES,
+    ConversationCoachGuardrailPlugin,
+)
+from app.agents.plugins.workflow_safeguards import WorkflowSafeguardPlugin
+from app.agents.tools.dependencies import CoachingToolDependencies
+from app.agents.tools.errors import resolve_authenticated_principal, translate_tool_exception
+from app.agents.tools.registry import build_coaching_tools
+from app.agents.tools.system import ServiceReadinessOutput, check_brew_service_health
+from app.application.safety.pii_redaction import redact_pii_text
+from app.application.safety.untrusted_text import (
     STRIPPED_DIRECTIVE_MARKER,
     contains_prompt_injection,
-    redact_pii_text,
     sanitize_untrusted_text,
     split_safe_note_segments,
 )
+from app.composition.builders import build_service_container
+from app.composition.container import FakeServiceContainer
 from app.config import AppSettings
-from app.domain.errors import (
+from app.domain.briefs.ports import BriefAttemptMetrics
+from app.domain.shared.errors import (
     BrewDomainError,
     DomainValidationError,
     PersistenceOperationError,
 )
-from app.domain.ports import BriefAttemptMetrics
-from app.infrastructure.container import build_service_container
-from app.infrastructure.eval_fixtures import (
+from app.infrastructure.stubs.eval_fixtures import (
     EVAL_CLI_USER_ID,
     HISTORY_TIMEOUT_CONTACT_ID,
     HISTORY_UNAVAILABLE_CONTACT_ID,
@@ -38,19 +48,6 @@ from app.infrastructure.eval_fixtures import (
     TIMEOUT_CONTACT_ID,
     UNAVAILABLE_CONTACT_ID,
 )
-from app.infrastructure.fakes import FakeServiceContainer
-from app.plugins.coach_guardrails import (
-    FORBIDDEN_IDENTITY_ARG_NAMES,
-    ConversationCoachGuardrailPlugin,
-)
-from app.plugins.workflow_safeguards import WorkflowSafeguardPlugin
-from app.tools.coaching_tools import (
-    CoachingToolDependencies,
-    _translate_tool_exception,
-    build_coaching_tools,
-    resolve_authenticated_principal,
-)
-from app.tools.system_tools import ServiceReadinessOutput, check_brew_service_health
 
 
 def _make_tool_context(
@@ -247,7 +244,7 @@ def test_coaching_tools_read_only_mode_and_system_health_tool_contracts(
     def _broken_settings() -> AppSettings:
         raise BrewDomainError(code="CONFIG_INVALID", message="Invalid model config")
 
-    monkeypatch.setattr("app.tools.system_tools.get_settings", _broken_settings)
+    monkeypatch.setattr("app.agents.tools.system.get_settings", _broken_settings)
     health_err = ServiceReadinessOutput.model_validate(check_brew_service_health())
     assert health_err.status == "error"
     assert health_err.error_code == "CONFIG_INVALID"
@@ -271,21 +268,21 @@ def test_principal_resolution_and_exception_translation_cover_all_error_codes() 
         resolve_authenticated_principal(_make_tool_context("usr_alice", session_user_id="usr_bob"))
     assert mismatch_uid.value.code == "FORBIDDEN"
 
-    dom_val = _translate_tool_exception(
+    dom_val = translate_tool_exception(
         "suggest_memory_candidates",
         DomainValidationError("contact_id does not match meeting_id"),
     )
     assert dom_val.code == "VALIDATION_ERROR"
     assert dom_val.retryable is True
 
-    pers_err = _translate_tool_exception(
+    pers_err = translate_tool_exception(
         "get_contact_context",
         PersistenceOperationError("Firestore unavailable"),
     )
     assert pers_err.code == "SERVICE_UNAVAILABLE"
     assert pers_err.retryable is True
 
-    unexpected_err = _translate_tool_exception(
+    unexpected_err = translate_tool_exception(
         "get_meeting_history",
         RuntimeError("unexpected socket reset"),
     )

@@ -10,10 +10,11 @@ from fastapi.testclient import TestClient
 
 from app.api.openapi import DEFAULT_OPENAPI_PATH, build_openapi_contract
 from app.api.schemas import ApiErrorResponse
+from app.composition.container import FakeServiceContainer
 from app.config import AppSettings
-from app.domain.models import AuthenticatedPrincipal
+from app.domain.identity.models import AuthenticatedPrincipal
 from app.fast_api_app import create_app
-from app.infrastructure.fakes import FakeAuthenticator, FakeServiceContainer
+from app.infrastructure.stubs.authenticator import FakeAuthenticator
 
 ALICE_TOKEN = "token-alice-test"
 BOB_TOKEN = "token-bob-test"

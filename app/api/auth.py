@@ -10,10 +10,11 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.dependencies import get_service_container
 from app.api.health import get_app_settings
+from app.composition.container import ServiceContainer
 from app.config import AppSettings
-from app.domain.errors import AuthorizationError
-from app.infrastructure.auth import LOCAL_MOCK_PERSONAS, RuntimeAuthenticator
-from app.infrastructure.fakes import ServiceContainer
+from app.domain.shared.errors import AuthorizationError
+from app.infrastructure.identity.mock_sessions import LOCAL_MOCK_PERSONAS
+from app.infrastructure.identity.runtime import RuntimeAuthenticator
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 

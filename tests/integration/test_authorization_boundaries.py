@@ -11,13 +11,15 @@ import pytest
 from fastapi.testclient import TestClient
 from google.adk.tools.tool_context import ToolContext
 
+from app.agents.tools.dependencies import CoachingToolDependencies
+from app.agents.tools.registry import build_coaching_tools
 from app.api.schemas import ApiErrorResponse
+from app.composition.container import FakeServiceContainer
 from app.config import AppSettings
-from app.domain.errors import AuthenticationError
-from app.domain.models import AuthenticatedPrincipal
+from app.domain.identity.models import AuthenticatedPrincipal
+from app.domain.shared.errors import AuthenticationError
 from app.fast_api_app import create_app
-from app.infrastructure.fakes import FakeAuthenticator, FakeServiceContainer
-from app.tools.coaching_tools import CoachingToolDependencies, build_coaching_tools
+from app.infrastructure.stubs.authenticator import FakeAuthenticator
 
 ALICE_TOKEN = "tok_alice_isolated"
 BOB_TOKEN = "tok_bob_isolated"

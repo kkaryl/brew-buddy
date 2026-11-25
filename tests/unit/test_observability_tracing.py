@@ -20,6 +20,7 @@ import copy
 import json
 import logging
 import os
+import re
 from collections.abc import AsyncGenerator, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -38,7 +39,10 @@ from opentelemetry.trace import SpanKind, StatusCode
 from pydantic import ConfigDict, PrivateAttr
 
 import app.infrastructure.observability as obs_module
-from app.application.telemetry import (
+from app.agents.brief_specialists import AdkConversationCoachBriefAdapter
+from app.agents.memory_extractor import AdkMemoryProposalAdapter
+from app.agents.tools.dependencies import CoachingToolDependencies
+from app.application.shared.telemetry import (
     ATTR_AGENT_NAME,
     ATTR_AGENT_VERSION,
     ATTR_DURATION_MS,
@@ -59,13 +63,11 @@ from app.application.telemetry import (
     ATTR_VALIDATION_PASSED,
     scrub_sensitive_telemetry_text,
 )
+from app.composition.builders import build_firestore_service_container
 from app.config import REPO_ROOT, AppSettings
-from app.domain.models import (
-    AuthenticatedPrincipal,
-    Memory,
-    MemorySource,
-)
-from app.domain.types import (
+from app.domain.identity.models import AuthenticatedPrincipal
+from app.domain.memory.models import Memory, MemorySource
+from app.domain.memory.types import (
     ConsentStatus,
     MemoryLifecycleState,
     MemoryScope,
@@ -73,10 +75,7 @@ from app.domain.types import (
     MemoryType,
 )
 from app.fast_api_app import create_app
-from app.infrastructure.adk_brief_coach import AdkConversationCoachBriefAdapter
-from app.infrastructure.adk_memory_extractor import AdkMemoryProposalAdapter
-from app.infrastructure.container import build_firestore_service_container
-from app.infrastructure.fakes import FakeAuthenticator, SequentialIdGenerator
+from app.infrastructure.ids import SequentialIdGenerator
 from app.infrastructure.observability import (
     StructuredJsonFormatter,
     build_adk_telemetry_config,
@@ -84,7 +83,7 @@ from app.infrastructure.observability import (
     enforce_telemetry_privacy_defaults,
     ensure_tracer_provider,
 )
-from app.tools.coaching_tools import CoachingToolDependencies
+from app.infrastructure.stubs.authenticator import FakeAuthenticator
 
 
 class DeterministicStepClock:
@@ -541,6 +540,19 @@ def _build_traced_firestore_app(
     return create_app(settings, service_container=base_container), fs_client, coach_llm
 
 
+_SEEDED_PHONE_DIGITS = "4155550199"
+
+
+def _assert_seeded_phone_absent(serialized: str, where: str) -> None:
+    """Fail if the seeded contact phone number appears in ``serialized`` in any format.
+
+    Comparing digits only catches the number however it is punctuated. A shorter probe
+    such as the area code alone also matches random trace ids, span ids and durations.
+    """
+    digits_only = re.sub(r"\D", "", serialized)
+    assert _SEEDED_PHONE_DIGITS not in digits_only, f"Seeded phone number leaked into {where}"
+
+
 def _assert_all_spans_linked_to_root(
     spans: tuple[ReadableSpan, ...],
     root_span: ReadableSpan,
@@ -726,7 +738,7 @@ def test_scenario_1_successful_brief_generation_full_correlated_trace_and_privac
         private_bio_sentinel,
         raw_note_sentinel,
         "priya.secret@example.com",
-        "415",
+        "555-0199",
         "REQUEST_PAYLOAD_JSON",
         "tok-alice",
     )
@@ -736,10 +748,14 @@ def test_scenario_1_successful_brief_generation_full_correlated_trace_and_privac
             assert secret not in serialized_attrs, (
                 f"Sensitive substring '{secret}' leaked into span '{sp.name}'"
             )
+        for attr_value in (sp.attributes or {}).values():
+            _assert_seeded_phone_absent(str(attr_value), f"span '{sp.name}'")
         for ev in sp.events:
             ev_attrs = json.dumps(dict(ev.attributes or {}), default=str)
             for secret in forbidden_substrings:
                 assert secret not in ev_attrs
+            for attr_value in (ev.attributes or {}).values():
+                _assert_seeded_phone_absent(str(attr_value), f"an event of span '{sp.name}'")
 
     formatter = StructuredJsonFormatter(gcp_project_id="brew-obs-test-proj")
     formatted_logs = [
@@ -756,6 +772,8 @@ def test_scenario_1_successful_brief_generation_full_correlated_trace_and_privac
         serialized_log = json.dumps(log_entry)
         for secret in forbidden_substrings:
             assert secret not in serialized_log
+        for log_value in log_entry.values():
+            _assert_seeded_phone_absent(str(log_value), "a log entry")
 
 
 # ---------------------------------------------------------------------------
@@ -819,36 +837,50 @@ def test_scenario_3_tool_timeout_and_model_timeout_traces_and_error_logs(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     valid_payload = _valid_brief_json_payload(opener_style="casual")
-    fastapi_app, _, _ = _build_traced_firestore_app(
-        tmp_path,
-        coach_steps=[
-            # Request 1: tool times out twice + retry cap triggers, coach recovers
-            _tool_call_with_tokens(("get_meeting_history", {"contact_id": "cnt_0001"})),
-            _tool_call_with_tokens(("get_meeting_history", {"contact_id": "cnt_0001"})),
-            _tool_call_with_tokens(("get_meeting_history", {"contact_id": "cnt_0001"})),
-            _llm_json_with_tokens(valid_payload),
-            # Request 2: Gemini model call itself exceeds deadline -> HTTP 504 MODEL_TIMEOUT
-            DelayedTimeoutStep(sleep_seconds=0.35),
-        ],
-        model_timeout_seconds=0.20,
-        tool_io_timeout_seconds=0.03,
-        slow_tool_meeting_delay_seconds=0.08,
-    )
+    headers = {"Authorization": "Bearer tok-alice"}
 
-    with TestClient(fastapi_app) as client:
-        headers = {"Authorization": "Bearer tok-alice"}
+    def _create_contact_and_payload(client: TestClient) -> dict[str, Any]:
         contact_id = client.post(
             "/api/v1/contacts",
             headers=headers,
             json={"name": "Priya Nair", "organization": "Nimbus Cloud"},
         ).json()["id"]
-        gen_payload = {
+        return {
             "contact_id": contact_id,
             "purpose": "coffee_chat",
             "tone": "warm_casual",
             "meeting_objective": "Understand distributed platform reliability trade-offs.",
             "duration_minutes": 30,
         }
+
+    # Each half gets its own app so neither depends on how fast this machine is. In 3a the
+    # tool read sleeps longer than the tool deadline, so it always times out, and the model
+    # deadline is far above the time the request needs. In 3b the scripted model turn
+    # sleeps far longer than the model deadline, so it always times out.
+    tool_timeout_app, _, _ = _build_traced_firestore_app(
+        tmp_path,
+        coach_steps=[
+            # Tool times out twice + retry cap triggers, coach recovers
+            _tool_call_with_tokens(("get_meeting_history", {"contact_id": "cnt_0001"})),
+            _tool_call_with_tokens(("get_meeting_history", {"contact_id": "cnt_0001"})),
+            _tool_call_with_tokens(("get_meeting_history", {"contact_id": "cnt_0001"})),
+            _llm_json_with_tokens(valid_payload),
+        ],
+        model_timeout_seconds=30.0,
+        tool_io_timeout_seconds=0.03,
+        slow_tool_meeting_delay_seconds=0.08,
+    )
+    model_timeout_app, _, _ = _build_traced_firestore_app(
+        tmp_path,
+        coach_steps=[
+            # Gemini model call itself exceeds deadline -> HTTP 504 MODEL_TIMEOUT
+            DelayedTimeoutStep(sleep_seconds=30.0),
+        ],
+        model_timeout_seconds=0.05,
+    )
+
+    with TestClient(tool_timeout_app) as client:
+        gen_payload = _create_contact_and_payload(client)
 
         # 3a. Tool timeout + retry cap inside ADK Runner
         caplog.clear()
@@ -872,6 +904,9 @@ def test_scenario_3_tool_timeout_and_model_timeout_traces_and_error_logs(
         capped_tool_attrs = dict(tool_spans[2].attributes or {})
         assert tool_spans[2].status.status_code is StatusCode.ERROR
         assert capped_tool_attrs[ATTR_ERROR_CLASSIFICATION] == "TOOL_RETRY_LIMIT_EXCEEDED"
+
+    with TestClient(model_timeout_app) as client:
+        gen_payload = _create_contact_and_payload(client)
 
         # 3b. Model timeout -> HTTP 504 correlated across spans and JSON error logs
         caplog.clear()

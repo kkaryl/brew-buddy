@@ -17,41 +17,40 @@ from google.adk.models.llm_response import LlmResponse
 from google.genai import types
 from pydantic import ConfigDict, PrivateAttr
 
-from app.application.memory_persistence_service import MemoryPersistenceService
-from app.application.memory_retrieval_service import MemoryRetrievalService
-from app.application.services import ContactService, MemoryService
+from app.agents.memory_extractor import AdkMemoryProposalAdapter
+from app.application.contacts.service import ContactService
+from app.application.memory.persistence import MemoryPersistenceService
+from app.application.memory.retrieval import MemoryRetrievalService
+from app.application.memory.service import MemoryService
+from app.composition.container import ServiceContainer
 from app.config import REPO_ROOT, AppSettings
-from app.domain.errors import (
-    AuthorizationError,
-    ConflictError,
-    DomainValidationError,
-    EntityNotFoundError,
-)
-from app.domain.models import AuthenticatedPrincipal, Meeting
-from app.domain.types import (
-    MeetingPurpose,
-    MeetingStatus,
-    MeetingTone,
+from app.domain.identity.models import AuthenticatedPrincipal
+from app.domain.meetings.models import Meeting
+from app.domain.meetings.types import MeetingPurpose, MeetingStatus, MeetingTone
+from app.domain.memory.types import (
     MemoryEpistemicStatus,
     MemoryLifecycleState,
     MemoryScope,
     ProposalStatus,
 )
-from app.fast_api_app import create_app
-from app.infrastructure.adk_memory_extractor import AdkMemoryProposalAdapter
-from app.infrastructure.fakes import (
-    FakeAuthenticator,
-    FakeBriefCoachAgent,
-    InMemoryBriefRepository,
-    InMemoryContactRepository,
-    InMemoryMeetingRepository,
-    InMemoryMemoryProposalRepository,
-    InMemoryMemoryRepository,
-    InMemoryUserPreferencesRepository,
-    InMemoryWorkflowIdempotencyRepository,
-    SequentialIdGenerator,
-    ServiceContainer,
+from app.domain.shared.errors import (
+    AuthorizationError,
+    ConflictError,
+    DomainValidationError,
+    EntityNotFoundError,
 )
+from app.fast_api_app import create_app
+from app.infrastructure.ids import SequentialIdGenerator
+from app.infrastructure.inmemory.briefs import InMemoryBriefRepository
+from app.infrastructure.inmemory.contacts import InMemoryContactRepository
+from app.infrastructure.inmemory.idempotency import InMemoryWorkflowIdempotencyRepository
+from app.infrastructure.inmemory.meetings import InMemoryMeetingRepository
+from app.infrastructure.inmemory.memories import InMemoryMemoryRepository
+from app.infrastructure.inmemory.memory_proposals import InMemoryMemoryProposalRepository
+from app.infrastructure.inmemory.preferences import InMemoryUserPreferencesRepository
+from app.infrastructure.stubs.authenticator import FakeAuthenticator
+from app.infrastructure.stubs.brief_coach import FakeBriefCoachAgent
+from tests.support.brief_context import assemble_brief_context
 
 ALEX_SCENARIO_NOTES = (
     "We discussed his team's challenges adopting AI. "
@@ -377,7 +376,8 @@ async def test_alex_scenario_states_deduplication_contradiction_and_deletion() -
     assert {m.id for m in with_superseded} == {mem_ai.id, mem_pref_v1.id, mem_pref_v2.id}
 
     # Pre-brief context assembly only includes active memories
-    prep_ctx = await retrieval.build_brief_context(
+    prep_ctx = await assemble_brief_context(
+        retrieval,
         principal=alice,
         contact_id=alex.id,
         purpose=MeetingPurpose.COFFEE_CHAT,
@@ -404,7 +404,8 @@ async def test_alex_scenario_states_deduplication_contradiction_and_deletion() -
     assert tombstone.deleted_at is not None
     assert tombstone.source.proposal_id == p_ai.id
 
-    post_delete_ctx = await retrieval.build_brief_context(
+    post_delete_ctx = await assemble_brief_context(
+        retrieval,
         principal=alice,
         contact_id=alex.id,
         purpose=MeetingPurpose.COFFEE_CHAT,
@@ -421,9 +422,9 @@ async def test_alex_scenario_states_deduplication_contradiction_and_deletion() -
 async def test_sensitive_third_party_assumptions_and_callback_write_prohibition() -> None:
     # 1. Static & runtime check: ADK plugins/callbacks hold zero repository write methods
     for plugin_rel in (
-        "app/plugins/coach_guardrails.py",
-        "app/plugins/workflow_safeguards.py",
-        "app/infrastructure/adk_memory_extractor.py",
+        "app/agents/plugins/coach_guardrails.py",
+        "app/agents/plugins/workflow_safeguards.py",
+        "app/agents/memory_extractor.py",
     ):
         tree = ast.parse((REPO_ROOT / plugin_rel).read_text(encoding="utf-8"))
         for node in ast.walk(tree):

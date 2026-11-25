@@ -10,15 +10,15 @@ from dotenv import load_dotenv
 from fastapi import APIRouter, Depends, Request, Response, status
 from pydantic import BaseModel, Field
 
-from app.application.health_service import HealthCheckService
-from app.config import REPO_ROOT, AppSettings, clear_settings_cache, get_settings
-from app.infrastructure.auth import RuntimeAuthenticator, build_runtime_authenticator
-from app.infrastructure.clock import SystemUtcClock
-from app.infrastructure.container import build_service_container
-from app.tools.coaching_tools import (
+from app.agents.tools.dependencies import (
     CoachingToolDependencies,
     set_default_coaching_dependencies,
 )
+from app.application.health.service import HealthCheckService
+from app.composition.builders import build_service_container
+from app.config import REPO_ROOT, AppSettings, clear_settings_cache, get_settings
+from app.infrastructure.clock import SystemUtcClock
+from app.infrastructure.identity.runtime import RuntimeAuthenticator, build_runtime_authenticator
 
 
 def resolve_adc_file_mtime_ns() -> int | None:

@@ -14,16 +14,14 @@ from google.adk.runners import Runner
 from pydantic import ValidationError
 from starlette.websockets import WebSocketDisconnect
 
+from app.composition.container import FakeServiceContainer
 from app.config import AppSettings
-from app.domain.errors import AuthenticationError
-from app.domain.models import AuthenticatedPrincipal
+from app.domain.identity.models import AuthenticatedPrincipal
+from app.domain.shared.errors import AuthenticationError
 from app.fast_api_app import create_app
-from app.infrastructure.auth import (
-    FirebaseGoogleTokenAuthenticator,
-    RuntimeAuthenticator,
-    build_runtime_authenticator,
-)
-from app.infrastructure.fakes import FakeAuthenticator, FakeServiceContainer
+from app.infrastructure.identity.runtime import RuntimeAuthenticator, build_runtime_authenticator
+from app.infrastructure.identity.verified_tokens import FirebaseGoogleTokenAuthenticator
+from app.infrastructure.stubs.authenticator import FakeAuthenticator
 
 
 class ManualUtcClock:

@@ -17,11 +17,11 @@ import app.api.health as health_module
 from app.api.auth import router as auth_router
 from app.api.errors import register_exception_handlers
 from app.api.health import router as health_router
-from app.api.v1 import router as v1_router
+from app.api.routers.api_v1 import router as v1_router
+from app.composition.builders import build_service_container
 from app.config import AppSettings
-from app.domain.errors import PersistenceOperationError
-from app.infrastructure.container import build_service_container
-from app.infrastructure.firestore_repositories import FirestoreContactRepository
+from app.domain.shared.errors import PersistenceOperationError
+from app.infrastructure.firestore.contacts import FirestoreContactRepository
 
 
 class _ExpiredAdcCredentials(Credentials):

@@ -19,19 +19,30 @@ from google.adk.models.llm_response import LlmResponse
 from google.genai import types
 from pydantic import ConfigDict, PrivateAttr
 
-from app.application.brief_workflow import (
-    BriefWorkflowSafeguardConfig,
-    MeetingPreparationWorkflow,
-)
-from app.application.memory_persistence_service import MemoryPersistenceService
-from app.application.memory_retrieval_service import MemoryRetrievalService
-from app.application.services import BriefService, ContactService
+from app.agents.brief_specialists import AdkConversationCoachBriefAdapter
+from app.agents.tools.dependencies import CoachingToolDependencies
+from app.application.briefs.inputs import BriefWorkflowSafeguardConfig
+from app.application.briefs.service import BriefService
+from app.application.briefs.workflow import MeetingPreparationWorkflow
+from app.application.contacts.service import ContactService
+from app.application.memory.persistence import MemoryPersistenceService
+from app.application.memory.retrieval import MemoryRetrievalService
+from app.composition.container import ServiceContainer
 from app.config import AppSettings
-from app.domain.brief_quality import (
-    evaluate_brief_quality,
-    parse_refinement_overrides,
-)
-from app.domain.errors import (
+from app.domain.briefs.context import BriefPreparationContext
+from app.domain.briefs.diagnostics import brief_workflow_diagnostics
+from app.domain.briefs.models import ConversationQuestion, TimeBoxedAgendaItem
+from app.domain.briefs.ports import GeneratedBriefContent
+from app.domain.briefs.quality.gate import evaluate_brief_quality
+from app.domain.briefs.quality.refinement import parse_refinement_overrides
+from app.domain.briefs.types import BriefWorkflowTerminalState
+from app.domain.contacts.models import Contact
+from app.domain.identity.models import AuthenticatedPrincipal
+from app.domain.meetings.models import Meeting
+from app.domain.meetings.types import MeetingPurpose, MeetingStatus, MeetingTone
+from app.domain.memory.models import Memory, MemoryProposal, MemorySource
+from app.domain.memory.types import ConsentStatus, MemoryScope, MemorySourceType, MemoryType
+from app.domain.shared.errors import (
     BrewDomainError,
     ConflictError,
     ModelExecutionError,
@@ -39,45 +50,18 @@ from app.domain.errors import (
     ModelTimeoutError,
     PersistenceOperationError,
 )
-from app.domain.models import (
-    AuthenticatedPrincipal,
-    BriefPreparationContext,
-    Contact,
-    ConversationQuestion,
-    Meeting,
-    Memory,
-    MemoryProposal,
-    MemorySource,
-    TimeBoxedAgendaItem,
-)
-from app.domain.ports import GeneratedBriefContent
-from app.domain.types import (
-    BriefWorkflowTerminalState,
-    ConsentStatus,
-    MeetingPurpose,
-    MeetingStatus,
-    MeetingTone,
-    MemoryScope,
-    MemorySourceType,
-    MemoryType,
-)
 from app.fast_api_app import create_app
-from app.infrastructure.adk_brief_coach import AdkConversationCoachBriefAdapter
-from app.infrastructure.fakes import (
-    FakeAuthenticator,
-    FakeMemoryProposalAgent,
-    InMemoryBriefRepository,
-    InMemoryContactRepository,
-    InMemoryMeetingRepository,
-    InMemoryMemoryProposalRepository,
-    InMemoryMemoryRepository,
-    InMemoryUserPreferencesRepository,
-    InMemoryWorkflowIdempotencyRepository,
-    SequentialIdGenerator,
-    ServiceContainer,
-)
+from app.infrastructure.ids import SequentialIdGenerator
+from app.infrastructure.inmemory.briefs import InMemoryBriefRepository
+from app.infrastructure.inmemory.contacts import InMemoryContactRepository
+from app.infrastructure.inmemory.idempotency import InMemoryWorkflowIdempotencyRepository
+from app.infrastructure.inmemory.meetings import InMemoryMeetingRepository
+from app.infrastructure.inmemory.memories import InMemoryMemoryRepository
+from app.infrastructure.inmemory.memory_proposals import InMemoryMemoryProposalRepository
+from app.infrastructure.inmemory.preferences import InMemoryUserPreferencesRepository
 from app.infrastructure.observability import StructuredJsonFormatter
-from app.tools.coaching_tools import CoachingToolDependencies
+from app.infrastructure.stubs.authenticator import FakeAuthenticator
+from app.infrastructure.stubs.memory_extractor import FakeMemoryProposalAgent
 
 
 class DeterministicStepClock:
@@ -937,7 +921,7 @@ async def test_table_driven_end_to_end_meeting_preparation_workflow(
         err = exc_info.value
         assert isinstance(err, ModelOutputValidationError)
         assert err.code == "MODEL_OUTPUT_VALIDATION_ERROR"
-        diag = err.workflow_diagnostics
+        diag = brief_workflow_diagnostics(err)
         assert diag is not None
         assert diag.terminal_state is case.expected_terminal_state
         assert diag.regeneration_count == 1
@@ -979,7 +963,7 @@ async def test_table_driven_end_to_end_meeting_preparation_workflow(
         err = exc_info.value
         assert isinstance(err, ModelTimeoutError)
         assert err.code == "MODEL_TIMEOUT"
-        diag = err.workflow_diagnostics
+        diag = brief_workflow_diagnostics(err)
         assert diag is not None
         assert diag.terminal_state is case.expected_terminal_state
         assert diag.regeneration_count == 0
@@ -1274,7 +1258,7 @@ async def test_model_invocation_budget_cap_and_unified_correlation_logging(
         )
 
     assert exc_info.value.code == "MODEL_INVOCATION_LIMIT_EXCEEDED"
-    diag = exc_info.value.workflow_diagnostics
+    diag = brief_workflow_diagnostics(exc_info.value)
     assert diag is not None
     assert diag.terminal_state is BriefWorkflowTerminalState.FAILED_MODEL_ERROR
     assert diag.request_id == "req_corr_900"
@@ -1282,7 +1266,7 @@ async def test_model_invocation_budget_cap_and_unified_correlation_logging(
     assert diag.model_invocations == 2
 
     formatter = StructuredJsonFormatter()
-    tracked_loggers = ("app.application.brief_workflow", "app.plugins.workflow_safeguards")
+    tracked_loggers = ("app.application.briefs", "app.agents.plugins.workflow_safeguards")
     workflow_json_logs = [
         json.loads(formatter.format(rec))
         for rec in caplog.records

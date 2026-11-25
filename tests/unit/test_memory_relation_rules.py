@@ -14,23 +14,19 @@ from datetime import UTC, datetime
 
 import pytest
 
-from app.application.memory_persistence_service import MemoryPersistenceService
-from app.domain.memory_lifecycle import MemoryRelationKind, classify_candidate_against_existing
-from app.domain.models import (
-    AuthenticatedPrincipal,
-    Contact,
-    Memory,
-    MemoryProposal,
-    MemorySource,
-)
-from app.domain.types import (
+from app.application.memory.persistence import MemoryPersistenceService
+from app.composition.container import FakeServiceContainer
+from app.domain.contacts.models import Contact
+from app.domain.identity.models import AuthenticatedPrincipal
+from app.domain.memory.models import Memory, MemoryProposal, MemorySource
+from app.domain.memory.relations import MemoryRelationKind, classify_candidate_against_existing
+from app.domain.memory.types import (
     MemoryLifecycleState,
     MemoryScope,
     MemorySourceType,
     MemoryType,
     ProposalStatus,
 )
-from app.infrastructure.fakes import FakeServiceContainer
 
 _NOW = datetime(2026, 11, 24, 9, 0, 0, tzinfo=UTC)
 _OWNER = "usr_alice"

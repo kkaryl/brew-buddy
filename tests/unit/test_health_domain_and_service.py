@@ -8,12 +8,12 @@ from datetime import UTC, datetime
 
 import pytest
 
-from app.application.health_service import HealthCheckService
+from app.agents.tools.system import check_brew_service_health
+from app.application.health.service import HealthCheckService
 from app.config import clear_settings_cache
-from app.domain.errors import InvalidConfigurationError
-from app.domain.health import HealthStatus, ServiceHealthReport
+from app.domain.shared.errors import InvalidConfigurationError
+from app.domain.shared.health import HealthStatus, ServiceHealthReport
 from app.infrastructure.observability import StructuredJsonFormatter
-from app.tools.system_tools import check_brew_service_health
 
 
 class FixedClock:

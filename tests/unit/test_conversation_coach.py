@@ -27,51 +27,43 @@ from app.agent import (
     build_conversation_coach_agent,
     build_gemini_model,
 )
-from app.application.coaching_service import PendingProposalOnlyFacade
-from app.application.untrusted_data import STRIPPED_DIRECTIVE_MARKER
-from app.config import AppSettings
-from app.domain.errors import ConflictError, PersistenceOperationError
-from app.domain.models import (
-    Contact,
-    Meeting,
-    Memory,
-    MemoryProposal,
-    MemorySource,
-    UserPreferences,
-)
-from app.domain.types import (
-    ConsentStatus,
-    MeetingPurpose,
-    MeetingStatus,
-    MeetingTone,
-    MemoryScope,
-    MemorySourceType,
-    MemoryType,
-    ProposalStatus,
-)
-from app.infrastructure.fakes import (
-    FakeMemoryProposalAgent,
-    InMemoryContactRepository,
-    InMemoryMeetingRepository,
-    InMemoryMemoryProposalRepository,
-    InMemoryMemoryRepository,
-    InMemoryUserPreferencesRepository,
-    SequentialIdGenerator,
-)
-from app.plugins.coach_guardrails import ConversationCoachGuardrailPlugin
-from app.tools.coaching_tools import (
-    CoachingToolDependencies,
+from app.agents.plugins.coach_guardrails import ConversationCoachGuardrailPlugin
+from app.agents.tools.contracts import (
     GetContactContextInput,
     GetMeetingHistoryInput,
     GetUserPreferencesInput,
     SuggestMemoryCandidatesInput,
-    bind_coaching_dependencies,
+)
+from app.agents.tools.dependencies import CoachingToolDependencies, bind_coaching_dependencies
+from app.agents.tools.registry import (
     build_coaching_tools,
     get_contact_context,
     get_meeting_history,
     get_user_preferences,
     suggest_memory_candidates,
 )
+from app.application.coaching.capabilities import PendingProposalOnlyFacade
+from app.application.safety.untrusted_text import STRIPPED_DIRECTIVE_MARKER
+from app.config import AppSettings
+from app.domain.contacts.models import Contact
+from app.domain.meetings.models import Meeting
+from app.domain.meetings.types import MeetingPurpose, MeetingStatus, MeetingTone
+from app.domain.memory.models import Memory, MemoryProposal, MemorySource, UserPreferences
+from app.domain.memory.types import (
+    ConsentStatus,
+    MemoryScope,
+    MemorySourceType,
+    MemoryType,
+    ProposalStatus,
+)
+from app.domain.shared.errors import ConflictError, PersistenceOperationError
+from app.infrastructure.ids import SequentialIdGenerator
+from app.infrastructure.inmemory.contacts import InMemoryContactRepository
+from app.infrastructure.inmemory.meetings import InMemoryMeetingRepository
+from app.infrastructure.inmemory.memories import InMemoryMemoryRepository
+from app.infrastructure.inmemory.memory_proposals import InMemoryMemoryProposalRepository
+from app.infrastructure.inmemory.preferences import InMemoryUserPreferencesRepository
+from app.infrastructure.stubs.memory_extractor import FakeMemoryProposalAgent
 
 
 class StepClock:
@@ -984,7 +976,7 @@ async def test_unauthorized_cross_user_lookup_and_identity_override_attempts_are
         auto_create_session=True,
     )
 
-    with caplog.at_level(logging.WARNING, logger="app.plugins.coach_guardrails"):
+    with caplog.at_level(logging.WARNING, logger="app.agents.plugins.coach_guardrails"):
         events = [
             event
             async for event in runner.run_async(
@@ -1168,7 +1160,7 @@ async def test_prompt_injection_inside_saved_meeting_notes_is_neutralized_end_to
         auto_create_session=True,
     )
 
-    with caplog.at_level(logging.INFO, logger="app.plugins.coach_guardrails"):
+    with caplog.at_level(logging.INFO, logger="app.agents.plugins.coach_guardrails"):
         events = [
             event
             async for event in runner.run_async(

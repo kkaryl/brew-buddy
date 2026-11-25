@@ -7,27 +7,19 @@ from datetime import UTC, datetime, timedelta, timezone
 import pytest
 from pydantic import ValidationError
 
-from app.domain.errors import ConflictError, DomainValidationError
-from app.domain.models import (
-    Contact,
-    ConversationQuestion,
-    Meeting,
-    Memory,
-    MemoryProposal,
-    MemorySource,
-    PreparationBrief,
-    TimeBoxedAgendaItem,
-    UserPreferences,
-)
-from app.domain.types import (
+from app.domain.briefs.models import ConversationQuestion, PreparationBrief, TimeBoxedAgendaItem
+from app.domain.contacts.models import Contact
+from app.domain.meetings.models import Meeting
+from app.domain.meetings.types import MeetingPurpose, MeetingTone
+from app.domain.memory.models import Memory, MemoryProposal, MemorySource, UserPreferences
+from app.domain.memory.types import (
     ConsentStatus,
-    MeetingPurpose,
-    MeetingTone,
     MemoryScope,
     MemorySourceType,
     MemoryType,
     ProposalStatus,
 )
+from app.domain.shared.errors import ConflictError, DomainValidationError
 
 
 def _utc(hour: int = 12, minute: int = 0) -> datetime:

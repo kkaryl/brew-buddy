@@ -13,8 +13,8 @@ from opentelemetry import trace
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.schemas import ApiErrorResponse, ErrorDetailItem, ErrorObject
-from app.application.telemetry import classify_telemetry_error
-from app.domain.errors import (
+from app.application.shared.telemetry import classify_telemetry_error
+from app.domain.shared.errors import (
     AuthenticationError,
     AuthorizationError,
     BrewDomainError,

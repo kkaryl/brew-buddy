@@ -59,13 +59,28 @@ flowchart TB
 
 **Strict Import Matrix:**
 
+Each layer is split by bounded context (`shared`, `identity`, `contacts`, `meetings`, `memory`, `briefs`). The rules below are enforced by [`tests/unit/test_architecture_boundaries.py`](../tests/unit/test_architecture_boundaries.py). See ADR-024.
+
 | Source Package | Allowed Internal Imports | Forbidden Imports |
 | :--- | :--- | :--- |
-| `app.domain` | Python stdlib, `pydantic` (pure value/schema types only) | `fastapi`, `google.adk`, `google.cloud.*`, `app.api`, `app.agent`, `app.tools`, `app.plugins`, `app.infrastructure` |
-| `app.application` | `app.domain` | `fastapi`, `google.adk`, `google.cloud.*`, `app.api`, `app.agent`, `app.tools`, `app.plugins`, `app.infrastructure` |
-| `app.tools` / `app.plugins` / `app.agent` | `app.domain`, `app.application`, `app.config`, `google.adk`, `google.genai`, `opentelemetry.*`, `pydantic` | `fastapi`, direct `google.cloud.*` client calls (tools invoke capability-restricted ports) |
-| `app.infrastructure` | `app.domain`, `app.application`, `app.agent`, `app.tools`, `app.plugins`, `app.config`, `google.adk`, `google.genai`, `google.cloud.*`, `opentelemetry.*` | `fastapi` (`app/infrastructure/adk_brief_coach.py` additionally forbids `google.cloud.*`) |
-| `app.api` / `app.fast_api_app` | `app.domain`, `app.application`, `app.agent`, `app.tools`, `app.plugins`, `app.infrastructure`, `app.config`, `fastapi` | None (composition root) |
+| `app.domain` | Python stdlib, `pydantic` (pure value/schema types only). A context may import only contexts earlier in the order `shared`, `identity`, `contacts`, `meetings`, `memory`, `briefs`. | `fastapi`, `google.adk`, `google.genai`, `google.cloud.*`, `app.application`, `app.agents`, `app.infrastructure`, `app.composition`, `app.api` |
+| `app.application` | `app.domain`, `opentelemetry.*` (span and log helpers in `application/shared/telemetry.py`) | `fastapi`, `google.adk`, `google.genai`, `google.cloud.*`, `app.agents`, `app.infrastructure`, `app.composition`, `app.api` |
+| `app.agents` / `app.agent` | `app.domain`, `app.application`, `app.config`, `google.adk`, `google.genai`, `opentelemetry.*`, `pydantic` | `fastapi`, `google.cloud.*` (tools reach data only through capability-restricted ports) |
+| `app.infrastructure` | `app.domain`, `app.application`, `app.config`, `google.cloud.*`, `google.auth`, `opentelemetry.*`. `google.adk` only in `sessions.py` and `observability.py`. | `fastapi`, `google.genai` |
+| `app.composition` | `app.domain`, `app.infrastructure`, `app.agents`, `app.config` | `fastapi` |
+| `app.api` / `app.fast_api_app` | Everything above, plus `fastapi` | None (HTTP entry point) |
+
+Further rules from the same test file:
+
+- `fastapi` is imported only under `app/api/`, `app/fast_api_app.py` and `app/app_utils/`. `google.genai` is imported only under `app/agents/`.
+- `app/infrastructure/stubs/` (scripted stand-ins for models and identity) is imported only by `app/composition/` and the mock-identity adapters in `app/infrastructure/identity/`.
+- No module imports an underscore-prefixed name from another module.
+
+Known exceptions, left in place because removing them changes wiring rather than layout:
+
+- `app/agents/` imports `build_adk_telemetry_config` and `SystemUtcClock` from `app/infrastructure/`.
+- `app/agents/tools/dependencies.py` lazily imports `app.composition.builders` as a fallback when a tool runs with no injected dependencies (the standalone ADK CLI).
+- `app/infrastructure/stubs/eval_fixtures.py` imports the `ServiceContainer` type from `app/composition/`.
 
 ---
 
@@ -94,16 +109,47 @@ brew/
 │   └── openapi.json                 # Generated OpenAPI 3.1 HTTP API contract
 ├── app/
 │   ├── config.py                    # Validated AppSettings (default model: gemini-3.8-flash)
-│   ├── agent.py                     # Root ADK agent & App registration
-│   ├── fast_api_app.py              # FastAPI + ADK + A2A + OTel + SPA static serving
+│   ├── agent.py                     # Thin ADK entry point: root_agent and App registration
+│   ├── fast_api_app.py              # Thin HTTP entry point: loads .env, exposes create_app and app
 │   ├── server.py                    # Production uvicorn entrypoint honoring $PORT
 │   ├── dev_runner.py                # Single-command local launcher (API + Vite)
 │   ├── app_utils/                   # Scaffolded ADK shared session/artifact & A2A helpers
-│   ├── domain/                      # Pure Pydantic v2 entities, UTC types, ports, domain errors
-│   ├── application/                 # Use-case services (Contact, Meeting, Brief, Memory)
-│   ├── tools/                       # Typed ADK tools with guided error recovery
-│   ├── infrastructure/              # Clocks, JSON logging, OTel, injected fake adapters
-│   └── api/                         # FastAPI v1 routes, schemas, auth DI, error handlers, OpenAPI
+│   ├── domain/                      # Pure Pydantic v2 models, types, ports and rules, per context
+│   │   ├── shared/                  # Base model, clock and id ports, errors, health
+│   │   ├── identity/                # AuthenticatedPrincipal, authenticator port
+│   │   ├── contacts/                # Contact model, types, repository port
+│   │   ├── meetings/                # Meeting model, types, repository port
+│   │   ├── memory/                  # Memory and proposal models, lifecycle rules, jobs, ports
+│   │   └── briefs/                  # Brief models, context budget, workflow diagnostics, ports
+│   │       └── quality/             # Deterministic quality gate, one rule family per file
+│   ├── application/                 # Use cases, per context, depending only on the domain
+│   │   ├── shared/                  # Telemetry helpers, correlation ids, validation, ownership
+│   │   ├── safety/                  # PII redaction, untrusted-text sanitization
+│   │   ├── health/                  # Liveness and readiness use case
+│   │   ├── contacts/  meetings/     # Contact and meeting services
+│   │   ├── memory/                  # Candidate staging, proposals, review, retrieval, jobs
+│   │   ├── briefs/                  # MeetingPreparationWorkflow and its collaborators
+│   │   └── coaching/                # Read-only queries and capability facades used by tools
+│   ├── agents/                      # Everything that imports google.adk or google.genai
+│   │   ├── coach.py                 # conversation_coach agent and ADK App
+│   │   ├── brief_specialists.py     # brief_synthesizer and brief_refiner adapter
+│   │   ├── memory_extractor.py      # memory_candidate_extractor adapter
+│   │   ├── prompts.py               # Versioned instructions
+│   │   ├── model_routing.py         # Per-stage model selection
+│   │   ├── tools/                   # Contracts, handlers, error mapping, registry
+│   │   └── plugins/                 # Coach guardrails, workflow safeguards
+│   ├── infrastructure/              # Adapters behind the domain ports
+│   │   ├── firestore/               # One repository per collection, shared operations
+│   │   ├── inmemory/                # In-memory repositories for local runs and tests
+│   │   ├── stubs/                   # Scripted model and identity stand-ins, eval fixtures
+│   │   ├── identity/                # Verified tokens, mock sessions, runtime authenticator
+│   │   └── *.py                     # Observability, ADK session factory, background jobs, clock, ids
+│   ├── composition/                 # ServiceContainer and the builders that wire adapters
+│   └── api/                         # FastAPI surface
+│       ├── routers/                 # One router per context under /api/v1
+│       ├── schemas/                 # Request and response models per context
+│       ├── middleware/              # Request tracing, ADK surface authorization
+│       └── *.py                     # App factory, auth, dependencies, errors, health, OpenAPI, SPA
 ├── tests/
 │   ├── unit/                        # Fast isolated unit & architectural boundary tests
 │   ├── integration/                 # Deterministic FastAPI, A2A card, & SPA serving tests
@@ -133,9 +179,9 @@ brew/
 
 > [!IMPORTANT]
 > **Implementation status (2026-11-25).** Sections 4.1 to 4.3 describe the original target design. What runs today differs in names and shape:
-> - **Specialist agents.** `brief_synthesizer` writes the first draft and `brief_refiner` applies one revision. Both are ADK `LlmAgent`s built in [`app/infrastructure/adk_brief_coach.py`](../app/infrastructure/adk_brief_coach.py) with instructions from [`app/prompts.py`](../app/prompts.py) and three read-only tools. `memory_candidate_extractor` has no tools. `conversation_coach` ([`app/agent.py`](../app/agent.py)) serves the raw ADK chat and A2A surface.
-> - **Model routing.** [`app/model_routing.py`](../app/model_routing.py) routes synthesis to `BREW_SYNTHESIS_MODEL` (default `gemini-4-hydrogen`) and everything else to `GEMINI_MODEL` (default `gemini-3.8-flash`) unless a stage override is set. See ADR-021.
-> - **Orchestration.** A deterministic Python class, `MeetingPreparationWorkflow` ([`app/application/brief_workflow.py`](../app/application/brief_workflow.py)), assembles context, calls the specialist, validates its JSON, and allows one corrective regeneration. There is no `BrewCoordinatorWorkflow`, `ContextAssemblerNode`, ADK workflow graph or `output_schema`. Each attempt uses a fresh in-memory ADK session, so refinement history compaction does not apply on this path.
+> - **Specialist agents.** `brief_synthesizer` writes the first draft and `brief_refiner` applies one revision. Both are ADK `LlmAgent`s built in [`app/agents/brief_specialists.py`](../app/agents/brief_specialists.py) with instructions from [`app/agents/prompts.py`](../app/agents/prompts.py), request prompts from [`app/agents/brief_prompts.py`](../app/agents/brief_prompts.py) and three read-only tools. `memory_candidate_extractor` has no tools. `conversation_coach` ([`app/agent.py`](../app/agent.py)) serves the raw ADK chat and A2A surface.
+> - **Model routing.** [`app/agents/model_routing.py`](../app/agents/model_routing.py) routes synthesis to `BREW_SYNTHESIS_MODEL` (default `gemini-4-hydrogen`) and everything else to `GEMINI_MODEL` (default `gemini-3.8-flash`) unless a stage override is set. See ADR-021.
+> - **Orchestration.** A deterministic Python class, `MeetingPreparationWorkflow` ([`app/application/briefs/`](../app/application/briefs/)), assembles context, calls the specialist, validates its JSON, and allows one corrective regeneration. There is no `BrewCoordinatorWorkflow`, `ContextAssemblerNode`, ADK workflow graph or `output_schema`. Each attempt uses a fresh in-memory ADK session, so refinement history compaction does not apply on this path.
 > - **Background extraction.** `POST /api/v1/memories/extraction-jobs` returns 202 and the extractor runs as a background job. See ADR-022.
 > - **Plugins.** `ConversationCoachGuardrailPlugin` and `WorkflowSafeguardPlugin` stand in for the `BrewGuardrailPlugin` named below.
 >
@@ -151,7 +197,7 @@ Rather than using a monolithic single-agent prompt, Brew decomposes agentic resp
 | `ContextAssemblerNode` | Function / Tool stage | Deterministic + Firestore Port | Executes `retrieve_counterpart_memories` and `retrieve_user_preferences`, applying token budget & history compaction before LLM invocation. |
 | `BriefSynthesizerAgent` | `LlmAgent` (`output_schema=PreparationBriefSchema`) | **Gemini Pro** | High-reasoning initial synthesis combining counterpart profile, purpose/duration/tone constraints, and prior approved memories into a structured time-boxed brief. |
 | `BriefRefinerAgent` | `LlmAgent` (`output_schema=PreparationBriefSchema`) | **Gemini Flash** | Low-latency conversational refinement updating targeted sections of the current brief while preserving invariants. |
-| `MemoryExtractorAgent` (`memory_candidate_extractor`) | ADK `Agent` (`AdkMemoryProposalAdapter` in `app/infrastructure/adk_memory_extractor.py`, zero tools / zero DB write handles) | **Configured Gemini Model** | Analyzes PII-scrubbed user meeting notes, preserves epistemic attribution (`user_reported_observation` / `user_stated_preference`) and source excerpts, filters sensitive third-party assumptions, skips duplicates, and tags contradictions (`supersedes_memory_id`) for human review. |
+| `MemoryExtractorAgent` (`memory_candidate_extractor`) | ADK `Agent` (`AdkMemoryProposalAdapter` in `app/agents/memory_extractor.py`, zero tools / zero DB write handles) | **Configured Gemini Model** | Analyzes PII-scrubbed user meeting notes, preserves epistemic attribution (`user_reported_observation` / `user_stated_preference`) and source excerpts, filters sensitive third-party assumptions, skips duplicates, and tags contradictions (`supersedes_memory_id`) for human review. |
 | `BrewGuardrailPlugin` | ADK `BasePlugin` (Runner-wide) | Policy + PII + Audit hooks | Intercepts `before_model`, `after_model`, `before_tool`, and `after_tool` across every sub-agent for PII redaction, prompt-injection defense, and Intent-vs-Outcome structured logging. |
 
 ### 4.2 Core Sequence: Preparation, Refinement, Async Memory & HITL Approval
@@ -203,18 +249,18 @@ sequenceDiagram
 - **Bounded Memory Injection**: When starting a new session, only top-ranked approved memories for the target counterpart and active global user preferences (bounded by a strict token budget) are injected into the prompt context.
 
 ### 4.4 Tool Interface, Security Isolation, & Guided Error Contract
-Every ADK tool exposed to `conversation_coach` (`app/tools/coaching_tools.py`):
+Every ADK tool exposed to `conversation_coach` (`app/agents/tools/registry.py`):
 1. Uses a specific action name (`get_user_preferences`, `get_contact_context`, `get_meeting_history`, `suggest_memory_candidates`).
-2. Resolves caller identity strictly from `ToolContext.user_id`—no tool schema accepts `user_id` or `owner_user_id`, and `ConversationCoachGuardrailPlugin` (`app/plugins/coach_guardrails.py`) blocks any injected identity-override keys with `IDENTITY_OVERRIDE_FORBIDDEN`.
-3. Operates strictly through capability-restricted read/staging facades (`ReadOnlyPreferencesFacade`, `ReadOnlyContactFacade`, `ReadOnlyMeetingFacade`, `ReadOnlyApprovedMemoryFacade`, `PendingProposalOnlyFacade` in `app/application/coaching_service.py`) so the agent never holds unrestricted database write, delete, or approval handles.
-4. Enforces `asyncio.wait_for` I/O timeouts, OpenTelemetry spans (`coach.tool.*`), PII redaction, and prompt-injection clause stripping (`app/application/untrusted_data.py`), tagging all returned payloads with `data_trust_level="untrusted_user_data"`.
+2. Resolves caller identity strictly from `ToolContext.user_id`—no tool schema accepts `user_id` or `owner_user_id`, and `ConversationCoachGuardrailPlugin` (`app/agents/plugins/coach_guardrails.py`) blocks any injected identity-override keys with `IDENTITY_OVERRIDE_FORBIDDEN`.
+3. Operates strictly through capability-restricted read/staging facades (`ReadOnlyPreferencesFacade`, `ReadOnlyContactFacade`, `ReadOnlyMeetingFacade`, `ReadOnlyApprovedMemoryFacade`, `PendingProposalOnlyFacade` in `app/application/coaching/queries.py`) so the agent never holds unrestricted database write, delete, or approval handles.
+4. Enforces `asyncio.wait_for` I/O timeouts, OpenTelemetry spans (`coach.tool.*`), PII redaction, and prompt-injection clause stripping (`app/application/safety/`), tagging all returned payloads with `data_trust_level="untrusted_user_data"`.
 5. Never raises unhandled operational exceptions into the LLM loop; on recoverable failures (validation error, missing entity, cross-user `FORBIDDEN`, timeout, or backend outage), returns a typed response with `status="error"`, `error.code`, `error.retryable`, and `error.recovery_instruction`.
 
 ---
 
 ## 5. Domain & Persistence Data Model (Firestore)
 
-All domain Firestore documents are strictly partitioned per authenticated user (`users/{uid}/...`) and mapped to pure Pydantic v2 domain models inside `app/infrastructure/firestore_repositories.py` using non-blocking `firestore.AsyncClient` and `@firestore.async_transactional`:
+All domain Firestore documents are strictly partitioned per authenticated user (`users/{uid}/...`) and mapped to pure Pydantic v2 domain models inside `app/infrastructure/firestore/` using non-blocking `firestore.AsyncClient` and `@firestore.async_transactional`:
 
 - **`users/{uid}/preferences/default`**: User coaching defaults (`default_tone`, `default_duration_minutes`, `preferred_question_count`, `communication_style_notes`, `focus_areas`, `version`).
 - **`users/{uid}/contacts/{contactId}`**: Counterpart metadata (`name`, `title`, `role`, `organization`, `context_notes`, `version`).
@@ -224,7 +270,7 @@ All domain Firestore documents are strictly partitioned per authenticated user (
 - **`users/{uid}/memories/{memoryId}`**: Consented, durable `Memory` entities (`scope`, `contact_id`, `memory_type`, `text`, `source` provenance, `consent_status`, `lifecycle_state` in `approved`/`superseded`, `epistemic_status`, `supersedes_memory_id`, `superseded_by_memory_id`, `superseded_at`, `version`). Only active (`lifecycle_state == "approved"`) records participate in prompt/tool recall unless `include_superseded=true` is requested explicitly for audit inspection.
 - **`users/{uid}/deletedMemories/{memoryId}`**: Immutable `deleted` lifecycle tombstones (`lifecycle_state="deleted"`, `deleted_at`, preserved `source` provenance and timestamps) written atomically in the same `@firestore.async_transactional` batch that removes the active document from `users/{uid}/memories/{memoryId}`.
 - **`users/{uid}/memoryProposals/{proposalId}`**: Separate staged/reviewed `MemoryProposal` entities (`status`, `lifecycle_state` in `proposed`/`approved`/`rejected`, `epistemic_status`, `supersedes_memory_id`, `conflict_summary`, `rejection_reason`, `approved_memory_id`, `source`, `version`) strictly isolated from `memories`.
-- **Isolated ADK Session Storage (`adk-session`, `app_states`, `user_states`)**: Managed via the official `google.adk.integrations.firestore.firestore_session_service.FirestoreSessionService` constructed by `SessionServiceFactory` (`app/infrastructure/session_service_factory.py`), strictly separated from `users/{uid}/...` domain collections.
+- **Isolated ADK Session Storage (`adk-session`, `app_states`, `user_states`)**: Managed via the official `google.adk.integrations.firestore.firestore_session_service.FirestoreSessionService` constructed by `SessionServiceFactory` (`app/infrastructure/sessions.py`), strictly separated from `users/{uid}/...` domain collections.
 
 ---
 
@@ -237,7 +283,7 @@ See [`docs/OBSERVABILITY.md`](OBSERVABILITY.md) for complete operational runbook
    - Non-duplicating child spans cover workflow orchestration (`brew.workflow.*`), pre-brief context & memory retrieval (`brew.context.retrieve`, `brew.memory.retrieve`), ADK built-in spans (`invoke_workflow`, `invoke_agent`, `generate_content` with token usage, `execute_tool` enriched with Brew error classifications), deterministic schema/quality validation (`brew.output.validate`), single corrective regeneration (`brew.workflow.corrective_regeneration`), HITL memory approval (`brew.memory.propose`, `brew.memory.approve`), and Firestore operations (`firestore.<collection>.<op>`).
 2. **Privacy-by-Default Telemetry Lockdown**:
    - Prompt/response content capture (`OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=NO_CONTENT`, `ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS=false`, `TelemetryConfig(capture_message_content=ContentCapturingMode.NO_CONTENT)`) and completion upload hooks (`OTEL_INSTRUMENTATION_GENAI_COMPLETION_HOOK`) are disabled by default unless explicitly authorized via `BREW_TELEMETRY_CAPTURE_CONTENT=true` / `BREW_TELEMETRY_UPLOAD_COMPLETIONS=true`.
-   - `FORBIDDEN_TELEMETRY_KEYS` and `scrub_sensitive_telemetry_text` (`app/application/telemetry.py`) prevent raw contact notes, private biographies, prompts, credentials, JWTs, API keys, emails, SSNs, and phone numbers from entering span attributes or logs.
+   - `FORBIDDEN_TELEMETRY_KEYS` and `scrub_sensitive_telemetry_text` (`app/application/shared/telemetry.py`) prevent raw contact notes, private biographies, prompts, credentials, JWTs, API keys, emails, SSNs, and phone numbers from entering span attributes or logs.
 3. **Structured JSON Logging & Intent-vs-Outcome Capture**:
    - All `app.*` and `google_adk.*` logs emit single-line JSON structured for Cloud Logging (`severity`, `message`, `logging.googleapis.com/trace`, `logging.googleapis.com/spanId`, `logging.googleapis.com/trace_sampled`, `trace_id`, `span_id`, `request_id`, `event_type`, `error_type`, `error_code`, `error_classification`).
    - `ConversationCoachGuardrailPlugin` and `WorkflowSafeguardPlugin` emit paired `*.intent` and `*.outcome` events across agent invocations, Gemini calls (including token counts), and tool calls.

@@ -7,10 +7,10 @@
 
 ## 1. Architecture & Non-Duplicating Span Hierarchy
 
-Brew combines the OpenTelemetry instrumentation scaffolded by `google-agents-cli` / Google ADK (`get_fast_api_app(..., otel_to_cloud=...)` in [`app/fast_api_app.py`](../app/fast_api_app.py)) with domain-aware application, validation, corrective regeneration, memory governance, and Firestore spans ([`app/application/telemetry.py`](../app/application/telemetry.py), [`app/infrastructure/observability.py`](../app/infrastructure/observability.py)).
+Brew combines the OpenTelemetry instrumentation scaffolded by `google-agents-cli` / Google ADK (`get_fast_api_app(..., otel_to_cloud=...)` in [`app/fast_api_app.py`](../app/fast_api_app.py)) with domain-aware application, validation, corrective regeneration, memory governance, and Firestore spans ([`app/application/shared/telemetry.py`](../app/application/shared/telemetry.py), [`app/infrastructure/observability.py`](../app/infrastructure/observability.py)).
 
 To prevent noisy duplicate spans:
-- **ADK-owned stages (`invoke_workflow`, `invoke_agent`, `generate_content`, `execute_tool`)** are **preserved and enriched in place** via [`ConversationCoachGuardrailPlugin`](../app/plugins/coach_guardrails.py), [`WorkflowSafeguardPlugin`](../app/plugins/workflow_safeguards.py), and `_tool_telemetry_scope` in [`app/tools/coaching_tools.py`](../app/tools/coaching_tools.py).
+- **ADK-owned stages (`invoke_workflow`, `invoke_agent`, `generate_content`, `execute_tool`)** are **preserved and enriched in place** via [`ConversationCoachGuardrailPlugin`](../app/agents/plugins/coach_guardrails.py), [`WorkflowSafeguardPlugin`](../app/agents/plugins/workflow_safeguards.py), and `tool_telemetry_scope` in [`app/agents/tools/registry.py`](../app/agents/tools/registry.py).
 - **Brew-owned stages** wrap HTTP ingress, 9-step workflow orchestration, pre-brief context/memory retrieval, deterministic schema + quality validation, single corrective regeneration, HITL memory approval, and async Firestore persistence.
 
 ### End-to-End Correlated Trace Tree
@@ -78,7 +78,7 @@ Brew handles sensitive interpersonal context. By default, **raw contact notes, p
 2. **Completion Uploads Disabled Unless Authorized**:
    - Unless `BREW_TELEMETRY_UPLOAD_COMPLETIONS=true` is explicitly configured, startup removes `OTEL_INSTRUMENTATION_GENAI_COMPLETION_HOOK`, `OTEL_INSTRUMENTATION_GENAI_UPLOAD_BASE_PATH`, and `OTEL_INSTRUMENTATION_GENAI_UPLOAD_FORMAT` from the process environment and logs `telemetry.privacy.upload_hooks_disabled`.
 3. **Attribute Denylist & Active PII/Credential Redaction**:
-   - `FORBIDDEN_TELEMETRY_KEYS` ([`app/application/telemetry.py`](../app/application/telemetry.py)) drops keys such as `notes`, `meeting_notes`, `context_notes`, `prompt`, `instructions`, `edited_text`, `excerpt`, `authorization`, `token`, `api_key`, and `secret`.
+   - `FORBIDDEN_TELEMETRY_KEYS` ([`app/application/shared/telemetry.py`](../app/application/shared/telemetry.py)) drops keys such as `notes`, `meeting_notes`, `context_notes`, `prompt`, `instructions`, `edited_text`, `excerpt`, `authorization`, `token`, `api_key`, and `secret`.
    - `scrub_sensitive_telemetry_text` redacts `Bearer` credentials, JWTs (`eyJ...`), Google API keys (`AIza...`), OAuth tokens (`ya29...`), emails, SSNs, and phone numbers across both span attributes and structured JSON logs.
 
 ---
@@ -243,11 +243,11 @@ Every log line emitted by `app.*` and `google_adk.*` is formatted by `Structured
 
 All five production trace scenarios and privacy invariants are deterministically verified offline in [`tests/unit/test_observability_tracing.py`](../tests/unit/test_observability_tracing.py):
 
-1. **Successful Brief Generation (`test_scenario_1_...`)**: Correlates `POST /api/v1/briefs/generate` -> `brew.workflow.generate_brief` -> `brew.context.retrieve` (`brew.memory.retrieved_count=1`) -> `invoke_agent conversation_coach` -> `execute_tool get_meeting_history` -> `generate_content` (token counts) -> `brew.output.validate` -> `firestore.meetings.save` + `firestore.briefs.save`, proving zero leakage of contact notes, meeting notes, emails, phone numbers, tokens, or raw prompts.
+1. **Successful Brief Generation (`test_scenario_1_...`)**: Correlates `POST /api/v1/briefs/generate` -> `brew.workflow.generate_brief` -> `brew.context.retrieve` (`brew.memory.retrieved_count=1`) -> `invoke_agent brief_synthesizer` -> `execute_tool get_meeting_history` -> `generate_content` (token counts) -> `brew.output.validate` -> `firestore.meetings.save` + `firestore.briefs.save`, proving zero leakage of contact notes, meeting notes, emails, phone numbers, tokens, or raw prompts.
 2. **Memory Retrieval (`test_scenario_2_...`)**: Correlates `GET /api/v1/memories` -> `brew.memory.retrieve` -> `firestore.memories.list` with matching `brew.memory.retrieved_count=2` and zero memory-body leakage.
 3. **Tool Timeout / Failure & Model Timeout (`test_scenario_3_...`)**: Demonstrates `execute_tool get_meeting_history` marked `StatusCode.ERROR` with `brew.error.classification="TIMEOUT"` followed by `TOOL_RETRY_LIMIT_EXCEEDED` and graceful brief synthesis, plus end-to-end `504 MODEL_TIMEOUT` span/log correlation.
 4. **Validation Retry / Corrective Regeneration (`test_scenario_4_...`)**: Demonstrates failed `brew.output.validate` (`OUTPUT_VALIDATION_ERROR`) triggering `brew.workflow.corrective_regeneration` (`brew.regeneration.attempt=1`, `brew.result.status="repaired"`) as well as terminal `422 MODEL_OUTPUT_VALIDATION_ERROR` when both attempts fail.
-5. **Memory Proposal & HITL Approval (`test_scenario_5_...`)**: Demonstrates `POST /api/v1/memories/propose` (`brew.memory.propose` -> `invoke_agent memory_candidate_extractor` -> `firestore.memory_proposals.save`, zero writes to `memories`) followed by `POST /api/v1/memories/{id}/approve` (`brew.memory.approve` -> `firestore.memories.save` with `brew.memory.saved_count=1`).
+5. **Memory Proposal & HITL Approval (`test_scenario_5_...`)**: Demonstrates `POST /api/v1/memories/propose` (`brew.memory.propose` -> `invoke_agent memory_candidate_extractor` -> `firestore.memory_proposals.save`, zero writes to `memories`) followed by `POST /api/v1/memories/{id}/approve` (`brew.memory.approve` -> `firestore.memories.save` with `brew.memory.saved_count=1`). The `suggest_memory_candidates` tool opens the same `brew.memory.propose` span. On both paths it carries `brew.memory.skipped_duplicates`, `brew.memory.filtered_sensitive_count` and `brew.memory.filtered_directive_count`.
 
 Run the local tracing suite at any time with:
 

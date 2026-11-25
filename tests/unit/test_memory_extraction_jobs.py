@@ -12,22 +12,21 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from app.application.memory_jobs import STALLED_ERROR_CODE, MemoryExtractionJobService
-from app.application.memory_persistence_service import MemoryPersistenceService
+from app.application.memory.jobs import STALLED_ERROR_CODE, MemoryExtractionJobService
+from app.application.memory.persistence import MemoryPersistenceService
+from app.composition.container import FakeServiceContainer
 from app.config import AppSettings
-from app.domain.errors import EntityNotFoundError, ModelTimeoutError
-from app.domain.models import (
-    AuthenticatedPrincipal,
-    Contact,
-    Meeting,
-    Memory,
-    MemoryExtractionJob,
-)
-from app.domain.ports import ProposedMemoryCandidate
-from app.domain.types import MemoryExtractionJobStatus, MemoryScope, MemoryType
+from app.domain.contacts.models import Contact
+from app.domain.identity.models import AuthenticatedPrincipal
+from app.domain.meetings.models import Meeting
+from app.domain.memory.jobs import MemoryExtractionJob
+from app.domain.memory.models import Memory
+from app.domain.memory.ports import ProposedMemoryCandidate
+from app.domain.memory.types import MemoryExtractionJobStatus, MemoryScope, MemoryType
+from app.domain.shared.errors import EntityNotFoundError, ModelTimeoutError
 from app.fast_api_app import create_app
 from app.infrastructure.background_jobs import InProcessBackgroundJobRunner
-from app.infrastructure.fakes import FakeAuthenticator, FakeServiceContainer
+from app.infrastructure.stubs.authenticator import FakeAuthenticator
 
 ALICE = {"Authorization": "Bearer tok_alice"}
 BOB = {"Authorization": "Bearer tok_bob"}

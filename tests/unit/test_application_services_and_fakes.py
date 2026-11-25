@@ -7,52 +7,41 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from pydantic import ValidationError
 
-from app.application.memory_persistence_service import MemoryPersistenceService
-from app.application.memory_retrieval_service import MemoryRetrievalService
-from app.application.services import (
-    BriefService,
-    ContactService,
-    MeetingService,
-    MemoryService,
-)
+from app.application.briefs.service import BriefService
+from app.application.contacts.service import ContactService
+from app.application.meetings.service import MeetingService
+from app.application.memory.persistence import MemoryPersistenceService
+from app.application.memory.retrieval import MemoryRetrievalService
+from app.application.memory.service import MemoryService
 from app.config import AppSettings
-from app.domain.errors import (
-    AuthorizationError,
-    InvalidConfigurationError,
-    VersionConflictError,
-)
-from app.domain.models import (
-    AuthenticatedPrincipal,
-    ContextBudget,
-    Meeting,
-    Memory,
-    MemorySource,
-)
-from app.domain.types import (
+from app.domain.briefs.context import ContextBudget
+from app.domain.identity.models import AuthenticatedPrincipal
+from app.domain.meetings.models import Meeting
+from app.domain.meetings.types import MeetingPurpose, MeetingStatus, MeetingTone
+from app.domain.memory.models import Memory, MemorySource
+from app.domain.memory.types import (
     ConsentStatus,
-    MeetingPurpose,
-    MeetingStatus,
-    MeetingTone,
     MemoryScope,
     MemorySourceType,
     MemoryType,
     ProposalStatus,
 )
-from app.infrastructure.fakes import (
-    FakeBriefCoachAgent,
-    FakeMemoryProposalAgent,
-    InMemoryBriefRepository,
-    InMemoryContactRepository,
-    InMemoryMeetingRepository,
-    InMemoryMemoryProposalRepository,
-    InMemoryMemoryRepository,
-    InMemoryUserPreferencesRepository,
-    SequentialIdGenerator,
+from app.domain.shared.errors import (
+    AuthorizationError,
+    InvalidConfigurationError,
+    VersionConflictError,
 )
-from app.infrastructure.session_service_factory import (
-    SessionServiceFactory,
-    validate_isolated_session_collection,
-)
+from app.infrastructure.ids import SequentialIdGenerator
+from app.infrastructure.inmemory.briefs import InMemoryBriefRepository
+from app.infrastructure.inmemory.contacts import InMemoryContactRepository
+from app.infrastructure.inmemory.meetings import InMemoryMeetingRepository
+from app.infrastructure.inmemory.memories import InMemoryMemoryRepository
+from app.infrastructure.inmemory.memory_proposals import InMemoryMemoryProposalRepository
+from app.infrastructure.inmemory.preferences import InMemoryUserPreferencesRepository
+from app.infrastructure.sessions import SessionServiceFactory, validate_isolated_session_collection
+from app.infrastructure.stubs.brief_coach import FakeBriefCoachAgent
+from app.infrastructure.stubs.memory_extractor import FakeMemoryProposalAgent
+from tests.support.brief_context import assemble_brief_context
 
 
 class AdvancingUtcClock:
@@ -393,7 +382,8 @@ async def test_memory_retrieval_builds_bounded_provenance_aware_context_with_use
         max_preference_memories=1,
         max_total_chars=600,
     )
-    context = await retrieval_service.build_brief_context(
+    context = await assemble_brief_context(
+        retrieval_service,
         principal=alice,
         contact_id=alice_contact.id,
         purpose=MeetingPurpose.MENTORSHIP,
@@ -417,9 +407,12 @@ async def test_memory_retrieval_builds_bounded_provenance_aware_context_with_use
 
     # Cross-user contact retrieval fails with AuthorizationError
     with pytest.raises(AuthorizationError):
-        await retrieval_service.build_brief_context(
+        await assemble_brief_context(
+            retrieval_service,
             principal=alice,
             contact_id=bob_contact.id,
+            purpose=MeetingPurpose.COFFEE_CHAT,
+            objective="Ownership check only.",
         )
 
 
