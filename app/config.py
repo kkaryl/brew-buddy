@@ -160,9 +160,17 @@ class AppSettings(BaseSettings):
         validation_alias="WEB_DIST_DIR",
     )
 
+    app_url: str | None = Field(
+        default=None,
+        validation_alias="APP_URL",
+    )
     auth_mode: AuthModeName = Field(
         default="auto",
         validation_alias="BREW_AUTH_MODE",
+    )
+    iap_jwt_audience: str | None = Field(
+        default=None,
+        validation_alias="BREW_IAP_JWT_AUDIENCE",
     )
     firebase_project_id: str | None = Field(
         default=None,
@@ -192,6 +200,8 @@ class AppSettings(BaseSettings):
     )
 
     @field_validator(
+        "app_url",
+        "iap_jwt_audience",
         "firebase_project_id",
         "firebase_web_api_key",
         "firebase_auth_domain",

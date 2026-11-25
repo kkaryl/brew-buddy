@@ -16,18 +16,21 @@ export function RunOfShowRibbon({
   }
 
   const sumLabel = segments.map((s) => `${String(s.duration_minutes)}m`).join(" + ");
-  const gridCols = segments.map((s) => `${String(Math.max(1, s.duration_minutes))}fr`).join(" ");
+  const minVisualWeight = Math.max(1, Math.round(Math.max(1, totalDurationMinutes) * 0.18));
+  const gridCols = segments
+    .map((s) => `minmax(0, ${String(Math.max(minVisualWeight, s.duration_minutes))}fr)`)
+    .join(" ");
 
   return (
-    <div className="brew-card-paper rounded-[26px] px-5 py-4.5">
-      <div className="mb-2.5 flex items-center justify-between gap-2">
+    <div className="brew-card-paper min-w-0 overflow-hidden rounded-[26px] px-5 py-4.5">
+      <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2">
         <span className="brew-eyebrow">{String(totalDurationMinutes)}-MINUTE RUN OF SHOW</span>
         <span className="font-mono-code text-xs text-brew-secondary">{sumLabel}</span>
       </div>
 
       <ol
         className="grid gap-2 max-md:!grid-cols-1"
-        style={{ gridTemplateColumns: gridCols || "1fr" }}
+        style={{ gridTemplateColumns: gridCols || "minmax(0, 1fr)" }}
       >
         {segments.map((seg, idx) => {
           const startMin = cumulativeStarts[idx] ?? 0;
@@ -42,7 +45,7 @@ export function RunOfShowRibbon({
           return (
             <li
               key={`${seg.title}-${String(idx)}`}
-              className={`rounded-[16px] px-3.5 py-3 ${surfaceClass}`}
+              className={`min-w-0 break-words rounded-[16px] px-3.5 py-3 ${surfaceClass}`}
             >
               <div className="text-[13px] font-extrabold text-brew-plum">
                 {String(startMin)}-{String(endMin)}m · {seg.title}

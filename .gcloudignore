@@ -18,3 +18,9 @@
 # the old .env.
 /.agents/
 /.agents-cli-original/
+/.github/
+/docs/
+/mockups/
+/tests/
+/gcloud_setup.sh
+/iap_setup.sh

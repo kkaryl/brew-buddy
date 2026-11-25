@@ -30,6 +30,8 @@ _MOCK_TOKEN_PREFIX = "mses_"
 _CLOCK_SKEW_SECONDS = 10
 _GOOGLE_TOKENINFO_URL = "https://oauth2.googleapis.com/tokeninfo"
 _GOOGLE_USERINFO_URL = "https://openidconnect.googleapis.com/v1/userinfo"
+_GOOGLE_IAP_CERTS_URL = "https://www.gstatic.com/iap/verify/public_key-jwk"
+_GOOGLE_IAP_ISSUER = "https://cloud.google.com/iap"
 
 
 @dataclass(frozen=True)
@@ -115,6 +117,10 @@ _VERIFY_OAUTH2_FN = cast(
     Callable[..., Mapping[str, Any]],
     google_id_token.verify_oauth2_token,
 )
+_VERIFY_IAP_FN = cast(
+    Callable[..., Mapping[str, Any]],
+    google_id_token.verify_token,
+)
 
 
 def _normalize_verified_user_id(prefix: str, raw_subject: str) -> str:
@@ -153,17 +159,23 @@ class FirebaseGoogleTokenAuthenticator:
         *,
         firebase_project_id: str | None = None,
         google_oauth_client_id: str | None = None,
+        service_oidc_audience: str | None = None,
+        iap_jwt_audience: str | None = None,
         timeout_seconds: float = 5.0,
         firebase_verifier_override: TokenClaimsVerifier | None = None,
         google_verifier_override: TokenClaimsVerifier | None = None,
         google_access_token_verifier_override: TokenClaimsVerifier | None = None,
+        iap_verifier_override: TokenClaimsVerifier | None = None,
     ) -> None:
         self._firebase_project_id = (firebase_project_id or "").strip() or None
         self._google_oauth_client_id = (google_oauth_client_id or "").strip() or None
+        self._service_oidc_audience = (service_oidc_audience or "").strip().rstrip("/") or None
+        self._iap_jwt_audience = (iap_jwt_audience or "").strip() or None
         self._request_adapter = _BoundedGoogleAuthRequest(timeout_seconds=timeout_seconds)
         self._firebase_verifier_override = firebase_verifier_override
         self._google_verifier_override = google_verifier_override
         self._google_access_token_verifier_override = google_access_token_verifier_override
+        self._iap_verifier_override = iap_verifier_override
 
     @property
     def is_configured(self) -> bool:
@@ -171,10 +183,84 @@ class FirebaseGoogleTokenAuthenticator:
         return bool(
             self._firebase_project_id
             or self._google_oauth_client_id
+            or self._service_oidc_audience
+            or self._iap_jwt_audience
+            or self._firebase_verifier_override
+            or self._google_verifier_override
+            or self._google_access_token_verifier_override
+            or self._iap_verifier_override
+        )
+
+    @property
+    def is_bearer_configured(self) -> bool:
+        """Return True when at least one Bearer token audience is configured."""
+        return bool(
+            self._firebase_project_id
+            or self._google_oauth_client_id
+            or self._service_oidc_audience
             or self._firebase_verifier_override
             or self._google_verifier_override
             or self._google_access_token_verifier_override
         )
+
+    @property
+    def is_iap_configured(self) -> bool:
+        """Return True when Cloud Run IAP JWT verification is configured."""
+        return bool(self._iap_jwt_audience or self._iap_verifier_override)
+
+    def authenticate_iap_assertion(self, assertion: str) -> AuthenticatedPrincipal:
+        """Cryptographically verify a Google Cloud IAP ``X-Goog-IAP-JWT-Assertion`` header."""
+        cleaned = assertion.strip()
+        if not cleaned or cleaned.count(".") != (_JWT_SEGMENT_COUNT - 1):
+            raise AuthenticationError(
+                "A valid Google Cloud IAP JWT assertion is required.",
+                code="AUTHENTICATION_REQUIRED",
+            )
+        if not self.is_iap_configured:
+            raise AuthenticationError(
+                "IAP authentication header was supplied, but BREW_IAP_JWT_AUDIENCE "
+                "is not configured on the server.",
+                code="AUTH_PROVIDER_NOT_CONFIGURED",
+            )
+        try:
+            claims = (
+                self._iap_verifier_override(cleaned)
+                if self._iap_verifier_override is not None
+                else _VERIFY_IAP_FN(
+                    cleaned,
+                    self._request_adapter,
+                    audience=self._iap_jwt_audience,
+                    certs_url=_GOOGLE_IAP_CERTS_URL,
+                    clock_skew_in_seconds=_CLOCK_SKEW_SECONDS,
+                )
+            )
+            issuer = str(claims.get("iss") or "").strip()
+            if issuer and issuer != _GOOGLE_IAP_ISSUER:
+                raise AuthenticationError(
+                    "Unexpected IAP JWT issuer.",
+                    code="AUTHENTICATION_REQUIRED",
+                )
+            subject = str(claims.get("sub") or "").strip()
+            if subject.startswith("accounts.google.com:"):
+                subject = subject.split(":", 1)[1].strip()
+            user_id = _normalize_verified_user_id("iap", subject)
+            return AuthenticatedPrincipal(
+                user_id=user_id,
+                display_name=_extract_display_name(claims),
+            )
+        except AuthenticationError:
+            raise
+        except Exception as exc:
+            if _looks_like_expired_error(exc):
+                raise AuthenticationError(
+                    "IAP authentication assertion has expired. Please refresh and sign in again.",
+                    code="TOKEN_EXPIRED",
+                ) from exc
+            logger.warning("IAP JWT verification rejected assertion (%s)", type(exc).__name__)
+            raise AuthenticationError(
+                "Invalid or untrusted IAP authentication assertion.",
+                code="AUTHENTICATION_REQUIRED",
+            ) from exc
 
     def _verify_google_oauth_access_token(self, access_token: str) -> AuthenticatedPrincipal:
         """Verify an OAuth 2.0 access token issued to ``GOOGLE_OAUTH_CLIENT_ID`` via Google OIDC."""
@@ -269,10 +355,10 @@ class FirebaseGoogleTokenAuthenticator:
                 code="AUTHENTICATION_REQUIRED",
             )
 
-        if not self.is_configured:
+        if not self.is_bearer_configured:
             raise AuthenticationError(
-                "Verified authentication is active, but FIREBASE_PROJECT_ID or "
-                "GOOGLE_OAUTH_CLIENT_ID is not configured on the server.",
+                "Verified authentication is active, but FIREBASE_PROJECT_ID, "
+                "GOOGLE_OAUTH_CLIENT_ID, or APP_URL is not configured on the server.",
                 code="AUTH_PROVIDER_NOT_CONFIGURED",
             )
 
@@ -315,7 +401,15 @@ class FirebaseGoogleTokenAuthenticator:
                     expired_seen = True
                 logger.debug("Firebase token verification did not match: %s", type(exc).__name__)
 
-        if self._google_oauth_client_id or self._google_verifier_override is not None:
+        google_audiences: list[str | None] = []
+        if self._google_oauth_client_id:
+            google_audiences.append(self._google_oauth_client_id)
+        if self._service_oidc_audience and self._service_oidc_audience not in google_audiences:
+            google_audiences.append(self._service_oidc_audience)
+        if not google_audiences and self._google_verifier_override is not None:
+            google_audiences.append(None)
+
+        for target_audience in google_audiences:
             try:
                 claims = (
                     self._google_verifier_override(cleaned)
@@ -323,7 +417,7 @@ class FirebaseGoogleTokenAuthenticator:
                     else _VERIFY_OAUTH2_FN(
                         cleaned,
                         self._request_adapter,
-                        audience=self._google_oauth_client_id,
+                        audience=target_audience,
                         clock_skew_in_seconds=_CLOCK_SKEW_SECONDS,
                     )
                 )
@@ -345,9 +439,8 @@ class FirebaseGoogleTokenAuthenticator:
                 if _looks_like_expired_error(exc):
                     expired_seen = True
                 logger.warning(
-                    "Google OIDC token verification rejected token (%s): %s",
+                    "Google OIDC token verification rejected token (%s)",
                     type(exc).__name__,
-                    exc,
                 )
 
         if expired_seen:
@@ -455,9 +548,23 @@ class RuntimeAuthenticator:
         return self._local_mock_enabled
 
     @property
+    def is_verified_provider_configured(self) -> bool:
+        """Return True when at least one verified auth provider is configured."""
+        return self._verified.is_configured
+
+    @property
+    def is_iap_configured(self) -> bool:
+        """Return True when Cloud Run IAP JWT verification is configured."""
+        return self._verified.is_iap_configured
+
+    @property
     def mock_registry(self) -> LocalMockSessionRegistry:
         """Access the local mock session registry (guarded by ``issue_local_mock_session``)."""
         return self._mock_registry
+
+    def authenticate_iap_assertion(self, assertion: str) -> AuthenticatedPrincipal:
+        """Verify a Google Cloud IAP ``X-Goog-IAP-JWT-Assertion`` header."""
+        return self._verified.authenticate_iap_assertion(assertion)
 
     def issue_local_mock_session(
         self,
@@ -505,15 +612,19 @@ def build_runtime_authenticator(
     firebase_verifier_override: TokenClaimsVerifier | None = None,
     google_verifier_override: TokenClaimsVerifier | None = None,
     google_access_token_verifier_override: TokenClaimsVerifier | None = None,
+    iap_verifier_override: TokenClaimsVerifier | None = None,
 ) -> RuntimeAuthenticator:
     """Construct ``RuntimeAuthenticator`` from validated ``AppSettings``."""
     verified = FirebaseGoogleTokenAuthenticator(
         firebase_project_id=settings.resolved_firebase_project_id,
         google_oauth_client_id=settings.google_oauth_client_id,
+        service_oidc_audience=settings.app_url,
+        iap_jwt_audience=settings.iap_jwt_audience,
         timeout_seconds=min(settings.http_timeout_seconds, 10.0),
         firebase_verifier_override=firebase_verifier_override,
         google_verifier_override=google_verifier_override,
         google_access_token_verifier_override=google_access_token_verifier_override,
+        iap_verifier_override=iap_verifier_override,
     )
     registry = mock_registry or LocalMockSessionRegistry(
         clock=clock,

@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Annotated, Literal
 
 from dotenv import load_dotenv
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Request, Response, status
 from pydantic import BaseModel, Field
 
 from app.application.health_service import HealthCheckService
@@ -43,6 +43,33 @@ class HealthResponse(BaseModel):
     version: str = Field(description="Application semantic version.")
     environment: str = Field(description="Configured deployment environment.")
     model: str = Field(description="Configured default Gemini model.")
+    timestamp_utc: str = Field(description="UTC timestamp in ISO-8601 format.")
+
+
+class ReadinessChecksResponse(BaseModel):
+    """Individual subsystem checks evaluated by Brew readiness probes."""
+
+    config_loaded: bool = Field(description="True when runtime settings validated cleanly.")
+    agent_runner_initialized: bool = Field(
+        description="True when ADK Conversation Coach runner and session service are attached."
+    )
+    persistence_ready: bool = Field(
+        description="True when the configured persistence adapter is initialized."
+    )
+    auth_ready: bool = Field(
+        description="True when authentication enforcement is properly configured for this env."
+    )
+
+
+class ReadinessResponse(BaseModel):
+    """Typed HTTP payload returned by Brew startup and readiness probe endpoints."""
+
+    status: Literal["ready", "not_ready"] = Field(description="Overall traffic readiness state.")
+    service: str = Field(description="Service name.")
+    version: str = Field(description="Application semantic version.")
+    environment: str = Field(description="Configured deployment environment.")
+    persistence_backend: str = Field(description="Active persistence backend name.")
+    checks: ReadinessChecksResponse = Field(description="Component readiness breakdown.")
     timestamp_utc: str = Field(description="UTC timestamp in ISO-8601 format.")
 
 
@@ -154,4 +181,60 @@ def read_health(
         environment=report.environment,
         model=report.model,
         timestamp_utc=report.timestamp_utc,
+    )
+
+
+@router.get("/api/ready", response_model=ReadinessResponse, include_in_schema=False)
+@router.get("/readyz", response_model=ReadinessResponse, include_in_schema=False)
+def read_readiness(
+    request: Request,
+    response: Response,
+    settings: Annotated[AppSettings, Depends(get_app_settings)],
+) -> ReadinessResponse:
+    """Evaluate Cloud Run startup and traffic readiness across ADK, auth, and persistence."""
+    container = getattr(request.app.state, "service_container", None)
+    if container is None:
+        container = build_service_container(settings)
+        request.app.state.service_container = container
+
+    agent_runner_initialized = (
+        getattr(request.app.state, "runner", None) is not None
+        and getattr(request.app.state, "session_service", None) is not None
+    )
+
+    if settings.persistence_backend == "firestore":
+        persistence_ready = container.memory_repo is not None and container.brief_repo is not None
+    else:
+        persistence_ready = True
+
+    if settings.local_mock_auth_enabled:
+        auth_ready = True
+    elif isinstance(container.authenticator, RuntimeAuthenticator):
+        auth_ready = container.authenticator.is_verified_provider_configured
+    else:
+        auth_ready = True
+
+    checks = ReadinessChecksResponse(
+        config_loaded=True,
+        agent_runner_initialized=agent_runner_initialized,
+        persistence_ready=persistence_ready,
+        auth_ready=auth_ready,
+    )
+    overall_ready = (
+        checks.config_loaded
+        and checks.agent_runner_initialized
+        and checks.persistence_ready
+        and checks.auth_ready
+    )
+    if not overall_ready:
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+
+    return ReadinessResponse(
+        status="ready" if overall_ready else "not_ready",
+        service=settings.app_name,
+        version=settings.app_version,
+        environment=settings.environment,
+        persistence_backend=settings.persistence_backend,
+        checks=checks,
+        timestamp_utc=SystemUtcClock().now_utc().isoformat(),
     )

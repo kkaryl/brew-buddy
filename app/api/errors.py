@@ -126,58 +126,63 @@ def _domain_error_status_and_headers(
     return (400 if exc.recoverable else 500), None
 
 
+def build_domain_error_json_response(request: Request, exc: BrewDomainError) -> JSONResponse:
+    """Serialize a ``BrewDomainError`` into Brew's structured ``ApiErrorResponse`` envelope."""
+    request_id, trace_id = resolve_request_and_trace_ids(request)
+    status_code, headers = _domain_error_status_and_headers(exc)
+    classification = classify_telemetry_error(exc)
+    request.state.error_classification = classification
+    request.state.error_code = exc.code
+
+    details: list[ErrorDetailItem] = []
+    if isinstance(exc, ModelOutputValidationError):
+        details = [
+            ErrorDetailItem(
+                field="brief_output",
+                message=violation,
+                error_type="brief_quality_or_schema_violation",
+            )
+            for violation in exc.violations
+        ]
+    log_fn = logger.error if status_code >= 500 else logger.warning
+    log_fn(
+        f"API domain error {exc.code} (HTTP {status_code})",
+        extra={
+            "event_type": "http.error.domain",
+            "operation_name": "http.request",
+            "request_id": request_id,
+            "trace_id": trace_id,
+            "result_status": "error",
+            "error_type": type(exc).__name__,
+            "error_code": exc.code,
+            "error_classification": classification,
+            "http_method": request.method,
+            "http_route": request.url.path,
+            "http_status_code": status_code,
+        },
+    )
+    payload = ApiErrorResponse(
+        error=ErrorObject(
+            code=exc.code,
+            message=exc.message,
+            trace_id=trace_id,
+            details=details,
+        )
+    )
+    merged_headers = _response_correlation_headers(request, request_id, headers)
+    return JSONResponse(
+        status_code=status_code,
+        content=payload.model_dump(mode="json"),
+        headers=merged_headers,
+    )
+
+
 def register_exception_handlers(fastapi_app: FastAPI) -> None:
     """Attach consistent ``ApiErrorResponse`` exception handlers to ``fastapi_app``."""
 
     @fastapi_app.exception_handler(BrewDomainError)
     async def handle_domain_error(request: Request, exc: BrewDomainError) -> JSONResponse:
-        request_id, trace_id = resolve_request_and_trace_ids(request)
-        status_code, headers = _domain_error_status_and_headers(exc)
-        classification = classify_telemetry_error(exc)
-        request.state.error_classification = classification
-        request.state.error_code = exc.code
-
-        details: list[ErrorDetailItem] = []
-        if isinstance(exc, ModelOutputValidationError):
-            details = [
-                ErrorDetailItem(
-                    field="brief_output",
-                    message=violation,
-                    error_type="brief_quality_or_schema_violation",
-                )
-                for violation in exc.violations
-            ]
-        log_fn = logger.error if status_code >= 500 else logger.warning
-        log_fn(
-            f"API domain error {exc.code} (HTTP {status_code})",
-            extra={
-                "event_type": "http.error.domain",
-                "operation_name": "http.request",
-                "request_id": request_id,
-                "trace_id": trace_id,
-                "result_status": "error",
-                "error_type": type(exc).__name__,
-                "error_code": exc.code,
-                "error_classification": classification,
-                "http_method": request.method,
-                "http_route": request.url.path,
-                "http_status_code": status_code,
-            },
-        )
-        payload = ApiErrorResponse(
-            error=ErrorObject(
-                code=exc.code,
-                message=exc.message,
-                trace_id=trace_id,
-                details=details,
-            )
-        )
-        merged_headers = _response_correlation_headers(request, request_id, headers)
-        return JSONResponse(
-            status_code=status_code,
-            content=payload.model_dump(mode="json"),
-            headers=merged_headers,
-        )
+        return build_domain_error_json_response(request, exc)
 
     @fastapi_app.exception_handler(RequestValidationError)
     async def handle_request_validation_error(

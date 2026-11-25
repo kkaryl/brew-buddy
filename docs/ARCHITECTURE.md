@@ -89,6 +89,7 @@ brew/
 │   ├── ARCHITECTURE.md              # System architecture & boundaries
 │   ├── DESIGN.md                    # Playful Social Club design tokens, components, & SVG art direction
 │   ├── OBSERVABILITY.md             # OpenTelemetry, Cloud Trace, privacy, & log correlation runbooks
+│   ├── DEPLOYMENT.md                # Cloud Run, IAP, Workload Identity Federation, & CI/CD runbook
 │   ├── DECISIONS.md                 # Architectural Decision Records (ADRs)
 │   └── openapi.json                 # Generated OpenAPI 3.1 HTTP API contract
 ├── app/
@@ -233,11 +234,14 @@ See [`docs/OBSERVABILITY.md`](OBSERVABILITY.md) for complete operational runbook
 
 ---
 
-## 7. Security, Infrastructure as Code, and CI/CD
+## 7. Security, Cloud Run Deployment, and CI/CD
 
-- **Secrets Management**: Zero hardcoded API keys or credentials. Runtime configuration resolves secrets exclusively via Google Cloud Secret Manager and Workload Identity / Application Default Credentials (ADC).
-- **Infrastructure as Code (`infra/terraform/`)**: Declaratively provisions Firestore database & composite indexes, Cloud Run / Agent Runtime services, least-privilege IAM service accounts, Secret Manager secret containers, and Cloud Trace/Logging sinks.
-- **CI/CD Pipeline (GitHub Actions / Cloud Build)**:
-  1. **Static & Lint Checks**: `uv run ruff check .`, `uv run ruff format --check .`, `uv run mypy app tests/unit tests/integration`, `uv run codespell`, frontend `eslint` + `tsc --noEmit`, `terraform fmt -check` & `terraform validate`.
-  2. **Deterministic Tests**: `uv run pytest` (107 unit, integration, authorization-boundary, and Cloud Firestore Emulator tests) and frontend `Vitest` (14 tests across `web/src/App.test.tsx`, `web/src/TestPyramidJourneys.test.tsx`, and `web/src/DesignSystemAndShell.test.tsx`).
-  3. **Agent Behavioral & Trajectory Evaluation**: `make eval-deterministic`, `make eval-smoke`, and `make eval` (`tests/eval/run_eval_suite.py` + `agents-cli eval`) grading the 120-scenario `brew-comprehensive-dataset.json` across all 15 coaching, personalization, memory, grounding, prompt-injection, and tool-failure categories.
+See [`docs/DEPLOYMENT.md`](DEPLOYMENT.md) for step-by-step Google Cloud provisioning, IAM roles, WIF configuration, rollback, cleanup, and billable resource analysis.
+
+- **Single-Service Cloud Run Footprint (`gcloud_setup.sh` + `agents-cli deploy`)**: Deploys one private-by-default Cloud Run service (`1 vCPU`, `1Gi` RAM, concurrency `8`, `min-instances=0` scale-to-zero, `max-instances=5`, `120s` timeout) serving the compiled React SPA (`web/dist`), FastAPI `/api/v1/*` routes, A2A surface, and ADK `conversation_coach`, wired with `/readyz` startup/readiness probes and `/healthz` liveness probes.
+- **Zero Static Keys & Least-Privilege IAM**: Runtime uses `brew-runtime@<PROJECT>.iam.gserviceaccount.com` via Application Default Credentials (`roles/aiplatform.user`, `roles/datastore.user`, `roles/logging.logWriter`, `roles/cloudtrace.agent`, `roles/monitoring.metricWriter`, plus secret-scoped `roles/secretmanager.secretAccessor`). CI/CD uses GitHub OIDC Workload Identity Federation (`brew-github-pool` -> `brew-cicd` SA) with zero service account JSON keys.
+- **Private-by-Default + Defense-in-Depth Auth**: Supports Cloud Run Identity-Aware Proxy (`--iap` + cryptographic `X-Goog-IAP-JWT-Assertion` verification, plus [`iap_setup.sh`](../iap_setup.sh) for binding a separate custom IAP OAuth client alongside `GOOGLE_OAUTH_CLIENT_ID` in managed GCP orgs) and verified Google OAuth / Firebase ID tokens; blocks ADK's ungoverned `PATCH /apps/{app}/users/{uid}/memory` route (`401` / `403 UNGOVERNED_MEMORY_WRITE_DISABLED`) and enforces authenticated user ownership across `/api/v1/*`, `/apps/*`, `/run`, `/run_sse`, `/run_live`, and `POST /a2a/*`.
+- **CI/CD Pipeline (`.github/workflows/`)**:
+  1. **PR Quality Gates (`ci.yml`)**: Ruff lint/format, Codespell, strict `mypy`, `gcloud_setup.sh --dry-run` & `iap_setup.sh --dry-run`, Python unit tests, local Cloud Firestore Emulator integration tests, frontend ESLint + TypeScript + Vitest + production Vite build, and multistage Docker build + container smoke validation (with live-model evals kept off PRs by default).
+  2. **Authorized Main Deployment (`deploy.yml`)**: Runs `ci.yml`, gates on `production` GitHub Environment authorization, authenticates via WIF, deploys via `agents-cli deploy`, executes authenticated `/healthz`, `/readyz`, SPA, and `/api/v1/auth/me` smoke tests, and publishes revision summaries.
+  3. **Controlled Model Evaluation (`eval-controlled.yml`)**: Manual `workflow_dispatch` job (`smoke` or `comprehensive` 120-scenario `agents-cli eval` suite) gated behind the `model-evaluation` environment.

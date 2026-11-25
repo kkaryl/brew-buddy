@@ -269,3 +269,20 @@ This document records significant architectural and technical decisions for **Br
   - *Positive:* Complete single-trace waterfall visibility in Google Cloud Trace, one-click Trace-to-Logs correlation in Cloud Logging, immediate visibility into expensive token usage and recovered tool timeouts, and verifiable zero-leakage privacy defaults.
   - *Trade-off:* Engineers needing full prompt/response inspection during controlled staging audits must explicitly opt in via `BREW_TELEMETRY_CAPTURE_CONTENT=true`.
 
+---
+
+## ADR-020: Minimal-Footprint Private-by-Default Cloud Run Deployment, Keyless WIF CI/CD, and Defense-in-Depth ADK Route Hardening
+
+- **Date:** 2026-11-24
+- **Status:** Accepted
+- **Context:** Brew requires a production-grade Google Cloud deployment with the smallest reasonable operational and billing footprint, preserving the unified FastAPI + static React SPA + Google ADK `conversation_coach` architecture while enforcing zero service account JSON keys, private-by-default access, authenticated browser sign-in, strict HITL memory governance on every HTTP surface, emulator-backed PR validation, and cost-controlled live-model evaluations.
+- **Decision:**
+  1. Target a **single Cloud Run service** (`agents-cli-manifest.yaml` `deployment_target: "cloud_run"`, `cicd_runner: "github_actions"`) sized at `1 vCPU`, `1Gi` RAM, concurrency `8`, `min-instances=0` (scale-to-zero), `max-instances=5`, and `120s` timeout, provisioned in dependency order by [`gcloud_setup.sh`](../gcloud_setup.sh) with Native-mode Firestore, all 6 required `COLLECTION_GROUP` field exemptions (`contacts`, `meetings`, `briefs`, `memoryProposals`, `memories` on `id`; `sessions` on `appName`), and composite indexes.
+  2. Eliminate all static credentials: runtime uses a dedicated least-privilege `brew-runtime` service account via Cloud Run Application Default Credentials (`roles/aiplatform.user`, `roles/datastore.user`, `roles/logging.logWriter`, `roles/cloudtrace.agent`, `roles/monitoring.metricWriter`, plus secret-level `roles/secretmanager.secretAccessor`); GitHub Actions authenticates exclusively via OIDC Workload Identity Federation (`brew-github-pool` -> `brew-cicd` SA).
+  3. Keep Cloud Run **private by default** (`--no-allow-unauthenticated`), support Cloud Run Identity-Aware Proxy (`--iap` + cryptographic `X-Goog-IAP-JWT-Assertion` verification in `app/infrastructure/auth.py`, paired with [`iap_setup.sh`](../iap_setup.sh) to bind a dedicated `brew-iap-edge` custom OAuth Web Client separate from `brew-web-spa` in managed GCP organizations enforcing `iam.allowedPolicyMemberDomains` or blocking default unlisted IAP clients) and Google OAuth / Firebase ID tokens for browser users, permanently block ADK's ungoverned `PATCH /apps/{app}/users/{uid}/memory` route (`403 UNGOVERNED_MEMORY_WRITE_DISABLED`), enforce authenticated caller ownership on `/apps/*`, `/run`, `/run_sse`, `/run_live`, and `POST /a2a/*` in deployed mode (`app/fast_api_app.py`), and expose `/readyz` + `/healthz` probes (`app/api/health.py`).
+  4. Split GitHub Actions into fast deterministic PR gates including local Cloud Firestore Emulator & container smoke validation (`.github/workflows/ci.yml`), authorized `main` deployment + WIF OIDC smoke verification (`.github/workflows/deploy.yml`), and a manual-only `workflow_dispatch` evaluation job (`.github/workflows/eval-controlled.yml`), documented in [`docs/DEPLOYMENT.md`](DEPLOYMENT.md).
+- **Consequences:**
+  - *Positive:* Near-zero idle cost (`$0` compute when idle, no VPC/NAT/Cloud SQL/GCLB overhead), zero downloadable JSON keys, defense-in-depth protection even if ingress settings are changed, and deterministic CI gates without unexpected PR LLM spend.
+  - *Trade-off:* `min-instances=0` incurs a ~2–4s cold start on the first request after idle periods (operators can set `CLOUD_RUN_MIN_INSTANCES=1` when warm capacity is preferred).
+
+

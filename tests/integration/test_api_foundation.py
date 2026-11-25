@@ -32,6 +32,17 @@ def test_health_and_adk_a2a_surfaces(tmp_path: Path) -> None:
         assert readiness.status_code == 200
         assert readiness.json()["status"] == "ok"
 
+        ready_probe = client.get("/readyz")
+        assert ready_probe.status_code == 200
+        ready_body = ready_probe.json()
+        assert ready_body["status"] == "ready"
+        assert ready_body["checks"] == {
+            "config_loaded": True,
+            "agent_runner_initialized": True,
+            "persistence_ready": True,
+            "auth_ready": True,
+        }
+
         apps_resp = client.get("/list-apps")
         assert apps_resp.status_code == 200
         assert "app" in apps_resp.json()

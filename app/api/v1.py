@@ -97,7 +97,9 @@ async def get_authenticated_me(
 ) -> AuthenticatedPrincipalResponse:
     """Verify the caller's Bearer token and return the resolved identity boundary."""
     provider = (
-        "verified" if principal.user_id.startswith(("firebase:", "google:")) else "local_mock"
+        "verified"
+        if principal.user_id.startswith(("firebase:", "google:", "iap:"))
+        else "local_mock"
     )
     return AuthenticatedPrincipalResponse(
         user_id=principal.user_id,

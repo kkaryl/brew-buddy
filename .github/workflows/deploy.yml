@@ -1,0 +1,358 @@
+name: Deploy to Cloud Run
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'app/**'
+      - 'web/**'
+      - 'Dockerfile'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - 'agents-cli-manifest.yaml'
+      - '.github/workflows/ci.yml'
+      - '.github/workflows/deploy.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-cloud-run-main
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Required Quality & Build Checks
+    uses: ./.github/workflows/ci.yml
+
+  check-deploy-authorization:
+    name: Verify Deployment Configuration & Authorization
+    needs: verify
+    runs-on: ubuntu-latest
+    outputs:
+      authorized: ${{ steps.gate.outputs.authorized }}
+    steps:
+      - id: gate
+        name: Check WIF & target project configuration
+        env:
+          GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          WIF_PROVIDER: ${{ vars.WIF_PROVIDER }}
+          GCP_CICD_SERVICE_ACCOUNT: ${{ vars.GCP_CICD_SERVICE_ACCOUNT }}
+        run: |
+          if [[ -n "${GCP_PROJECT_ID}" && -n "${WIF_PROVIDER}" && -n "${GCP_CICD_SERVICE_ACCOUNT}" ]]; then
+            echo "authorized=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "authorized=false" >> "${GITHUB_OUTPUT}"
+            {
+              echo "### Cloud Run Deployment Skipped (Not Yet Authorized)"
+              echo "Configure GitHub repository/environment variables \`GCP_PROJECT_ID\`, \`WIF_PROVIDER\`, and \`GCP_CICD_SERVICE_ACCOUNT\` (plus optional \`production\` environment required reviewers) to authorize automatic Cloud Run deployments."
+            } >> "${GITHUB_STEP_SUMMARY}"
+          fi
+
+  deploy-cloud-run:
+    name: Build, Deploy via Agents CLI & Smoke Test
+    needs:
+      - verify
+      - check-deploy-authorization
+    if: needs.check-deploy-authorization.outputs.authorized == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment:
+      name: production
+      url: ${{ steps.smoke.outputs.service_url }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12 & uv
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - id: auth
+        name: Authenticate to Google Cloud via Workload Identity Federation
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_CICD_SERVICE_ACCOUNT }}
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+          create_credentials_file: true
+
+      - name: Set up Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          install_components: beta
+
+      - name: Configure Docker for Artifact Registry
+        env:
+          REGION: ${{ vars.GCP_REGION || 'asia-southeast1' }}
+        run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+
+      - id: build
+        name: Build & Push Immutable Container Image
+        env:
+          PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          REGION: ${{ vars.GCP_REGION || 'asia-southeast1' }}
+          AR_REPO: ${{ vars.ARTIFACT_REGISTRY_REPO || 'brew' }}
+          SERVICE_NAME: ${{ vars.CLOUD_RUN_SERVICE || 'brew' }}
+          SHORT_SHA: ${{ github.sha }}
+        run: |
+          IMAGE_URI="${REGION}-docker.pkg.dev/${PROJECT_ID}/${AR_REPO}/${SERVICE_NAME}:${SHORT_SHA}"
+          docker build \
+            --build-arg "AGENT_VERSION=${SHORT_SHA}" \
+            --tag "${IMAGE_URI}" \
+            .
+          docker push "${IMAGE_URI}"
+          echo "image_uri=${IMAGE_URI}" >> "${GITHUB_OUTPUT}"
+
+      - id: deploy
+        name: Deploy Private-by-Default Cloud Run Revision via Agents CLI
+        env:
+          PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          REGION: ${{ vars.GCP_REGION || 'asia-southeast1' }}
+          SERVICE_NAME: ${{ vars.CLOUD_RUN_SERVICE || 'brew' }}
+          RUNTIME_SA: ${{ vars.GCP_RUNTIME_SERVICE_ACCOUNT }}
+          FIRESTORE_DB: ${{ vars.FIRESTORE_DATABASE || '(default)' }}
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-3.8-flash' }}
+          ENABLE_IAP: ${{ vars.ENABLE_IAP || 'false' }}
+          ALLOW_PUBLIC_INGRESS: ${{ vars.ALLOW_PUBLIC_INGRESS || 'false' }}
+          MIN_INSTANCES: ${{ vars.CLOUD_RUN_MIN_INSTANCES || '0' }}
+          SECRET_BINDINGS: ${{ vars.CLOUD_RUN_SECRETS || '' }}
+          IMAGE_URI: ${{ steps.build.outputs.image_uri }}
+          SHORT_SHA: ${{ github.sha }}
+        run: |
+          PROJECT_NUMBER="$(gcloud projects describe "${PROJECT_ID}" --format='value(projectNumber)')"
+          RESOLVED_RUNTIME_SA="${RUNTIME_SA:-brew-runtime@${PROJECT_ID}.iam.gserviceaccount.com}"
+          EXPECTED_URL="https://${SERVICE_NAME}-${PROJECT_NUMBER}.${REGION}.run.app"
+          IAP_AUDIENCE="/projects/${PROJECT_NUMBER}/locations/${REGION}/services/${SERVICE_NAME}"
+
+          ENV_CSV="APP_NAME=${SERVICE_NAME},APP_ENV=production,AGENT_VERSION=${SHORT_SHA},APP_URL=${EXPECTED_URL},ALLOW_ORIGINS=${EXPECTED_URL},GOOGLE_CLOUD_PROJECT=${PROJECT_ID},GOOGLE_CLOUD_LOCATION=global,GOOGLE_GENAI_USE_ENTERPRISE=true,GEMINI_MODEL=${GEMINI_MODEL},BREW_PERSISTENCE_BACKEND=firestore,FIRESTORE_DATABASE=${FIRESTORE_DB},BREW_SESSION_BACKEND=firestore,ADK_FIRESTORE_ROOT_COLLECTION=adk-session,BREW_AUTH_MODE=verified,OTEL_SERVICE_NAME=${SERVICE_NAME},OTEL_TO_CLOUD=true,BREW_CLOUD_TRACE_ENABLED=true,OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=NO_CONTENT,ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS=false,BREW_TELEMETRY_CAPTURE_CONTENT=false,BREW_TELEMETRY_UPLOAD_COMPLETIONS=false"
+          if [[ "${ENABLE_IAP}" == "true" ]]; then
+            ENV_CSV="${ENV_CSV},BREW_IAP_JWT_AUDIENCE=${IAP_AUDIENCE}"
+          fi
+
+          DEPLOY_ARGS=(
+            deploy
+            --project "${PROJECT_ID}"
+            --region "${REGION}"
+            --service-name "${SERVICE_NAME}"
+            --service-account "${RESOLVED_RUNTIME_SA}"
+            --no-agent-identity
+            --image "${IMAGE_URI}"
+            --port 8080
+            --cpu "${{ vars.CLOUD_RUN_CPU || '1' }}"
+            --memory "${{ vars.CLOUD_RUN_MEMORY || '1Gi' }}"
+            --concurrency "${{ vars.CLOUD_RUN_CONCURRENCY || '8' }}"
+            --min-instances "${{ vars.CLOUD_RUN_MIN_INSTANCES || '0' }}"
+            --max-instances "${{ vars.CLOUD_RUN_MAX_INSTANCES || '5' }}"
+            --timeout "${{ vars.CLOUD_RUN_TIMEOUT || '120' }}"
+            --clear-env-vars
+            --update-env-vars "${ENV_CSV}"
+            --no-confirm-project
+          )
+          if [[ -n "${SECRET_BINDINGS}" ]]; then
+            DEPLOY_ARGS+=(--update-secrets "${SECRET_BINDINGS}")
+          fi
+          if [[ "${ENABLE_IAP}" == "true" ]]; then
+            DEPLOY_ARGS+=(--iap)
+          fi
+
+          if [[ "${ALLOW_PUBLIC_INGRESS}" == "true" && -z "${SECRET_BINDINGS}" ]]; then
+            echo "ERROR: ALLOW_PUBLIC_INGRESS=true requires CLOUD_RUN_SECRETS (e.g. GOOGLE_OAUTH_CLIENT_ID)." >&2
+            exit 1
+          fi
+
+          if [[ "${ALLOW_PUBLIC_INGRESS}" != "true" ]]; then
+            gcloud run services remove-iam-policy-binding "${SERVICE_NAME}" \
+              --project="${PROJECT_ID}" \
+              --region="${REGION}" \
+              --member="allUsers" \
+              --role="roles/run.invoker" \
+              --quiet >/dev/null 2>&1 || true
+            gcloud run services remove-iam-policy-binding "${SERVICE_NAME}" \
+              --project="${PROJECT_ID}" \
+              --region="${REGION}" \
+              --member="allAuthenticatedUsers" \
+              --role="roles/run.invoker" \
+              --quiet >/dev/null 2>&1 || true
+          fi
+
+          uvx --index-url https://pypi.org/simple --from google-agents-cli==1.15.0 agents-cli "${DEPLOY_ARGS[@]}"
+
+          CPU_THROTTLING_FLAG="--no-cpu-throttling"
+          if [[ "${MIN_INSTANCES}" == "0" ]]; then
+            CPU_THROTTLING_FLAG="--cpu-throttling"
+          fi
+
+          IAP_UPDATE_FLAG="--no-iap"
+          if [[ "${ENABLE_IAP}" == "true" ]]; then
+            IAP_UPDATE_FLAG="--iap"
+          fi
+
+          gcloud run services update "${SERVICE_NAME}" \
+            --project="${PROJECT_ID}" \
+            --region="${REGION}" \
+            "${CPU_THROTTLING_FLAG}" \
+            "${IAP_UPDATE_FLAG}" \
+            --startup-probe="httpGet.path=/readyz,httpGet.port=8080,initialDelaySeconds=2,periodSeconds=5,timeoutSeconds=4,failureThreshold=6" \
+            --readiness-probe="httpGet.path=/readyz,httpGet.port=8080,periodSeconds=10,timeoutSeconds=4,failureThreshold=3,successThreshold=1" \
+            --liveness-probe="httpGet.path=/healthz,httpGet.port=8080,initialDelaySeconds=15,periodSeconds=30,timeoutSeconds=5,failureThreshold=3" \
+            --quiet
+
+      - id: smoke
+        name: Run Deployed Security & Readiness Smoke Tests
+        env:
+          PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          REGION: ${{ vars.GCP_REGION || 'asia-southeast1' }}
+          SERVICE_NAME: ${{ vars.CLOUD_RUN_SERVICE || 'brew' }}
+          CICD_SA: ${{ vars.GCP_CICD_SERVICE_ACCOUNT }}
+          ENABLE_IAP: ${{ vars.ENABLE_IAP || 'false' }}
+          ALLOW_PUBLIC_INGRESS: ${{ vars.ALLOW_PUBLIC_INGRESS || 'false' }}
+        run: |
+          PROJECT_NUMBER="$(gcloud projects describe "${PROJECT_ID}" --format='value(projectNumber)')"
+          EXPECTED_URL="https://${SERVICE_NAME}-${PROJECT_NUMBER}.${REGION}.run.app"
+          SERVICE_URL="$(gcloud run services describe "${SERVICE_NAME}" \
+            --project="${PROJECT_ID}" \
+            --region="${REGION}" \
+            --format='value(status.url)')"
+          SERVICE_JSON="$(gcloud run services describe "${SERVICE_NAME}" \
+            --project="${PROJECT_ID}" \
+            --region="${REGION}" \
+            --format=json)"
+          ALL_ORIGINS_CSV="$(
+            SERVICE_JSON_PAYLOAD="${SERVICE_JSON}" \
+            FALLBACK_URL="${EXPECTED_URL}" \
+            python3 -c '
+          import json, os
+
+          raw = json.loads(os.environ["SERVICE_JSON_PAYLOAD"])
+          urls = []
+
+          def add(u: str) -> None:
+              cleaned = u.strip().rstrip("/")
+              if cleaned.startswith("https://") and cleaned not in urls:
+                  urls.append(cleaned)
+
+          add(os.environ["FALLBACK_URL"])
+          status_url = (raw.get("status") or {}).get("url") or ""
+          if isinstance(status_url, str):
+              add(status_url)
+
+          annotations = ((raw.get("metadata") or {}).get("annotations") or {})
+          raw_urls = annotations.get("run.googleapis.com/urls") or ""
+          if isinstance(raw_urls, str) and raw_urls.strip():
+              try:
+                  parsed = json.loads(raw_urls)
+                  if isinstance(parsed, list):
+                      for item in parsed:
+                          if isinstance(item, str):
+                              add(item)
+              except json.JSONDecodeError:
+                  pass
+
+          print(",".join(urls))
+          '
+          )"
+
+          gcloud run services update "${SERVICE_NAME}" \
+            --project="${PROJECT_ID}" \
+            --region="${REGION}" \
+            --update-env-vars="^@^APP_URL=${SERVICE_URL}@ALLOW_ORIGINS=${ALL_ORIGINS_CSV}" \
+            --quiet >/dev/null
+
+          READY_REVISION="$(gcloud run services describe "${SERVICE_NAME}" \
+            --project="${PROJECT_ID}" \
+            --region="${REGION}" \
+            --format='value(status.latestReadyRevisionName)')"
+
+          echo "service_url=${SERVICE_URL}" >> "${GITHUB_OUTPUT}"
+          echo "revision=${READY_REVISION}" >> "${GITHUB_OUTPUT}"
+
+          # 1. Confirm unauthenticated memory write attempts are blocked (401/403 or IAP 302)
+          UNAUTH_API_STATUS="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+            -X POST "${SERVICE_URL}/api/v1/memories/propose" \
+            -H 'Content-Type: application/json' \
+            -d '{"notes":"ci smoke probe"}')"
+          UNAUTH_ADK_STATUS="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+            -X PATCH "${SERVICE_URL}/apps/app/users/probe/memory" \
+            -H 'Content-Type: application/json' \
+            -d '{"session_id":"s1"}')"
+          if [[ "${UNAUTH_API_STATUS}" != "401" && "${UNAUTH_API_STATUS}" != "403" && "${UNAUTH_API_STATUS}" != "302" ]]; then
+            echo "ERROR: Unauthenticated /api/v1/memories/propose returned ${UNAUTH_API_STATUS}!" >&2
+            exit 1
+          fi
+          if [[ "${UNAUTH_ADK_STATUS}" != "401" && "${UNAUTH_ADK_STATUS}" != "403" && "${UNAUTH_ADK_STATUS}" != "302" ]]; then
+            echo "ERROR: Unauthenticated /apps/app/users/probe/memory returned ${UNAUTH_ADK_STATUS}!" >&2
+            exit 1
+          fi
+
+          if [[ "${ALLOW_PUBLIC_INGRESS}" == "true" ]]; then
+            gcloud run services add-iam-policy-binding "${SERVICE_NAME}" \
+              --project="${PROJECT_ID}" \
+              --region="${REGION}" \
+              --member="allUsers" \
+              --role="roles/run.invoker" \
+              --quiet >/dev/null
+          fi
+
+          # 2. Verify readiness & SPA serving
+          if [[ "${ENABLE_IAP}" == "true" ]]; then
+            IAP_STATUS="$(curl --silent --output /dev/null --write-out '%{http_code}' "${SERVICE_URL}/healthz")"
+            echo "Verified revision ${READY_REVISION} is Ready and IAP edge gate returned HTTP ${IAP_STATUS}."
+          else
+            ID_TOKEN="$(gcloud auth print-identity-token \
+              --impersonate-service-account="${CICD_SA}" \
+              --audiences="${SERVICE_URL}" \
+              --quiet)"
+            echo "::add-mask::${ID_TOKEN}"
+
+            curl --fail --silent --show-error \
+              -H "Authorization: Bearer ${ID_TOKEN}" \
+              "${SERVICE_URL}/healthz" | grep -q '"status":"ok"'
+            curl --fail --silent --show-error \
+              -H "Authorization: Bearer ${ID_TOKEN}" \
+              "${SERVICE_URL}/readyz" | grep -q '"status":"ready"'
+            curl --fail --silent --show-error \
+              -H "Authorization: Bearer ${ID_TOKEN}" \
+              "${SERVICE_URL}/" | grep -qi '<!doctype html>'
+            curl --fail --silent --show-error \
+              -H "Authorization: Bearer ${ID_TOKEN}" \
+              "${SERVICE_URL}/api/v1/auth/me" | grep -q '"auth_provider":"verified"'
+          fi
+
+          echo "smoke_status=PASSED" >> "${GITHUB_OUTPUT}"
+
+      - name: Publish Deployment Revision & Smoke Report
+        if: always()
+        env:
+          SERVICE_NAME: ${{ vars.CLOUD_RUN_SERVICE || 'brew' }}
+          REGION: ${{ vars.GCP_REGION || 'asia-southeast1' }}
+          PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          IMAGE_URI: ${{ steps.build.outputs.image_uri }}
+          SERVICE_URL: ${{ steps.smoke.outputs.service_url }}
+          REVISION: ${{ steps.smoke.outputs.revision }}
+          SMOKE_STATUS: ${{ steps.smoke.outputs.smoke_status || 'FAILED' }}
+        run: |
+          {
+            echo "## Cloud Run Deployment Summary"
+            echo ""
+            echo "| Property | Value |"
+            echo "| :--- | :--- |"
+            echo "| **Service** | \`${SERVICE_NAME}\` (\`${PROJECT_ID}\` / \`${REGION}\`) |"
+            echo "| **Deployed Revision** | \`${REVISION:-unavailable}\` |"
+            echo "| **Service URL** | ${SERVICE_URL:-unavailable} |"
+            echo "| **Container Image** | \`${IMAGE_URI:-unavailable}\` |"
+            echo "| **Commit SHA** | \`${GITHUB_SHA}\` |"
+            echo "| **Smoke Test Result** | **${SMOKE_STATUS}** |"
+          } >> "${GITHUB_STEP_SUMMARY}"

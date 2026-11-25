@@ -285,3 +285,153 @@ def test_google_oauth_client_id_quote_cleaning_and_popup_access_token_verificati
             headers={"Authorization": f"Bearer {wrong_client_test_token}"},
         )
         assert bad_resp.status_code == 401
+
+
+def test_deployed_adk_and_memory_routes_enforce_auth_ownership_and_hitl_governance(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("K_SERVICE", raising=False)
+
+    def fake_firebase_verifier(token: str) -> dict[str, object]:
+        if token == "hdr.alice_prod.sig":
+            return {"user_id": "uid_alice", "name": "Alice Prod"}
+        raise ValueError("Invalid token")
+
+    def fake_iap_verifier(assertion: str) -> dict[str, object]:
+        if assertion == "hdr.valid_iap.sig":
+            return {
+                "iss": "https://cloud.google.com/iap",
+                "sub": "accounts.google.com:99887766",
+                "email": "iap-user@example.com",
+            }
+        raise ValueError("Invalid IAP assertion")
+
+    settings = AppSettings(
+        environment="production",
+        persistence_backend="in_memory",
+        session_backend="in_memory",
+        firebase_project_id="brew-prod",
+        iap_jwt_audience="/projects/123456/locations/us-east1/services/brew",
+        app_url="https://brew-123456.us-east1.run.app",
+        otel_to_cloud=False,
+        web_dist_dir=tmp_path / "no-dist",
+    )
+    runtime_auth = build_runtime_authenticator(
+        settings,
+        firebase_verifier_override=fake_firebase_verifier,
+        iap_verifier_override=fake_iap_verifier,
+    )
+    container = FakeServiceContainer(authenticator=runtime_auth)
+
+    with TestClient(create_app(settings, service_container=container)) as client:
+        # Readiness probe passes when verified auth provider and ADK runner are ready
+        ready = client.get("/readyz")
+        assert ready.status_code == 200
+        assert ready.json()["status"] == "ready"
+
+        # 1. Raw ADK writable memory route is NEVER publicly writable (401 without auth)
+        unauth_mem = client.patch(
+            "/apps/app/users/firebase:uid_alice/memory",
+            json={"session_id": "s1"},
+        )
+        assert unauth_mem.status_code == 401
+        assert unauth_mem.json()["error"]["code"] == "AUTHENTICATION_REQUIRED"
+
+        # 2. Even with valid auth, direct ungoverned ADK memory writes are rejected (403)
+        governed_block = client.patch(
+            "/apps/app/users/firebase:uid_alice/memory",
+            headers={"Authorization": "Bearer hdr.alice_prod.sig"},
+            json={"session_id": "s1"},
+        )
+        assert governed_block.status_code == 403
+        assert governed_block.json()["error"]["code"] == "UNGOVERNED_MEMORY_WRITE_DISABLED"
+
+        # 3. Unauthenticated ADK / A2A invocation routes reject in deployed mode (401)
+        for method, path, payload in (
+            ("GET", "/list-apps", None),
+            ("POST", "/apps/app/users/firebase:uid_alice/sessions", {}),
+            (
+                "POST",
+                "/run",
+                {
+                    "app_name": "app",
+                    "user_id": "firebase:uid_alice",
+                    "session_id": "s1",
+                    "new_message": {"role": "user", "parts": [{"text": "Hi"}]},
+                },
+            ),
+            ("POST", "/run_sse", {"app_name": "app", "user_id": "firebase:uid_alice"}),
+            ("POST", "/a2a/app", {"jsonrpc": "2.0", "id": "1", "method": "tasks/get"}),
+        ):
+            resp = client.request(method, path, json=payload)
+            assert resp.status_code == 401, (
+                f"Expected 401 on {method} {path}, got {resp.status_code}"
+            )
+
+        # 4. Cross-user ADK session/run spoofing is blocked with 403 FORBIDDEN
+        cross_session = client.post(
+            "/apps/app/users/firebase:uid_other/sessions",
+            headers={"Authorization": "Bearer hdr.alice_prod.sig"},
+            json={},
+        )
+        assert cross_session.status_code == 403
+        assert cross_session.json()["error"]["code"] == "FORBIDDEN"
+
+        cross_run = client.post(
+            "/run",
+            headers={"Authorization": "Bearer hdr.alice_prod.sig"},
+            json={
+                "app_name": "app",
+                "user_id": "firebase:uid_other",
+                "session_id": "s1",
+                "new_message": {"role": "user", "parts": [{"text": "Hi"}]},
+            },
+        )
+        assert cross_run.status_code == 403
+        assert cross_run.json()["error"]["code"] == "FORBIDDEN"
+
+        # 5. Authenticated owner can create their own ADK session
+        own_session = client.post(
+            "/apps/app/users/firebase:uid_alice/sessions",
+            headers={"Authorization": "Bearer hdr.alice_prod.sig"},
+            json={},
+        )
+        assert own_session.status_code == 200
+
+        # 6. Verified Cloud Run IAP JWT assertion resolves isolated iap:<sub> principal
+        iap_me = client.get(
+            "/api/v1/auth/me",
+            headers={"X-Goog-IAP-JWT-Assertion": "hdr.valid_iap.sig"},
+        )
+        assert iap_me.status_code == 200
+        assert iap_me.json() == {
+            "user_id": "iap:99887766",
+            "display_name": "iap-user",
+            "auth_provider": "verified",
+        }
+
+
+def test_readiness_returns_503_when_deployed_without_verified_auth_provider(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("K_SERVICE", raising=False)
+    unconfigured_prod = AppSettings(
+        environment="production",
+        persistence_backend="in_memory",
+        session_backend="in_memory",
+        google_cloud_project="your-gcp-project-id",
+        firebase_project_id="",
+        google_oauth_client_id="",
+        iap_jwt_audience="",
+        app_url="",
+        otel_to_cloud=False,
+        web_dist_dir=tmp_path / "no-dist",
+    )
+    with TestClient(create_app(unconfigured_prod)) as client:
+        ready = client.get("/readyz")
+        assert ready.status_code == 503
+        body = ready.json()
+        assert body["status"] == "not_ready"
+        assert body["checks"]["auth_ready"] is False

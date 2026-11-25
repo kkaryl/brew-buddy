@@ -214,9 +214,9 @@ export function ClubhouseScreen({
         {heroCounterpartName ? (
           <section
             aria-labelledby="clubhouse-hero-heading"
-            className="brew-hero-peach rounded-[28px] p-5 md:grid md:grid-cols-[1.12fr_0.88fr] md:items-center md:gap-5 md:rounded-[34px] md:px-[30px] md:py-[28px]"
+            className="brew-hero-peach overflow-hidden rounded-[28px] p-5 md:grid md:grid-cols-[minmax(0,116fr)_minmax(0,84fr)] md:items-center md:gap-5 md:rounded-[34px] md:px-[30px] md:py-[28px]"
           >
-            <div className="flex flex-col gap-2.5 md:gap-[13px]">
+            <div className="flex min-w-0 flex-col gap-2.5 md:gap-[13px]">
               <div className="flex flex-wrap items-center justify-between gap-2 md:justify-start">
                 <span className="brew-badge-mint">
                   {heroCalendarEvent
@@ -277,39 +277,100 @@ export function ClubhouseScreen({
               </p>
 
               {/* Desktop Proportional Mini-Ribbon */}
-              <div className="hidden items-center gap-1.5 rounded-[16px] border border-[#F3DCD1] bg-white/78 px-2.5 py-2 text-xs md:flex">
-                {heroHasBrief && activeBrief.time_boxed_agenda.length >= 2 ? (
-                  activeBrief.time_boxed_agenda.slice(0, 3).map((seg, idx) => {
-                    const bgClass =
-                      idx === 0
-                        ? "bg-brew-peach"
-                        : idx === 1
-                          ? "flex-1 bg-brew-lavender text-center"
-                          : "bg-brew-mint";
-                    return (
-                      <span
-                        key={`${seg.title}-${String(idx)}`}
-                        className={`truncate rounded-[10px] px-2.5 py-1 font-bold text-brew-plum ${bgClass}`}
-                      >
-                        {String(seg.duration_minutes)}m {seg.title}
-                      </span>
-                    );
-                  })
-                ) : (
-                  <>
-                    <span className="rounded-[10px] bg-brew-peach px-2.5 py-1 font-bold text-brew-plum">
-                      {String(heroSplit.hookMinutes)}m Warm-up
-                    </span>
-                    <span className="flex-1 truncate rounded-[10px] bg-brew-lavender px-3 py-1 text-center font-bold text-brew-plum">
-                      {String(heroSplit.coreMinutes)}m{" "}
-                      {heroHasBrief ? activeBrief.meeting_objective : "Core Conversation"}
-                    </span>
-                    <span className="rounded-[10px] bg-brew-mint px-2.5 py-1 font-bold text-brew-plum">
-                      {String(heroSplit.wrapMinutes)}m Next Steps
-                    </span>
-                  </>
-                )}
-              </div>
+              {(() => {
+                const rawAgenda =
+                  heroHasBrief && activeBrief.time_boxed_agenda.length >= 2
+                    ? activeBrief.time_boxed_agenda
+                    : [
+                        {
+                          title: "Warm-up",
+                          duration_minutes: heroSplit.hookMinutes,
+                          description: "",
+                        },
+                        {
+                          title: heroHasBrief
+                            ? activeBrief.meeting_objective
+                            : "Core Conversation",
+                          duration_minutes: heroSplit.coreMinutes,
+                          description: "",
+                        },
+                        {
+                          title: "Next Steps",
+                          duration_minutes: heroSplit.wrapMinutes,
+                          description: "",
+                        },
+                      ];
+
+                const compactSegments =
+                  rawAgenda.length <= 3
+                    ? rawAgenda.map((seg) => ({
+                        minutes: seg.duration_minutes,
+                        label: seg.title,
+                        tooltip: `${String(seg.duration_minutes)}m · ${seg.title}`,
+                      }))
+                    : (() => {
+                        const first = rawAgenda[0];
+                        const last = rawAgenda[rawAgenda.length - 1];
+                        const middle = rawAgenda.slice(1, -1);
+                        const middleMinutes = middle.reduce(
+                          (acc, item) => acc + item.duration_minutes,
+                          0,
+                        );
+                        return [
+                          {
+                            minutes: first?.duration_minutes ?? heroSplit.hookMinutes,
+                            label: first?.title ?? "Warm-up",
+                            tooltip: `${String(first?.duration_minutes ?? heroSplit.hookMinutes)}m · ${first?.title ?? "Warm-up"}`,
+                          },
+                          {
+                            minutes: middleMinutes,
+                            label: middle[0]?.title ?? "Core Topics",
+                            tooltip: middle
+                              .map((m) => `${String(m.duration_minutes)}m ${m.title}`)
+                              .join(" + "),
+                          },
+                          {
+                            minutes: last?.duration_minutes ?? heroSplit.wrapMinutes,
+                            label: last?.title ?? "Next Steps",
+                            tooltip: `${String(last?.duration_minutes ?? heroSplit.wrapMinutes)}m · ${last?.title ?? "Next Steps"}`,
+                          },
+                        ];
+                      })();
+
+                const totalRibbonMinutes = Math.max(
+                  1,
+                  compactSegments.reduce((acc, s) => acc + s.minutes, 0),
+                );
+                const minVisualWeight = Math.max(1, Math.round(totalRibbonMinutes * 0.24));
+                const ribbonCols = compactSegments
+                  .map((s) => `minmax(0, ${String(Math.max(minVisualWeight, s.minutes))}fr)`)
+                  .join(" ");
+
+                return (
+                  <div
+                    style={{ gridTemplateColumns: ribbonCols }}
+                    className="hidden min-w-0 max-w-full items-center gap-1.5 overflow-hidden rounded-[16px] border border-[#F3DCD1] bg-white/78 px-2.5 py-2 text-xs md:grid"
+                  >
+                    {compactSegments.map((seg, idx) => {
+                      const bgClass =
+                        idx === 0
+                          ? "bg-brew-peach"
+                          : idx === compactSegments.length - 1
+                            ? "bg-brew-mint"
+                            : "bg-brew-lavender text-center";
+                      return (
+                        <span
+                          key={`${seg.label}-${String(idx)}`}
+                          title={seg.tooltip}
+                          className={`min-w-0 truncate rounded-[10px] px-2.5 py-1 font-bold text-brew-plum ${bgClass}`}
+                        >
+                          {String(seg.minutes)}m {seg.label}
+                        </span>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
 
               {/* Mobile Hero Illustration + Primary CTA (matches Mockup 06) */}
               <div className="space-y-2.5 pt-1 md:hidden">
@@ -350,7 +411,7 @@ export function ClubhouseScreen({
               </div>
             </div>
 
-            <div className="hidden justify-center md:flex">
+            <div className="hidden min-w-0 justify-center md:flex">
               <Illustration
                 name="chat-setup-hero"
                 className="h-[225px] w-full"
@@ -360,9 +421,9 @@ export function ClubhouseScreen({
         ) : (
           <section
             aria-labelledby="clubhouse-empty-hero-heading"
-            className="brew-hero-peach grid items-center gap-5 rounded-[34px] p-6 md:grid-cols-[1.12fr_0.88fr] md:p-8"
+            className="brew-hero-peach grid items-center gap-5 overflow-hidden rounded-[34px] p-6 md:grid-cols-[minmax(0,112fr)_minmax(0,88fr)] md:p-8"
           >
-            <div className="space-y-3.5">
+            <div className="min-w-0 space-y-3.5">
               <span className="brew-eyebrow">WELCOME TO YOUR CLUBHOUSE</span>
               <h1
                 id="clubhouse-empty-hero-heading"

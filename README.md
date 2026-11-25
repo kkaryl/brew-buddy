@@ -63,11 +63,17 @@ agents-cli playground
 agents-cli eval run
 ```
 
-## Container Build (Cloud Run Compatible)
+## Container Build & Google Cloud Deployment
 
 The multistage `Dockerfile` compiles `web/dist` and serves both the static SPA and FastAPI/ADK routes on `$PORT` (default `8080`):
 
 ```bash
 docker build -t brew:local .
 docker run --rm -p 8080:8080 -e PORT=8080 brew:local
+```
+
+For full minimal-footprint Cloud Run provisioning, custom IAP dual-account setup ([`iap_setup.sh`](iap_setup.sh)), Workload Identity Federation CI/CD, health/readiness probes, rollback, and cleanup instructions, see [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) and [`gcloud_setup.sh`](gcloud_setup.sh):
+
+```bash
+PROJECT_ID="your-gcp-project-id" GITHUB_REPO="your-org/brew" ENABLE_IAP="true" ./gcloud_setup.sh --dry-run
 ```

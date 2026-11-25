@@ -163,18 +163,18 @@ export function PocketCueCardsScreen({
         </div>
 
         <div
-          className="grid gap-1.5 text-center text-[11px] font-bold text-brew-plum"
+          className="grid gap-1.5 overflow-hidden text-center text-[11px] font-bold text-brew-plum"
           style={{
-            gridTemplateColumns: `${String(Math.max(1, firstMin))}fr ${String(Math.max(2, middleMin))}fr ${String(Math.max(1, lastMin))}fr`,
+            gridTemplateColumns: `minmax(0, ${String(Math.max(2, Math.round(activeBrief.duration_minutes * 0.2), firstMin))}fr) minmax(0, ${String(Math.max(3, middleMin))}fr) minmax(0, ${String(Math.max(2, Math.round(activeBrief.duration_minutes * 0.2), lastMin))}fr)`,
           }}
         >
-          <div className="rounded-[10px] bg-brew-peach px-1 py-1.5">
+          <div className="min-w-0 truncate rounded-[10px] bg-brew-peach px-1.5 py-1.5">
             {String(firstMin)}m
           </div>
-          <div className="rounded-[10px] bg-brew-lavender px-2 py-1.5">
+          <div className="min-w-0 truncate rounded-[10px] bg-brew-lavender px-2 py-1.5">
             {String(middleMin)}m Deep Dive
           </div>
-          <div className="rounded-[10px] bg-brew-mint px-1 py-1.5">
+          <div className="min-w-0 truncate rounded-[10px] bg-brew-mint px-1.5 py-1.5">
             {String(lastMin)}m
           </div>
         </div>

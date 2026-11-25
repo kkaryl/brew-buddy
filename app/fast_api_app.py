@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
 import os
 import re
 import time
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from pathlib import Path
+from urllib.parse import unquote
 
 from a2a.server.tasks import InMemoryTaskStore
 from dotenv import load_dotenv
@@ -28,10 +30,19 @@ from opentelemetry.trace import (
     TraceFlags,
 )
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app.api.auth import router as auth_router
-from app.api.errors import register_exception_handlers, resolve_request_and_trace_ids
-from app.api.health import resolve_adc_file_mtime_ns
+from app.api.dependencies import (
+    get_service_container,
+    resolve_authenticated_principal_from_request,
+)
+from app.api.errors import (
+    build_domain_error_json_response,
+    register_exception_handlers,
+    resolve_request_and_trace_ids,
+)
+from app.api.health import get_app_settings, resolve_adc_file_mtime_ns
 from app.api.health import router as health_router
 from app.api.v1 import router as v1_router
 from app.app_utils import services
@@ -50,6 +61,7 @@ from app.application.telemetry import (
     set_safe_span_attributes,
 )
 from app.config import REPO_ROOT, AppSettings, get_settings
+from app.domain.errors import AuthorizationError, BrewDomainError
 from app.infrastructure.container import build_service_container
 from app.infrastructure.fakes import ServiceContainer
 from app.infrastructure.observability import (
@@ -80,7 +92,10 @@ _RESERVED_BACKEND_PREFIXES = (
     "run_sse",
     "list-apps",
     "healthz",
+    "readyz",
 )
+_ADK_APPS_USER_PATH_RE = re.compile(r"^/apps/[^/]+/users/([^/]+)(?:/|$)")
+_ADK_APPS_MEMORY_PATH_RE = re.compile(r"^/apps/[^/]+/users/[^/]+/memory/?$")
 _CLOUD_TRACE_HEADER_RE = re.compile(r"^([0-9a-fA-F]{32})(?:/([0-9]{1,20}))?(?:;o=([01]))?$")
 _TRACE_ERROR_CODES_4XX = frozenset(
     {
@@ -115,6 +130,100 @@ def _extract_upstream_trace_context(request: Request) -> otel_context.Context:
                 )
                 return trace.set_span_in_context(NonRecordingSpan(remote_ctx), ctx)
     return ctx
+
+
+async def _enforce_adk_and_memory_route_security(request: Request) -> Response | None:
+    """Enforce authenticated user identity on ADK/A2A routes and block ungoverned memory writes."""
+    path = request.url.path
+    method = request.method.upper()
+
+    # 1. Never allow direct ungoverned memory writes through ADK's built-in /memory endpoint.
+    #    Durable cross-session memories in Brew strictly require HITL proposal and approval.
+    if _ADK_APPS_MEMORY_PATH_RE.match(path) and method in {"PATCH", "POST", "PUT", "DELETE"}:
+        try:
+            container = get_service_container(request)
+            resolve_authenticated_principal_from_request(request, container)
+            raise AuthorizationError(
+                "Direct unreviewed memory writes are disabled. Submit candidates via "
+                "POST /api/v1/memories/propose and approve via POST /api/v1/memories/{id}/approve.",
+                code="UNGOVERNED_MEMORY_WRITE_DISABLED",
+            )
+        except BrewDomainError as exc:
+            return build_domain_error_json_response(request, exc)
+
+    active_settings = get_app_settings(request)
+    if active_settings.local_mock_auth_enabled:
+        return None
+
+    is_protected_adk_surface = (
+        path.startswith("/apps/")
+        or path in {"/run", "/run_sse", "/list-apps", "/agent-identity/finalize"}
+        or (path.startswith("/a2a/") and method != "GET")
+    )
+    if not is_protected_adk_surface:
+        return None
+
+    try:
+        container = get_service_container(request)
+        principal = resolve_authenticated_principal_from_request(request, container)
+
+        user_match = _ADK_APPS_USER_PATH_RE.match(path)
+        if user_match:
+            target_user_id = unquote(user_match.group(1)).strip()
+            if target_user_id != principal.user_id:
+                raise AuthorizationError(
+                    "Authenticated user cannot access or modify another user's agent sessions.",
+                    code="FORBIDDEN",
+                )
+
+        if path in {"/run", "/run_sse"} and method == "POST":
+            raw_body = await request.body()
+            if raw_body:
+                try:
+                    parsed_body = json.loads(raw_body)
+                except ValueError:
+                    parsed_body = None
+                if isinstance(parsed_body, dict):
+                    requested_user_id = str(parsed_body.get("user_id") or "").strip()
+                    if requested_user_id and requested_user_id != principal.user_id:
+                        raise AuthorizationError(
+                            "Authenticated user cannot invoke the agent as another user_id.",
+                            code="FORBIDDEN",
+                        )
+    except BrewDomainError as exc:
+        return build_domain_error_json_response(request, exc)
+
+    return None
+
+
+class _DeployedWebSocketAuthMiddleware:
+    """Block unauthenticated WebSocket upgrades to ADK ``/run_live`` in deployed environments."""
+
+    def __init__(self, app: ASGIApp, fastapi_app: FastAPI) -> None:
+        self._app = app
+        self._fastapi_app = fastapi_app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope.get("type") == "websocket" and scope.get("path") == "/run_live":
+            pseudo_request = Request(
+                {
+                    "type": "http",
+                    "method": "GET",
+                    "path": "/run_live",
+                    "headers": scope.get("headers", []),
+                    "query_string": scope.get("query_string", b""),
+                    "app": self._fastapi_app,
+                }
+            )
+            active_settings = get_app_settings(pseudo_request)
+            if not active_settings.local_mock_auth_enabled:
+                try:
+                    container = get_service_container(pseudo_request)
+                    resolve_authenticated_principal_from_request(pseudo_request, container)
+                except BrewDomainError:
+                    await send({"type": "websocket.close", "code": 1008})
+                    return
+        await self._app(scope, receive, send)
 
 
 def _install_http_tracing_middleware(fastapi_app: FastAPI) -> None:
@@ -161,7 +270,12 @@ def _install_http_tracing_middleware(fastapi_app: FastAPI) -> None:
                 otel_trace_id=otel_trace,
             ):
                 try:
-                    response = await call_next(request)
+                    security_rejection = await _enforce_adk_and_memory_route_security(request)
+                    response = (
+                        security_rejection
+                        if security_rejection is not None
+                        else await call_next(request)
+                    )
                 except Exception as exc:
                     elapsed_ms = round((time.perf_counter() - started) * 1000.0, 2)
                     set_safe_span_attributes(
@@ -341,6 +455,7 @@ def create_app(
                 task_store=InMemoryTaskStore(),
                 rpc_path=f"/a2a/{adk_app.name}",
                 agent_version=resolved_settings.app_version,
+                app_url=resolved_settings.app_url,
             )
             fastapi_app.state.a2a_routes_attached = True
 
@@ -361,12 +476,20 @@ def create_app(
         )
         yield
 
+    effective_session_uri = (
+        "memory://"
+        if settings is not None
+        and resolved_settings.session_backend in {"in_memory", "auto"}
+        and resolved_settings.persistence_backend == "in_memory"
+        and not os.environ.get("SESSION_SERVICE_URI")
+        else services.SESSION_SERVICE_URI
+    )
     fastapi_app: FastAPI = get_fast_api_app(
         agents_dir=AGENT_DIR,
         web=enable_adk_web,
         artifact_service_uri=services.ARTIFACT_SERVICE_URI,
         allow_origins=resolved_settings.allow_origins or None,
-        session_service_uri=services.SESSION_SERVICE_URI,
+        session_service_uri=effective_session_uri,
         otel_to_cloud=resolved_settings.otel_enabled,
         lifespan=lifespan,
     )
@@ -391,6 +514,7 @@ def create_app(
 
     register_exception_handlers(fastapi_app)
     _install_http_tracing_middleware(fastapi_app)
+    fastapi_app.add_middleware(_DeployedWebSocketAuthMiddleware, fastapi_app=fastapi_app)
 
     fastapi_app.include_router(health_router)
     fastapi_app.include_router(auth_router)

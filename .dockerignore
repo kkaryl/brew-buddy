@@ -18,3 +18,8 @@ artifacts
 .adk
 .agents
 .google-agents-cli
+.github
+deployment
+mockups
+gcloud_setup.sh
+iap_setup.sh

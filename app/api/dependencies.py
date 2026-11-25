@@ -20,6 +20,7 @@ from app.application.services import (
 from app.config import AppSettings, get_settings
 from app.domain.errors import AuthenticationError
 from app.domain.models import AuthenticatedPrincipal
+from app.infrastructure.auth import RuntimeAuthenticator
 from app.infrastructure.container import build_service_container
 from app.infrastructure.fakes import ServiceContainer
 
@@ -43,18 +44,56 @@ def get_service_container(request: Request) -> ServiceContainer:
     return container
 
 
+def resolve_authenticated_principal_from_request(
+    request: Request,
+    container: ServiceContainer,
+    credentials: HTTPAuthorizationCredentials | None = None,
+) -> AuthenticatedPrincipal:
+    """Resolve user identity from HTTP Bearer token or verified Cloud Run IAP assertion."""
+    raw_header = (request.headers.get("authorization") or "").strip()
+    iap_assertion = (request.headers.get("x-goog-iap-jwt-assertion") or "").strip()
+    authenticator = container.authenticator
+
+    if raw_header:
+        if credentials is not None:
+            if credentials.scheme.lower() != "bearer" or not credentials.credentials.strip():
+                raise AuthenticationError("Authorization header must use the Bearer scheme.")
+            bearer_token = credentials.credentials
+        else:
+            scheme, _, remainder = raw_header.partition(" ")
+            if scheme.lower() != "bearer" or not remainder.strip():
+                raise AuthenticationError("Authorization header must use the Bearer scheme.")
+            bearer_token = remainder.strip()
+
+        try:
+            return authenticator.authenticate_bearer_token(bearer_token)
+        except AuthenticationError as exc:
+            if (
+                exc.code != "TOKEN_EXPIRED"
+                and iap_assertion
+                and isinstance(authenticator, RuntimeAuthenticator)
+                and authenticator.is_iap_configured
+            ):
+                return authenticator.authenticate_iap_assertion(iap_assertion)
+            raise
+
+    if iap_assertion and isinstance(authenticator, RuntimeAuthenticator):
+        return authenticator.authenticate_iap_assertion(iap_assertion)
+
+    raise AuthenticationError("Missing Authorization Bearer header.")
+
+
 async def get_current_principal(
     request: Request,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_security)],
     container: Annotated[ServiceContainer, Depends(get_service_container)],
 ) -> AuthenticatedPrincipal:
-    """Resolve user identity strictly from HTTP Bearer authentication."""
-    raw_header = request.headers.get("authorization")
-    if not raw_header or not raw_header.strip():
-        raise AuthenticationError("Missing Authorization Bearer header.")
-    if credentials is None or credentials.scheme.lower() != "bearer":
-        raise AuthenticationError("Authorization header must use the Bearer scheme.")
-    return container.authenticator.authenticate_bearer_token(credentials.credentials)
+    """Resolve user identity strictly from verified HTTP Bearer or IAP authentication."""
+    return resolve_authenticated_principal_from_request(
+        request,
+        container,
+        credentials=credentials,
+    )
 
 
 def get_contact_service(

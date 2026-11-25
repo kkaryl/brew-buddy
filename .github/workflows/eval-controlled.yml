@@ -1,0 +1,116 @@
+name: Controlled Agent Evaluation
+
+# Live-model evaluation is intentionally NEVER triggered automatically on pull requests.
+# Run manually via Actions -> "Controlled Agent Evaluation" -> "Run workflow".
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Evaluation mode (deterministic-adk offline or live-agents-cli against Gemini)'
+        required: true
+        default: 'live-agents-cli'
+        type: choice
+        options:
+          - live-agents-cli
+          - deterministic-adk
+      subset:
+        description: 'Dataset slice to grade (15-scenario smoke or full 120-scenario suite)'
+        required: true
+        default: 'smoke'
+        type: choice
+        options:
+          - smoke
+          - comprehensive
+      gemini_model:
+        description: 'Gemini model ID used when mode is live-agents-cli'
+        required: false
+        default: 'gemini-3.8-flash'
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: controlled-agent-eval-${{ inputs.mode }}-${{ inputs.subset }}
+  cancel-in-progress: false
+
+jobs:
+  run-agent-evaluation:
+    name: Agents CLI Evaluation (${{ inputs.mode }} / ${{ inputs.subset }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment:
+      name: model-evaluation
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Sync locked Python dependencies & google-agents-cli
+        run: |
+          uv venv
+          uv export --frozen --no-emit-project --no-hashes -o /tmp/requirements.eval.txt
+          uv pip install --index-url https://pypi.org/simple -r /tmp/requirements.eval.txt
+          uv pip install --index-url https://pypi.org/simple --no-deps -e .
+          uv tool install --index-url https://pypi.org/simple google-agents-cli==1.15.0
+
+      - name: Authenticate to Google Cloud via Workload Identity Federation (Live Mode)
+        if: inputs.mode == 'live-agents-cli'
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_CICD_SERVICE_ACCOUNT }}
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+          create_credentials_file: true
+
+      - name: Execute controlled evaluation suite
+        env:
+          APP_ENV: test
+          GOOGLE_GENAI_USE_ENTERPRISE: 'true'
+          GOOGLE_CLOUD_PROJECT: ${{ vars.GCP_PROJECT_ID || 'brew-eval-local' }}
+          GOOGLE_CLOUD_LOCATION: global
+          GEMINI_MODEL: ${{ inputs.gemini_model || 'gemini-3.8-flash' }}
+          OTEL_TO_CLOUD: 'false'
+        run: |
+          if [[ "${{ inputs.mode }}" == "deterministic-adk" ]]; then
+            uv run python -m tests.eval.run_eval_suite \
+              --mode deterministic-adk \
+              --subset "${{ inputs.subset }}" \
+              --grade-via-cli
+          else
+            uv run python -m tests.eval.run_eval_suite \
+              --mode live-agents-cli \
+              --subset "${{ inputs.subset }}"
+          fi
+
+      - name: Upload evaluation traces and grade reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: brew-eval-${{ inputs.mode }}-${{ inputs.subset }}-${{ github.run_id }}
+          path: |
+            artifacts/grade_results/
+            artifacts/traces/
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Write evaluation summary
+        if: always()
+        run: |
+          {
+            echo "## Controlled Agent Evaluation Report"
+            echo "- **Mode**: \`${{ inputs.mode }}\`"
+            echo "- **Subset**: \`${{ inputs.subset }}\`"
+            echo "- **Model**: \`${{ inputs.gemini_model || 'gemini-3.8-flash' }}\`"
+            echo "- **Commit**: \`${GITHUB_SHA}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"

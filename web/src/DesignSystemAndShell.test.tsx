@@ -460,4 +460,134 @@ describe("Brew v2 Design System, 3-Space Shell, Illustrations, Accessibility, an
       }
     }
   });
+
+  it("bounds 4-segment long-title timeline bars with minmax(0, ...fr) and preserves total minutes", async () => {
+    const ashmitaContact: ContactResponse = {
+      id: "cnt_ashmita",
+      name: "Ashmita Kapoor",
+      title: "FDE Manager",
+      role: "Manager",
+      organization: "Google Cloud",
+      context_notes: null,
+      version: 1,
+      created_at: "2026-11-25T01:00:00Z",
+      updated_at: "2026-11-25T01:00:00Z",
+    };
+    const fourSegmentBrief: PreparationBriefResponse = {
+      ...makeSampleBrief(ashmitaContact.id),
+      id: "brf_ashmita_4seg",
+      meeting_id: "mtg_ashmita_1",
+      contact_id: ashmitaContact.id,
+      duration_minutes: 30,
+      meeting_objective: "First one-on-one after joining Google for one week.",
+      time_boxed_agenda: [
+        {
+          title: "Casual Welcome and Week One Reflections",
+          duration_minutes: 5,
+          description: "Check in on first week highlights.",
+        },
+        {
+          title: "Onboarding Progress and Immediate Support",
+          duration_minutes: 10,
+          description: "Unblock access and tooling.",
+        },
+        {
+          title: "Expectations and 30-Day Focus",
+          duration_minutes: 10,
+          description: "Align on initial 30-day outcomes.",
+        },
+        {
+          title: "Next Steps and Cadence",
+          duration_minutes: 5,
+          description: "Confirm recurring 1:1 rhythm.",
+        },
+      ],
+    };
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const rawUrl =
+        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const path = new URL(rawUrl, "http://localhost").pathname;
+      if (path === "/api/health") return jsonResponse(HEALTH_OK);
+      if (path === "/api/auth/config") return jsonResponse(LOCAL_AUTH_CONFIG);
+      if (path === "/api/auth/mock-session") {
+        return jsonResponse(
+          {
+            access_token: "mses_ashmita",
+            token_type: "Bearer",
+            expires_at: new Date(Date.now() + 3600_000).toISOString(),
+            principal: {
+              user_id: "usr_mock_alice",
+              display_name: "Alice Chen",
+              auth_provider: "local_mock",
+            },
+          },
+          201,
+        );
+      }
+      if (path === "/api/v1/auth/me") {
+        return jsonResponse({
+          user_id: "usr_mock_alice",
+          display_name: "Alice Chen",
+          auth_provider: "local_mock",
+        });
+      }
+      if (path === "/api/v1/contacts") return jsonResponse({ items: [ashmitaContact], total: 1 });
+      if (path === "/api/v1/meetings") {
+        return jsonResponse({
+          items: [
+            {
+              id: fourSegmentBrief.meeting_id,
+              contact_id: ashmitaContact.id,
+              purpose: "coffee_chat",
+              tone: "warm_casual",
+              objective: fourSegmentBrief.meeting_objective,
+              duration_minutes: 30,
+              scheduled_at: null,
+              notes: null,
+              status: "preparing",
+              latest_brief_id: fourSegmentBrief.id,
+              version: 1,
+              created_at: "2026-11-25T01:05:00Z",
+              updated_at: "2026-11-25T01:05:00Z",
+            },
+          ],
+          total: 1,
+        });
+      }
+      if (path === `/api/v1/briefs/${fourSegmentBrief.id}/revisions`) {
+        return jsonResponse({ items: [fourSegmentBrief], total: 1 });
+      }
+      if (path === `/api/v1/briefs/${fourSegmentBrief.id}`) {
+        return jsonResponse(fourSegmentBrief);
+      }
+      if (path === "/api/v1/memories/proposals") {
+        return jsonResponse({
+          proposals: [],
+          total: 0,
+          skipped_duplicates: 0,
+          filtered_sensitive_count: 0,
+        });
+      }
+      if (path === "/api/v1/memories") return jsonResponse({ items: [], total: 0 });
+      return jsonResponse({}, 404);
+    });
+
+    window.localStorage.setItem("brew.v2.calendar.demo_disabled:usr_mock_alice", "1");
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /Continue as Alice Chen/i }));
+    await screen.findByRole("heading", { level: 1, name: /Ashmita Kapoor/i });
+
+    const openerPill = screen.getByTitle("5m · Casual Welcome and Week One Reflections");
+    const corePill = screen.getByTitle(
+      "10m Onboarding Progress and Immediate Support + 10m Expectations and 30-Day Focus",
+    );
+    const closePill = screen.getByTitle("5m · Next Steps and Cadence");
+
+    expect(openerPill).toHaveTextContent("5m Casual Welcome and Week One Reflections");
+    expect(corePill).toHaveTextContent("20m Onboarding Progress and Immediate Support");
+    expect(closePill).toHaveTextContent("5m Next Steps and Cadence");
+    expect(openerPill.parentElement?.style.gridTemplateColumns).toContain("minmax(0,");
+  });
 });

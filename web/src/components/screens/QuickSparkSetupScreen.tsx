@@ -747,30 +747,30 @@ export function QuickSparkSetupScreen({
           </div>
 
           <div
-            className="mb-3.5 grid gap-1.5 text-center"
+            className="mb-3.5 grid gap-1.5 overflow-hidden text-center"
             style={{
-              gridTemplateColumns: `${String(Math.max(2, split.hookMinutes))}fr ${String(Math.max(4, split.coreMinutes))}fr ${String(Math.max(2, split.wrapMinutes))}fr`,
+              gridTemplateColumns: `minmax(0, ${String(Math.max(3, Math.round(safePreviewDuration * 0.2), split.hookMinutes))}fr) minmax(0, ${String(Math.max(4, split.coreMinutes))}fr) minmax(0, ${String(Math.max(3, Math.round(safePreviewDuration * 0.2), split.wrapMinutes))}fr)`,
             }}
           >
-            <div className="rounded-[14px] bg-brew-peach px-2 py-2.5">
-              <div className="text-sm font-extrabold text-brew-plum">
+            <div className="min-w-0 rounded-[14px] bg-brew-peach px-2 py-2.5">
+              <div className="truncate text-sm font-extrabold text-brew-plum">
                 {String(split.hookMinutes)}m
               </div>
-              <div className="text-[10.5px] text-brew-secondary">Hook</div>
+              <div className="truncate text-[10.5px] text-brew-secondary">Hook</div>
             </div>
-            <div className="rounded-[14px] bg-brew-lavender px-2 py-2.5">
-              <div className="text-sm font-extrabold text-brew-plum">
+            <div className="min-w-0 rounded-[14px] bg-brew-lavender px-2 py-2.5">
+              <div className="truncate text-sm font-extrabold text-brew-plum">
                 {String(split.coreMinutes)}m
               </div>
               <div className="truncate text-[10.5px] text-brew-secondary">
                 {split.questionTargetLabel}
               </div>
             </div>
-            <div className="rounded-[14px] bg-brew-mint px-2 py-2.5">
-              <div className="text-sm font-extrabold text-brew-plum">
+            <div className="min-w-0 rounded-[14px] bg-brew-mint px-2 py-2.5">
+              <div className="truncate text-sm font-extrabold text-brew-plum">
                 {String(split.wrapMinutes)}m
               </div>
-              <div className="text-[10.5px] text-brew-secondary">Wrap</div>
+              <div className="truncate text-[10.5px] text-brew-secondary">Wrap</div>
             </div>
           </div>
 

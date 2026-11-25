@@ -15,6 +15,9 @@ def main() -> None:
         host=settings.host,
         port=settings.port,
         log_level=settings.log_level.lower(),
+        access_log=False,
+        timeout_keep_alive=30,
+        timeout_graceful_shutdown=15,
     )
 
 
