@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, Path, Request, Response, status
+from fastapi import APIRouter, Depends, Header, Path, Query, Request, Response, status
 
 from app.api.dependencies import (
     get_brief_service,
@@ -20,7 +20,7 @@ from app.api.schemas import (
 )
 from app.application.briefs.service import BriefService
 from app.domain.identity.models import AuthenticatedPrincipal
-from app.domain.shared.types import EntityId
+from app.domain.shared.types import EntityId, VersionNumber
 
 router = APIRouter(
     prefix="/api/v1",
@@ -144,3 +144,27 @@ async def get_brief(
     """Return a preparation brief owned by the authenticated caller."""
     brief = await brief_service.get_brief(principal=principal, brief_id=id)
     return PreparationBriefResponse.from_domain(brief)
+
+
+@router.delete(
+    "/briefs/{id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    tags=["briefs"],
+    summary="Delete a preparation brief and its revision snapshots",
+)
+async def delete_brief(
+    id: Annotated[EntityId, Path(description="Preparation brief identifier.")],
+    principal: Annotated[AuthenticatedPrincipal, Depends(get_current_principal)],
+    brief_service: Annotated[BriefService, Depends(get_brief_service)],
+    expected_version: Annotated[
+        VersionNumber | None,
+        Query(description="Optional expected brief version for optimistic concurrency."),
+    ] = None,
+) -> Response:
+    """Permanently delete a preparation brief owned by the authenticated caller."""
+    await brief_service.delete_brief(
+        principal=principal,
+        brief_id=id,
+        expected_version=expected_version,
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

@@ -354,6 +354,20 @@ export class BrewApiClient {
     });
   }
 
+  public deleteContact(contactId: string, expectedVersion?: number): Promise<void> {
+    const query =
+      expectedVersion !== undefined
+        ? `?expected_version=${encodeURIComponent(String(expectedVersion))}`
+        : "";
+    return this.requestJson<undefined>(
+      `/api/v1/contacts/${encodeURIComponent(contactId)}${query}`,
+      {
+        method: "DELETE",
+        requiresAuth: true,
+      },
+    );
+  }
+
   public listMeetings(contactId?: string): Promise<MeetingListResponse> {
     const query = contactId ? `?contact_id=${encodeURIComponent(contactId)}` : "";
     return this.requestJson<MeetingListResponse>(`/api/v1/meetings${query}`, {
@@ -410,6 +424,20 @@ export class BrewApiClient {
         body: payload,
         headers: { "Idempotency-Key": resolvedKey },
         timeoutMs: WORKFLOW_TIMEOUT_MS,
+      },
+    );
+  }
+
+  public deleteBrief(briefId: string, expectedVersion?: number): Promise<void> {
+    const query =
+      expectedVersion !== undefined
+        ? `?expected_version=${encodeURIComponent(String(expectedVersion))}`
+        : "";
+    return this.requestJson<undefined>(
+      `/api/v1/briefs/${encodeURIComponent(briefId)}${query}`,
+      {
+        method: "DELETE",
+        requiresAuth: true,
       },
     );
   }

@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 
 from app.application.briefs.inputs import BriefWorkflowSafeguardConfig
 from app.application.briefs.workflow import MeetingPreparationWorkflow
 from app.application.memory.persistence import MemoryPersistenceService
 from app.application.memory.retrieval import MemoryRetrievalService
+from app.application.shared.telemetry import brew_span
 from app.domain.briefs.models import BriefWorkflowResult, PreparationBrief
 from app.domain.briefs.ports import (
     BriefCoachAgentPort,
@@ -18,8 +20,10 @@ from app.domain.identity.models import AuthenticatedPrincipal
 from app.domain.meetings.ports import MeetingRepository
 from app.domain.meetings.types import MeetingPurpose, MeetingTone
 from app.domain.shared.clock import ClockPort
-from app.domain.shared.errors import AuthorizationError, EntityNotFoundError
+from app.domain.shared.errors import AuthorizationError, EntityNotFoundError, VersionConflictError
 from app.domain.shared.ports import IdGeneratorPort
+
+logger = logging.getLogger(__name__)
 
 
 class BriefService:
@@ -214,3 +218,56 @@ class BriefService:
             trace_id=trace_id,
         )
         return result.brief
+
+    async def delete_brief(
+        self,
+        *,
+        principal: AuthenticatedPrincipal,
+        brief_id: str,
+        expected_version: int | None = None,
+    ) -> None:
+        """Delete an owned preparation brief, its revisions, and unlink or prune its meeting."""
+        uid = principal.user_id
+        with brew_span(
+            "brew.brief.delete",
+            operation_name="brief.delete",
+            tracer_name=__name__,
+        ) as tracker:
+            brief = await self.get_brief(principal=principal, brief_id=brief_id)
+            if expected_version is not None and brief.version != expected_version:
+                raise VersionConflictError(
+                    entity_name="PreparationBrief",
+                    entity_id=brief_id,
+                    expected_version=expected_version,
+                    actual_version=brief.version,
+                )
+
+            await self._brief_repo.delete(uid, brief.id, expected_version=expected_version)
+
+            meeting = await self._meeting_repo.get_for_owner(uid, brief.meeting_id)
+            if meeting is not None and meeting.owner_user_id == uid:
+                remaining = await self._brief_repo.list_by_meeting(uid, meeting.id)
+                if not remaining and meeting.notes is None:
+                    await self._meeting_repo.delete(uid, meeting.id)
+                elif meeting.latest_brief_id == brief.id:
+                    next_latest = remaining[-1].id if remaining else None
+                    updated_meeting = meeting.model_copy(
+                        update={
+                            "latest_brief_id": next_latest,
+                            "updated_at": max(self._clock.now_utc(), meeting.created_at),
+                            "version": meeting.version + 1,
+                        }
+                    )
+                    await self._meeting_repo.save(
+                        updated_meeting,
+                        expected_version=meeting.version,
+                    )
+
+            logger.info(
+                "Preparation brief deleted",
+                extra={
+                    "event_type": "brief.deleted",
+                    "operation_name": "brief.delete",
+                    "result_status": tracker.status,
+                },
+            )

@@ -46,6 +46,13 @@ class BriefRepository(Protocol):
     ) -> list[PreparationBrief]:
         """List preparation briefs owned by ``owner_user_id`` for ``meeting_id``."""
 
+    async def list_by_contact(
+        self,
+        owner_user_id: str,
+        contact_id: str,
+    ) -> list[PreparationBrief]:
+        """List preparation briefs owned by ``owner_user_id`` for ``contact_id``."""
+
     async def save(
         self,
         brief: PreparationBrief,
@@ -53,6 +60,15 @@ class BriefRepository(Protocol):
         expected_version: int | None = None,
     ) -> PreparationBrief:
         """Persist a new or revised brief enforcing optimistic version checks."""
+
+    async def delete(
+        self,
+        owner_user_id: str,
+        brief_id: str,
+        *,
+        expected_version: int | None = None,
+    ) -> None:
+        """Delete ``brief_id`` and its historical revision snapshots under ``owner_user_id``."""
 
     async def list_revisions(
         self,

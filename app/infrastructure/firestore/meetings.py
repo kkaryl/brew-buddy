@@ -105,3 +105,13 @@ class FirestoreMeetingRepository:
             span_name="firestore.meetings.save",
         )
         return meeting
+
+    async def delete(self, owner_user_id: str, meeting_id: str) -> None:
+        uid = validate_doc_segment("owner_user_id", owner_user_id)
+        doc_ref = self._doc_ref(uid, meeting_id)
+        await run_firestore_op(
+            "firestore.meetings.delete",
+            doc_ref.delete(),
+            timeout_seconds=self._timeout_seconds,
+            client=self._client,
+        )

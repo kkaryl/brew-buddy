@@ -217,3 +217,79 @@ async def test_firestore_user_preferences_repository_round_trips_preferred_displ
     legacy_loaded = await repo.get_by_owner("google:112233")
     assert legacy_loaded is not None
     assert legacy_loaded.preferred_display_name is None
+
+
+@pytest.mark.asyncio
+async def test_firestore_brief_delete_purges_immutable_revision_snapshots(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.infrastructure.firestore.briefs import FirestoreBriefRepository
+
+    monkeypatch.setenv("FIRESTORE_EMULATOR_HOST", "127.0.0.1:8085")
+
+    brief_snap = MagicMock()
+    brief_snap.exists = True
+    brief_snap.to_dict.return_value = {"owner_user_id": "usr_alice", "version": 2}
+
+    async def _get_brief(*, transaction: Any = None) -> Any:
+        del transaction
+        return brief_snap
+
+    brief_doc_ref = MagicMock()
+    brief_doc_ref.get = _get_brief
+
+    rev1_doc = MagicMock()
+    rev2_doc = MagicMock()
+
+    async def _get_revisions() -> list[Any]:
+        return [rev1_doc, rev2_doc]
+
+    rev_coll_ref = MagicMock()
+    rev_coll_ref.get = _get_revisions
+    brief_doc_ref.collection.return_value = rev_coll_ref
+
+    batch_mock = MagicMock()
+    committed = False
+
+    async def _commit_batch() -> None:
+        nonlocal committed
+        committed = True
+
+    batch_mock.commit = _commit_batch
+
+    txn_mock = MagicMock()
+    txn_mock._max_attempts = 1
+    txn_mock._read_only = False
+    txn_mock._id = b"txn_1"
+    txn_mock.in_progress = False
+
+    async def _begin_txn(retry_id: Any = None) -> None:
+        del retry_id
+        txn_mock.in_progress = True
+        txn_mock._id = b"txn_1"
+
+    async def _commit_txn() -> list[Any]:
+        txn_mock.in_progress = False
+        return []
+
+    async def _rollback_txn() -> None:
+        txn_mock.in_progress = False
+
+    txn_mock._begin = _begin_txn
+    txn_mock._commit = _commit_txn
+    txn_mock._rollback = _rollback_txn
+    txn_mock._clean_up = MagicMock()
+
+    subcoll_ref = MagicMock()
+    subcoll_ref.document.return_value = brief_doc_ref
+    client = MagicMock()
+    client.collection.return_value.document.return_value.collection.return_value = subcoll_ref
+    client.transaction.return_value = txn_mock
+    client.batch.return_value = batch_mock
+
+    repo = FirestoreBriefRepository(client, timeout_seconds=2.0)
+    await repo.delete("usr_alice", "brf_01", expected_version=2)
+
+    txn_mock.delete.assert_called_once_with(brief_doc_ref)
+    assert batch_mock.delete.call_count == 2
+    assert committed is True

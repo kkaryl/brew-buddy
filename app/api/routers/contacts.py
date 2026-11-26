@@ -1,10 +1,10 @@
-"""v1 routes for listing and creating contacts."""
+"""v1 routes for listing, creating, and deleting contacts."""
 
 from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Path, Query, Response, status
 
 from app.api.dependencies import (
     get_contact_service,
@@ -18,6 +18,7 @@ from app.api.schemas import (
 )
 from app.application.contacts.service import ContactService
 from app.domain.identity.models import AuthenticatedPrincipal
+from app.domain.shared.types import EntityId, VersionNumber
 
 router = APIRouter(
     prefix="/api/v1",
@@ -64,3 +65,27 @@ async def create_contact(
         context_notes=payload.context_notes,
     )
     return ContactResponse.from_domain(contact)
+
+
+@router.delete(
+    "/contacts/{id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    tags=["contacts"],
+    summary="Delete a contact and their briefs, meetings, and memories",
+)
+async def delete_contact(
+    id: Annotated[EntityId, Path(description="Contact identifier to delete.")],
+    principal: Annotated[AuthenticatedPrincipal, Depends(get_current_principal)],
+    contact_service: Annotated[ContactService, Depends(get_contact_service)],
+    expected_version: Annotated[
+        VersionNumber | None,
+        Query(description="Optional expected contact version for optimistic concurrency."),
+    ] = None,
+) -> Response:
+    """Permanently delete a contact along with their briefs, meetings, and memories."""
+    await contact_service.delete_contact(
+        principal=principal,
+        contact_id=id,
+        expected_version=expected_version,
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

@@ -124,3 +124,13 @@ class FirestoreMemoryProposalRepository:
             span_name="firestore.memory_proposals.save",
         )
         return proposal
+
+    async def delete(self, owner_user_id: str, proposal_id: str) -> None:
+        uid = validate_doc_segment("owner_user_id", owner_user_id)
+        doc_ref = self._doc_ref(uid, proposal_id)
+        await run_firestore_op(
+            "firestore.memory_proposals.delete",
+            doc_ref.delete(),
+            timeout_seconds=self._timeout_seconds,
+            client=self._client,
+        )

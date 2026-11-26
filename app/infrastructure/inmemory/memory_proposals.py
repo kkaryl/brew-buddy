@@ -74,3 +74,7 @@ class InMemoryMemoryProposalRepository:
                     )
             user_bucket[proposal.id] = proposal
             return proposal
+
+    async def delete(self, owner_user_id: str, proposal_id: str) -> None:
+        async with self._lock:
+            self._by_owner.get(owner_user_id, {}).pop(proposal_id, None)

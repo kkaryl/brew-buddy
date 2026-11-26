@@ -53,6 +53,17 @@ export function saveStarredQuestionIds(
   }
 }
 
+export function clearStarredQuestionIds(userId: string | null, briefId: string): void {
+  if (!userId || !briefId || typeof window === "undefined") {
+    return;
+  }
+  try {
+    window.localStorage.removeItem(`${STORAGE_PREFIX}${userId}:${briefId}`);
+  } catch {
+    // Ignore storage errors gracefully.
+  }
+}
+
 export function toggleQuestionStar(
   current: ReadonlySet<string>,
   questionId: string,

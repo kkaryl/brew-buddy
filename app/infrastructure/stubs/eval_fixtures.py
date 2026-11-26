@@ -71,6 +71,15 @@ class EvalFaultInjectingContactRepository:
     async def save(self, contact: Contact, *, expected_version: int | None = None) -> Contact:
         return await self._inner.save(contact, expected_version=expected_version)
 
+    async def delete(
+        self,
+        owner_user_id: str,
+        contact_id: str,
+        *,
+        expected_version: int | None = None,
+    ) -> None:
+        await self._inner.delete(owner_user_id, contact_id, expected_version=expected_version)
+
 
 class EvalFaultInjectingMeetingRepository:
     """Wraps a ``MeetingRepository`` to trigger deterministic history timeout/outage errors."""
@@ -100,6 +109,9 @@ class EvalFaultInjectingMeetingRepository:
 
     async def save(self, meeting: Meeting, *, expected_version: int | None = None) -> Meeting:
         return await self._inner.save(meeting, expected_version=expected_version)
+
+    async def delete(self, owner_user_id: str, meeting_id: str) -> None:
+        await self._inner.delete(owner_user_id, meeting_id)
 
 
 def populate_in_memory_eval_fixtures(container: ServiceContainer) -> None:

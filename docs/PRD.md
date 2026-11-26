@@ -50,7 +50,7 @@ Brew is organized around seven sequential, repeatable user journey stages:
 ## 4. Project Scope & Explicit Non-Goals
 
 ### 4.1 In-Scope (MVP & Core Platform)
-- Counterpart intake form and structured validation (name, title, role, optional organization/context).
+- Counterpart intake form, structured validation (name, title, role, optional organization/context), and cascading counterpart deletion (`DELETE /api/v1/contacts/{id}` removing the counterpart alongside their preparation briefs, meetings, staged proposals, and contact-scoped memories while preserving personal coaching preferences), paired with individual brief deletion (`DELETE /api/v1/briefs/{id}`).
 - Meeting configuration selector for **purpose**, **duration**, and **tone**.
 - Structured preparation brief generation (`MeetingPreparationWorkflow`) containing:
   - Meeting objective & 2 to 3 tailored rapport openers

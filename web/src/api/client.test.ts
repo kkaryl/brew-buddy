@@ -491,4 +491,24 @@ describe("BrewApiClient memory extraction jobs", () => {
     saveStoredSession({ ...SESSION, principal: updated });
     expect(loadStoredSession()?.principal).toEqual(updated);
   });
+
+  it("issues DELETE /api/v1/contacts/{id} and DELETE /api/v1/briefs/{id} with optional expected_version", async () => {
+    const seen: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const rawUrl =
+        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const parsed = new URL(rawUrl, "http://localhost");
+      seen.push(`${String(init?.method ?? "GET").toUpperCase()} ${parsed.pathname}${parsed.search}`);
+      return new Response(null, { status: 204 });
+    });
+
+    const client = createClient();
+    await client.deleteBrief("brf_123", 2);
+    await client.deleteContact("cnt_456", 1);
+
+    expect(seen).toEqual([
+      "DELETE /api/v1/briefs/brf_123?expected_version=2",
+      "DELETE /api/v1/contacts/cnt_456?expected_version=1",
+    ]);
+  });
 });

@@ -27,6 +27,9 @@ class MeetingRepository(Protocol):
     async def save(self, meeting: Meeting, *, expected_version: int | None = None) -> Meeting:
         """Persist a new or updated meeting enforcing optimistic version checks."""
 
+    async def delete(self, owner_user_id: str, meeting_id: str) -> None:
+        """Delete ``meeting_id`` strictly under ``owner_user_id``."""
+
 
 class MeetingReaderPort(Protocol):
     """Least-privilege read-only port exposing only caller-owned meeting lookups."""

@@ -8,6 +8,7 @@ from google.cloud import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 
 from app.domain.briefs.models import PreparationBrief
+from app.domain.shared.errors import EntityNotFoundError, VersionConflictError
 from app.infrastructure.firestore.collections import (
     BRIEF_REVISIONS_SUBCOLLECTION,
     BRIEFS_SUBCOLLECTION,
@@ -95,6 +96,27 @@ class FirestoreBriefRepository:
         ]
         return sorted(briefs, key=lambda item: (item.version, item.id))
 
+    async def list_by_contact(
+        self,
+        owner_user_id: str,
+        contact_id: str,
+    ) -> list[PreparationBrief]:
+        uid = validate_doc_segment("owner_user_id", owner_user_id)
+        cid = validate_doc_segment("contact_id", contact_id)
+        query = self._collection_ref(uid).where(filter=FieldFilter("contact_id", "==", cid))
+        docs = await run_firestore_op(
+            "firestore.briefs.list_by_contact",
+            query.get(),
+            timeout_seconds=self._timeout_seconds,
+            client=self._client,
+        )
+        briefs = [
+            PreparationBrief.model_validate(data)
+            for doc in docs
+            if (data := doc.to_dict()) and data.get("owner_user_id") == uid
+        ]
+        return sorted(briefs, key=lambda item: (item.created_at, item.id))
+
     def _revisions_collection_ref(
         self,
         owner_user_id: str,
@@ -174,3 +196,57 @@ class FirestoreBriefRepository:
         if not data or data.get("owner_user_id") != uid:
             return None
         return PreparationBrief.model_validate(data)
+
+    async def delete(
+        self,
+        owner_user_id: str,
+        brief_id: str,
+        *,
+        expected_version: int | None = None,
+    ) -> None:
+        uid = validate_doc_segment("owner_user_id", owner_user_id)
+        bid = validate_doc_segment("brief_id", brief_id)
+        doc_ref = self._doc_ref(uid, bid)
+        rev_coll_ref = self._revisions_collection_ref(uid, bid)
+
+        @firestore.async_transactional
+        async def _delete_txn(transaction: firestore.AsyncTransaction) -> None:
+            snap = await doc_ref.get(transaction=transaction)
+            if not snap.exists:
+                raise EntityNotFoundError(entity_name="PreparationBrief", entity_id=bid)
+            existing_dict = snap.to_dict() or {}
+            if existing_dict.get("owner_user_id") != uid:
+                raise EntityNotFoundError(entity_name="PreparationBrief", entity_id=bid)
+            if expected_version is not None:
+                actual_version = int(existing_dict.get("version", 0))
+                if actual_version != expected_version:
+                    raise VersionConflictError(
+                        entity_name="PreparationBrief",
+                        entity_id=bid,
+                        expected_version=expected_version,
+                        actual_version=actual_version,
+                    )
+            transaction.delete(doc_ref)
+
+        await run_firestore_op(
+            "firestore.briefs.delete",
+            _delete_txn(self._client.transaction()),
+            timeout_seconds=self._timeout_seconds,
+            client=self._client,
+        )
+
+        async def _purge_revisions() -> None:
+            rev_docs = await rev_coll_ref.get()
+            if not rev_docs:
+                return
+            batch = self._client.batch()
+            for rev_doc in rev_docs:
+                batch.delete(rev_doc.reference)
+            await batch.commit()
+
+        await run_firestore_op(
+            "firestore.brief_revisions.delete",
+            _purge_revisions(),
+            timeout_seconds=self._timeout_seconds,
+            client=self._client,
+        )

@@ -59,3 +59,7 @@ class InMemoryMeetingRepository:
                     )
             user_bucket[meeting.id] = meeting
             return meeting
+
+    async def delete(self, owner_user_id: str, meeting_id: str) -> None:
+        async with self._lock:
+            self._by_owner.get(owner_user_id, {}).pop(meeting_id, None)

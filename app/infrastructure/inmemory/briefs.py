@@ -41,6 +41,19 @@ class InMemoryBriefRepository:
             ]
         return sorted(items, key=lambda item: (item.version, item.id))
 
+    async def list_by_contact(
+        self,
+        owner_user_id: str,
+        contact_id: str,
+    ) -> list[PreparationBrief]:
+        async with self._lock:
+            items = [
+                brief
+                for brief in self._by_owner.get(owner_user_id, {}).values()
+                if brief.contact_id == contact_id
+            ]
+        return sorted(items, key=lambda item: (item.created_at, item.id))
+
     async def save(
         self,
         brief: PreparationBrief,
@@ -75,6 +88,28 @@ class InMemoryBriefRepository:
             )
             rev_bucket[brief.version] = brief
             return brief
+
+    async def delete(
+        self,
+        owner_user_id: str,
+        brief_id: str,
+        *,
+        expected_version: int | None = None,
+    ) -> None:
+        async with self._lock:
+            user_bucket = self._by_owner.get(owner_user_id, {})
+            existing = user_bucket.get(brief_id)
+            if existing is None:
+                raise EntityNotFoundError(entity_name="PreparationBrief", entity_id=brief_id)
+            if expected_version is not None and existing.version != expected_version:
+                raise VersionConflictError(
+                    entity_name="PreparationBrief",
+                    entity_id=brief_id,
+                    expected_version=expected_version,
+                    actual_version=existing.version,
+                )
+            del user_bucket[brief_id]
+            self._revisions_by_owner.get(owner_user_id, {}).pop(brief_id, None)
 
     async def list_revisions(
         self,

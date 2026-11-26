@@ -78,8 +78,9 @@ def test_openapi_contract_contains_all_required_v1_endpoints_and_matches_committ
         "/api/v1/briefs/generate": {"post"},
         "/api/v1/briefs/{id}/revise": {"post"},
         "/api/v1/briefs/{id}/revisions": {"get"},
-        "/api/v1/briefs/{id}": {"get"},
+        "/api/v1/briefs/{id}": {"get", "delete"},
         "/api/v1/contacts": {"get", "post"},
+        "/api/v1/contacts/{id}": {"delete"},
         "/api/v1/meetings": {"get"},
         "/api/v1/memories/propose": {"post"},
         "/api/v1/memories/proposals": {"get"},
@@ -793,3 +794,182 @@ def test_memory_and_proposal_query_filters_and_auth_principal_endpoint(tmp_path:
         ).json()
         assert contact_a_only["total"] == 1
         assert contact_a_only["items"][0]["contact_id"] == contact_a
+
+
+def test_cascading_contact_deletion_and_brief_deletion_contracts(tmp_path: Path) -> None:
+    with _build_client(tmp_path) as client:
+        alice_headers = _auth_headers(ALICE_TOKEN)
+        bob_headers = _auth_headers(BOB_TOKEN)
+
+        # 404 on deleting non-existent contact or brief
+        assert (
+            client.delete("/api/v1/contacts/cnt_missing", headers=alice_headers).status_code == 404
+        )
+        assert client.delete("/api/v1/briefs/brf_missing", headers=alice_headers).status_code == 404
+
+        # Create two contacts for Alice: Maya (will be deleted) and Jordan (stays untouched)
+        maya = client.post(
+            "/api/v1/contacts",
+            headers=alice_headers,
+            json={"name": "Maya Lin", "organization": "CloudScale"},
+        ).json()
+        maya_id = maya["id"]
+
+        jordan = client.post(
+            "/api/v1/contacts",
+            headers=alice_headers,
+            json={"name": "Jordan Kim", "organization": "Northstar"},
+        ).json()
+        jordan_id = jordan["id"]
+
+        # Generate two briefs for Maya (one deleted individually, one deleted via contact cascade)
+        brief_solo = client.post(
+            "/api/v1/briefs/generate",
+            headers=alice_headers,
+            json={
+                "contact_id": maya_id,
+                "purpose": "coffee_chat",
+                "meeting_objective": "Quick catch-up on on-call handoffs.",
+                "duration_minutes": 15,
+            },
+        ).json()
+        brief_solo_id = brief_solo["id"]
+
+        # Revise brief_solo to v2 so version conflict + revision cleanup are exercised
+        client.post(
+            f"/api/v1/briefs/{brief_solo_id}/revise",
+            headers=alice_headers,
+            json={"instructions": "Focus on runbook automation.", "expected_version": 1},
+        )
+        assert (
+            client.delete(
+                f"/api/v1/briefs/{brief_solo_id}?expected_version=1",
+                headers=alice_headers,
+            ).status_code
+            == 409
+        )
+        assert (
+            client.delete(
+                f"/api/v1/briefs/{brief_solo_id}",
+                headers=bob_headers,
+            ).status_code
+            == 403
+        )
+        assert (
+            client.delete(
+                f"/api/v1/briefs/{brief_solo_id}?expected_version=2",
+                headers=alice_headers,
+            ).status_code
+            == 204
+        )
+        assert (
+            client.get(f"/api/v1/briefs/{brief_solo_id}", headers=alice_headers).status_code == 404
+        )
+        assert (
+            client.get(
+                f"/api/v1/briefs/{brief_solo_id}/revisions",
+                headers=alice_headers,
+            ).status_code
+            == 404
+        )
+
+        # Generate a second brief + memories + pending proposal for Maya, and a brief for Jordan
+        brief_maya = client.post(
+            "/api/v1/briefs/generate",
+            headers=alice_headers,
+            json={
+                "contact_id": maya_id,
+                "purpose": "networking",
+                "meeting_objective": "Explore multi-region failover drills.",
+                "duration_minutes": 30,
+            },
+        ).json()
+        brief_maya_id = brief_maya["id"]
+
+        brief_jordan = client.post(
+            "/api/v1/briefs/generate",
+            headers=alice_headers,
+            json={
+                "contact_id": jordan_id,
+                "purpose": "coffee_chat",
+                "meeting_objective": "Compare streaming partition strategies.",
+                "duration_minutes": 30,
+            },
+        ).json()
+
+        maya_proposals = client.post(
+            "/api/v1/memories/propose",
+            headers=alice_headers,
+            json={
+                "notes": (
+                    "Maya shared multi-region failover checklists. "
+                    "Follow up next month with our game-day template. "
+                    "I prefer concise story-driven engineering openers."
+                ),
+                "meeting_id": brief_maya["meeting_id"],
+                "contact_id": maya_id,
+                "brief_id": brief_maya_id,
+            },
+        ).json()["proposals"]
+        assert len(maya_proposals) == 3
+
+        # Approve 1 contact memory for Maya and 1 user_preference memory; leave 1 pending proposal
+        contact_prop = next(p for p in maya_proposals if p["scope"] == "contact")
+        pref_prop = next(p for p in maya_proposals if p["scope"] == "user_preference")
+        client.post(
+            f"/api/v1/memories/{contact_prop['id']}/approve",
+            headers=alice_headers,
+            json={"expected_version": 1},
+        )
+        approved_pref_mem = client.post(
+            f"/api/v1/memories/{pref_prop['id']}/approve",
+            headers=alice_headers,
+            json={"expected_version": 1},
+        ).json()
+
+        # Cross-tenant delete attempt and stale expected_version check on contact
+        assert client.delete(f"/api/v1/contacts/{maya_id}", headers=bob_headers).status_code == 403
+        assert (
+            client.delete(
+                f"/api/v1/contacts/{maya_id}?expected_version=99",
+                headers=alice_headers,
+            ).status_code
+            == 409
+        )
+
+        # Cascade delete Maya -> removes contact, meetings, briefs/revisions, pending proposals,
+        # and Maya's contact memories, while preserving Jordan and Alice's preference memory!
+        del_contact_resp = client.delete(
+            f"/api/v1/contacts/{maya_id}?expected_version=1",
+            headers=alice_headers,
+        )
+        assert del_contact_resp.status_code == 204
+
+        remaining_contacts = client.get("/api/v1/contacts", headers=alice_headers).json()
+        assert [c["id"] for c in remaining_contacts["items"]] == [jordan_id]
+
+        assert (
+            client.get(f"/api/v1/briefs/{brief_maya_id}", headers=alice_headers).status_code == 404
+        )
+        assert (
+            client.get(
+                f"/api/v1/briefs/{brief_jordan['id']}",
+                headers=alice_headers,
+            ).status_code
+            == 200
+        )
+
+        remaining_meetings = client.get("/api/v1/meetings", headers=alice_headers).json()
+        assert [m["contact_id"] for m in remaining_meetings["items"]] == [jordan_id]
+
+        remaining_proposals = client.get(
+            "/api/v1/memories/proposals?status=pending",
+            headers=alice_headers,
+        ).json()
+        assert remaining_proposals["total"] == 0
+
+        remaining_memories = client.get(
+            "/api/v1/memories?include_revoked=true&include_superseded=true",
+            headers=alice_headers,
+        ).json()
+        assert [m["id"] for m in remaining_memories["items"]] == [approved_pref_mem["id"]]

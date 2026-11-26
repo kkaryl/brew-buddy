@@ -5,6 +5,7 @@ import debriefKeepsakeJournalUrl from "../../assets/illustrations/debrief-keepsa
 import homeClubWelcomeUrl from "../../assets/illustrations/home-club-welcome.svg";
 import memoryBloomJournalUrl from "../../assets/illustrations/memory-bloom-journal.svg";
 import peopleCircleClubUrl from "../../assets/illustrations/people-circle-club.svg";
+import readmeHeaderBannerUrl from "../../assets/illustrations/readme-header-banner.png";
 import relationshipFolioCircleUrl from "../../assets/illustrations/relationship-folio-circle.png";
 
 export type IllustrationName =
@@ -12,6 +13,7 @@ export type IllustrationName =
   | "cue-studio-copilot"
   | "debrief-keepsake-journal"
   | "relationship-folio-circle"
+  | "readme-header-banner"
   | "home-club-welcome"
   | "memory-bloom-journal"
   | "people-circle-club";
@@ -39,6 +41,11 @@ const ILLUSTRATION_SOURCES: Record<
     src: relationshipFolioCircleUrl,
     defaultAlt:
       "Three smiling colleagues standing together with a coral relationship folio and pastel circles",
+  },
+  "readme-header-banner": {
+    src: readmeHeaderBannerUrl,
+    defaultAlt:
+      "Brew header banner with the brew. wordmark, Agentic Coffee Chat Companion headline, and three smiling colleagues",
   },
   "home-club-welcome": {
     src: homeClubWelcomeUrl,

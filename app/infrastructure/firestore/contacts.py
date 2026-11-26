@@ -7,6 +7,7 @@ from typing import cast
 from google.cloud import firestore
 
 from app.domain.contacts.models import Contact
+from app.domain.shared.errors import EntityNotFoundError, VersionConflictError
 from app.infrastructure.firestore.collections import CONTACTS_SUBCOLLECTION, USERS_COLLECTION
 from app.infrastructure.firestore.operations import (
     exists_in_collection_group,
@@ -93,3 +94,39 @@ class FirestoreContactRepository:
             span_name="firestore.contacts.save",
         )
         return contact
+
+    async def delete(
+        self,
+        owner_user_id: str,
+        contact_id: str,
+        *,
+        expected_version: int | None = None,
+    ) -> None:
+        uid = validate_doc_segment("owner_user_id", owner_user_id)
+        doc_ref = self._doc_ref(uid, contact_id)
+
+        @firestore.async_transactional
+        async def _delete_txn(transaction: firestore.AsyncTransaction) -> None:
+            snap = await doc_ref.get(transaction=transaction)
+            if not snap.exists:
+                raise EntityNotFoundError(entity_name="Contact", entity_id=contact_id)
+            existing_dict = snap.to_dict() or {}
+            if existing_dict.get("owner_user_id") != uid:
+                raise EntityNotFoundError(entity_name="Contact", entity_id=contact_id)
+            if expected_version is not None:
+                actual_version = int(existing_dict.get("version", 0))
+                if actual_version != expected_version:
+                    raise VersionConflictError(
+                        entity_name="Contact",
+                        entity_id=contact_id,
+                        expected_version=expected_version,
+                        actual_version=actual_version,
+                    )
+            transaction.delete(doc_ref)
+
+        await run_firestore_op(
+            "firestore.contacts.delete",
+            _delete_txn(self._client.transaction()),
+            timeout_seconds=self._timeout_seconds,
+            client=self._client,
+        )

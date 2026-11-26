@@ -7,6 +7,7 @@ import {
   RefreshCw,
   Smartphone,
   Sparkles,
+  Trash2,
 } from "lucide-react";
 import { useEffect, useState, type FormEvent, type JSX } from "react";
 import { BrewApiError } from "../../api/client";
@@ -97,6 +98,9 @@ export interface CueStudioScreenProps {
     payload: ReviseBriefRequest,
   ) => Promise<PreparationBriefResponse>;
   readonly onReloadBrief: (briefId: string) => Promise<void>;
+  readonly onDeleteBrief?:
+    | ((briefId: string, expectedVersion?: number) => Promise<void>)
+    | undefined;
 }
 
 export function CueStudioScreen({
@@ -117,6 +121,7 @@ export function CueStudioScreen({
   onOpenDebrief,
   onReviseBrief,
   onReloadBrief,
+  onDeleteBrief,
 }: CueStudioScreenProps): JSX.Element {
   const [selectedRevisionVersion, setSelectedRevisionVersion] = useState<number | null>(null);
   const [revisionInstructions, setRevisionInstructions] = useState("");
@@ -125,6 +130,8 @@ export function CueStudioScreen({
   const [showOverrideControls, setShowOverrideControls] = useState(false);
   const [revisionFieldError, setRevisionFieldError] = useState<string | null>(null);
   const [revising, setRevising] = useState(false);
+  const [confirmingDeleteBrief, setConfirmingDeleteBrief] = useState(false);
+  const [deletingBrief, setDeletingBrief] = useState(false);
   const [versionConflictBriefId, setVersionConflictBriefId] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<FeedbackNotice | null>(null);
 
@@ -132,6 +139,7 @@ export function CueStudioScreen({
 
   useEffect(() => {
     setSelectedRevisionVersion(null);
+    setConfirmingDeleteBrief(false);
     setVersionConflictBriefId(null);
     setFeedback(null);
   }, [activeBriefId]);
@@ -400,6 +408,19 @@ export function CueStudioScreen({
             New Deck
           </PillButton>
 
+          {onDeleteBrief && (
+            <PillButton
+              id={`btn-delete-brief-${activeBrief.id}`}
+              variant="ghost"
+              size="sm"
+              disabled={deletingBrief}
+              onClick={() => setConfirmingDeleteBrief((prev) => !prev)}
+            >
+              <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+              <span>Delete Deck</span>
+            </PillButton>
+          )}
+
           <PillButton
             id="btn-open-pocket-glance"
             variant="outline"
@@ -420,6 +441,58 @@ export function CueStudioScreen({
           </PrimaryButton>
         </div>
       </div>
+
+      {confirmingDeleteBrief && onDeleteBrief && (
+        <div
+          role="region"
+          aria-label={`Confirm deletion of cue deck for ${activeContact.name}`}
+          className="flex flex-wrap items-center justify-between gap-3 rounded-[22px] border border-[#F2C2BA] bg-[#FFF5F3] px-5 py-4"
+        >
+          <div>
+            <div className="font-serif text-[16px] font-bold text-brew-plum">
+              Delete this cue deck for {activeContact.name}?
+            </div>
+            <p className="mt-0.5 text-xs text-brew-secondary">
+              Removes v1 through v{String(activeBrief.version)} of this preparation brief. Stamped
+              keepsakes in your journal are preserved.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <PillButton
+              id={`btn-cancel-delete-brief-${activeBrief.id}`}
+              variant="outline"
+              size="sm"
+              disabled={deletingBrief}
+              onClick={() => setConfirmingDeleteBrief(false)}
+            >
+              Cancel
+            </PillButton>
+            <PillButton
+              id={`btn-confirm-delete-brief-${activeBrief.id}`}
+              variant="danger"
+              size="sm"
+              disabled={deletingBrief}
+              onClick={() => {
+                setDeletingBrief(true);
+                setFeedback(null);
+                void onDeleteBrief(activeBrief.id, activeBrief.version)
+                  .then(() => {
+                    setConfirmingDeleteBrief(false);
+                  })
+                  .catch((err: unknown) => {
+                    setFeedback(errorToFeedbackNotice(err, "Could not delete cue deck"));
+                  })
+                  .finally(() => {
+                    setDeletingBrief(false);
+                  });
+              }}
+            >
+              <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+              <span>{deletingBrief ? "Deleting..." : "Confirm Delete"}</span>
+            </PillButton>
+          </div>
+        </div>
+      )}
 
       {/* Feedback, Version Conflict Recovery, Historical Snapshot, & Degraded Notices */}
       {feedback && (

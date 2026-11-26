@@ -2,6 +2,8 @@
 
 Brew helps professionals prepare for coffee chats, networking meetings, mentorship conversations and customer discovery calls. It writes a time-boxed preparation brief, refines it on request, and after the meeting turns your notes into candidate memories that you approve, edit or reject. Approved memories ground the next brief for the same person.
 
+![Banner](web/src/assets/illustrations/readme-header-banner.png)
+
 ## What it does
 
 | Step | User action | What the system does |

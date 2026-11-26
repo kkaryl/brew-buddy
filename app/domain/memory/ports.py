@@ -65,6 +65,9 @@ class MemoryProposalRepository(Protocol):
     ) -> MemoryProposal:
         """Persist a new or reviewed proposal enforcing optimistic version checks."""
 
+    async def delete(self, owner_user_id: str, proposal_id: str) -> None:
+        """Delete ``proposal_id`` strictly under ``owner_user_id``."""
+
 
 class MemoryRepository(Protocol):
     """Dedicated async persistence port for ``users/{uid}/memories/{memoryId}``."""

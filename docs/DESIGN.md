@@ -124,8 +124,8 @@ Brew avoids thick or harsh black shadows in favor of diffused lavender and warm-
 ### 5.1 Primary Browsing Shell (`TopBarShell` & `MobileDock`)
 Brew v2 organizes browsing around **three primary spaces**:
 1. **Clubhouse** (`ClubhouseScreen`): Calendar-aware Up-Next Coffee Chat hero, Quick Spark natural-language prompt bar, read-only Google Calendar / `.ics` upcoming & wrapped chat feed (`from GCal`), Keepsakes to Stamp card, and Warm Reconnect nudge.
-2. **Cue Studio** (`CueStudioScreen`): Proportional Run-of-Show pacing ribbon, warm icebreakers, 2x2 star-able Cue Cards (`Starred` for Pocket Glance), immutable `v1`/`v2` revision switcher, and sticky lavender `Tune on the fly` Brief Co-Pilot.
-3. **Relationship Journal** (`RelationshipJournalScreen`): Two-column Relationship Atlas pairing Counterpart Folios (approved keepsakes, earlier-notes toggle, and conversation timeline) with `My Coaching Style` defaults, custom display name override (with one-click reset to the default Google account name), calendar sync settings, and runtime health.
+2. **Cue Studio** (`CueStudioScreen`): Proportional Run-of-Show pacing ribbon, warm icebreakers, 2x2 star-able Cue Cards (`Starred` for Pocket Glance), immutable `v1`/`v2` revision switcher, inline cue-deck deletion confirmation, and sticky lavender `Tune on the fly` Brief Co-Pilot.
+3. **Relationship Journal** (`RelationshipJournalScreen`): Two-column Relationship Atlas pairing Counterpart Folios (approved keepsakes, earlier-notes toggle, conversation timeline, and inline cascading person/brief/keepsake deletion confirmation) with `My Coaching Style` defaults, custom display name override (with one-click reset to the default Google account name), calendar sync settings, and runtime health.
 
 - **Desktop / Tablet (`TopBarShell`)**: Sticky off-white bar with `BrewLogo` (`"brew."`) on the left, centered 3-space segmented pill (`#FFE9DE` active indicator + coral pending-keepsakes badge), `+ Quick Spark` coral pill CTA, and circular `#E9DFFC` user initial avatar on the right.
 - **Mobile (`MobileDock`)**: Floating pill dock (`Clubhouse`, `Studio`, `Journal`) paired with a circular `#EF8B70` coral `+` Quick Spark action button.
@@ -152,6 +152,7 @@ All decorative artwork belongs to a single cohesive flat-vector editorial family
 | [`cue-studio-copilot.png`](../web/src/assets/illustrations/cue-studio-copilot.png) | Friendly conversation co-pilot holding starred pale-ivory cue cards framed by pastel shapes (`722x603` alpha PNG). | `CueStudioScreen` Brief Co-Pilot & `PocketCueCardsScreen` header |
 | [`debrief-keepsake-journal.png`](../web/src/assets/illustrations/debrief-keepsake-journal.png) | Smiling woman writing reflections into an open pastel journal alongside floating keepsake cards (`1072x812` alpha PNG). | `DebriefKeepsakesScreen` desktop banner & mobile header |
 | [`relationship-folio-circle.png`](../web/src/assets/illustrations/relationship-folio-circle.png) | Three smiling colleagues standing together with a coral relationship folio and pastel circles (`1081x671` alpha PNG). | `RelationshipJournalScreen` companion card & `ClubhouseScreen` Warm Reconnect |
+| [`readme-header-banner.png`](../web/src/assets/illustrations/readme-header-banner.png) | Wide rounded pastel header banner featuring the top-left `"brew."` wordmark, `"Agentic Coffee Chat Companion"` headline, and the three smiling colleagues from `relationship-folio-circle.png` (`1321x689` alpha PNG). | Repository [`README.md`](../README.md) header banner |
 
 ---
 

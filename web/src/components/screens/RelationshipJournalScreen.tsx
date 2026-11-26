@@ -6,6 +6,7 @@ import {
   Plus,
   RefreshCw,
   Search,
+  Trash2,
   Upload,
 } from "lucide-react";
 import { useEffect, useState, type ChangeEvent, type FormEvent, type JSX } from "react";
@@ -82,6 +83,12 @@ export interface RelationshipJournalScreenProps {
   readonly onToggleIncludeSuperseded: (next: boolean) => void;
   readonly onUpdateMemory: (memoryId: string, payload: UpdateMemoryRequest) => Promise<MemoryResponse>;
   readonly onDeleteMemory: (memoryId: string, expectedVersion: number) => Promise<void>;
+  readonly onDeleteContact?:
+    | ((contactId: string, expectedVersion?: number) => Promise<void>)
+    | undefined;
+  readonly onDeleteBrief?:
+    | ((briefId: string, expectedVersion?: number) => Promise<void>)
+    | undefined;
   readonly onSaveStyleDefaults: (next: CoachingStyleDefaults) => void;
   readonly onUpdateDisplayName?: ((displayName: string | null) => Promise<AuthenticatedPrincipalResponse>) | undefined;
   readonly onConnectGoogleCalendar: () => Promise<void>;
@@ -120,6 +127,8 @@ export function RelationshipJournalScreen({
   onToggleIncludeSuperseded,
   onUpdateMemory,
   onDeleteMemory,
+  onDeleteContact,
+  onDeleteBrief,
   onSaveStyleDefaults,
   onUpdateDisplayName,
   onConnectGoogleCalendar,
@@ -152,6 +161,10 @@ export function RelationshipJournalScreen({
   const [displayNameError, setDisplayNameError] = useState<string | null>(null);
   const [savingDisplayName, setSavingDisplayName] = useState(false);
   const [savedDisplayNameNotice, setSavedDisplayNameNotice] = useState<string | null>(null);
+  const [confirmDeleteContactId, setConfirmDeleteContactId] = useState<string | null>(null);
+  const [deletingContact, setDeletingContact] = useState(false);
+  const [confirmDeleteBriefId, setConfirmDeleteBriefId] = useState<string | null>(null);
+  const [deletingBrief, setDeletingBrief] = useState(false);
 
   const [feedback, setFeedback] = useState<FeedbackNotice | null>(null);
 
@@ -317,6 +330,52 @@ export function RelationshipJournalScreen({
     } catch (err: unknown) {
       setFeedback(errorToFeedbackNotice(err, "Could not delete keepsake"));
       throw err;
+    }
+  };
+
+  const handleDeleteContactWrapped = async (contact: ContactResponse): Promise<void> => {
+    if (!onDeleteContact) {
+      return;
+    }
+    setFeedback(null);
+    setDeletingContact(true);
+    try {
+      const remaining = contacts.filter((c) => c.id !== contact.id);
+      await onDeleteContact(contact.id, contact.version);
+      setConfirmDeleteContactId(null);
+      setConfirmDeleteBriefId(null);
+      const nextContact = remaining[0] ?? null;
+      setSelectedFolio(
+        nextContact ? { kind: "contact", contactId: nextContact.id } : { kind: "coaching_style" },
+      );
+      setFeedback({
+        kind: "info",
+        title: `Removed ${contact.name} along with their briefs and keepsakes`,
+      });
+    } catch (err: unknown) {
+      setFeedback(errorToFeedbackNotice(err, "Could not delete contact"));
+    } finally {
+      setDeletingContact(false);
+    }
+  };
+
+  const handleDeleteBriefWrapped = async (briefId: string): Promise<void> => {
+    if (!onDeleteBrief) {
+      return;
+    }
+    setFeedback(null);
+    setDeletingBrief(true);
+    try {
+      await onDeleteBrief(briefId);
+      setConfirmDeleteBriefId(null);
+      setFeedback({
+        kind: "info",
+        title: "Cue deck removed",
+      });
+    } catch (err: unknown) {
+      setFeedback(errorToFeedbackNotice(err, "Could not delete cue deck"));
+    } finally {
+      setDeletingBrief(false);
     }
   };
 
@@ -612,8 +671,73 @@ export function RelationshipJournalScreen({
                     </span>
                     <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
                   </PrimaryButton>
+
+                  {onDeleteContact && (
+                    <PillButton
+                      id={`btn-delete-contact-${selectedContact.id}`}
+                      variant="ghost"
+                      size="sm"
+                      disabled={deletingContact}
+                      aria-label={`Delete ${selectedContact.name}`}
+                      onClick={() =>
+                        setConfirmDeleteContactId((prev) =>
+                          prev === selectedContact.id ? null : selectedContact.id,
+                        )
+                      }
+                    >
+                      <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+                      <span>Delete</span>
+                    </PillButton>
+                  )}
                 </div>
               </div>
+
+              {confirmDeleteContactId === selectedContact.id && onDeleteContact && (
+                <div
+                  role="region"
+                  aria-label={`Confirm deletion of ${selectedContact.name}`}
+                  className="flex flex-wrap items-center justify-between gap-3 rounded-[22px] border border-[#F2C2BA] bg-[#FFF5F3] p-4 sm:px-5"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="font-serif text-[17px] font-bold text-brew-plum">
+                      Delete {selectedContact.name} from your journal?
+                    </div>
+                    <p className="mt-0.5 text-xs leading-relaxed text-brew-secondary">
+                      Removes {selectedContact.name}, along with their preparation briefs, chat
+                      history, and {String(contactMemories.length)}{" "}
+                      {contactMemories.length === 1 ? "keepsake" : "keepsakes"}
+                      {pendingForSelectedContact.length > 0
+                        ? ` (${String(pendingForSelectedContact.length)} pending)`
+                        : ""}
+                      . Personal coaching preferences stay untouched.
+                    </p>
+                  </div>
+
+                  <div className="flex shrink-0 flex-wrap items-center gap-2">
+                    <PillButton
+                      id={`btn-cancel-delete-contact-${selectedContact.id}`}
+                      variant="outline"
+                      size="sm"
+                      disabled={deletingContact}
+                      onClick={() => setConfirmDeleteContactId(null)}
+                    >
+                      Cancel
+                    </PillButton>
+                    <PillButton
+                      id={`btn-confirm-delete-contact-${selectedContact.id}`}
+                      variant="danger"
+                      size="sm"
+                      disabled={deletingContact}
+                      onClick={() => {
+                        void handleDeleteContactWrapped(selectedContact);
+                      }}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+                      <span>{deletingContact ? "Deleting..." : "Confirm Delete"}</span>
+                    </PillButton>
+                  </div>
+                </div>
+              )}
 
               {/* Relationship Keepsakes Grid */}
               <div>
@@ -706,36 +830,82 @@ export function RelationshipJournalScreen({
 
                     {contactMeetings.map((mtg, idx) => {
                       const isLinkedGcal = idx === 0 && contactCalendarEvent !== null;
+                      const briefId = mtg.latest_brief_id;
+                      const isConfirmingBriefDelete =
+                        briefId !== null && confirmDeleteBriefId === briefId;
                       return (
-                        <button
+                        <div
                           key={mtg.id}
-                          type="button"
-                          onClick={() => {
-                            if (mtg.latest_brief_id) {
-                              onOpenCueStudioForContact(selectedContact.id, mtg.latest_brief_id);
-                            } else {
-                              onOpenSetupForContact(selectedContact.id);
-                            }
-                          }}
-                          className="flex w-full cursor-pointer flex-wrap items-center justify-between gap-2 rounded-[16px] border border-brew-border px-4 py-3 text-left transition hover:bg-brew-blush/50"
+                          className="flex w-full flex-wrap items-center justify-between gap-2 rounded-[16px] border border-brew-border px-4 py-3 transition hover:bg-brew-blush/50"
                         >
-                          <div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (briefId) {
+                                onOpenCueStudioForContact(selectedContact.id, briefId);
+                              } else {
+                                onOpenSetupForContact(selectedContact.id);
+                              }
+                            }}
+                            className="min-w-0 flex-1 cursor-pointer text-left"
+                          >
                             <span className="text-sm font-bold text-brew-plum">
                               {formatShortTimestamp(mtg.scheduled_at ?? mtg.created_at)} ·{" "}
                               {formatPurposeLabel(mtg.purpose)} ({String(mtg.duration_minutes)}m)
                             </span>
                             <span className="ml-2 text-xs text-brew-secondary">
-                              {mtg.latest_brief_id ? "Cue deck ready" : mtg.objective}
+                              {briefId ? "Cue deck ready" : mtg.objective}
                             </span>
+                          </button>
+
+                          <div className="flex flex-wrap items-center gap-2">
+                            {isLinkedGcal ? (
+                              <span className="brew-badge-peach">from GCal</span>
+                            ) : (
+                              <span className="text-xs text-brew-secondary">
+                                {formatShortTimestamp(mtg.updated_at)}
+                              </span>
+                            )}
+
+                            {briefId && onDeleteBrief && (
+                              isConfirmingBriefDelete ? (
+                                <div className="flex items-center gap-1.5">
+                                  <PillButton
+                                    id={`btn-cancel-delete-folio-brief-${briefId}`}
+                                    variant="outline"
+                                    size="sm"
+                                    disabled={deletingBrief}
+                                    onClick={() => setConfirmDeleteBriefId(null)}
+                                  >
+                                    Cancel
+                                  </PillButton>
+                                  <PillButton
+                                    id={`btn-confirm-delete-folio-brief-${briefId}`}
+                                    variant="danger"
+                                    size="sm"
+                                    disabled={deletingBrief}
+                                    onClick={() => {
+                                      void handleDeleteBriefWrapped(briefId);
+                                    }}
+                                  >
+                                    <Trash2 className="h-3 w-3" aria-hidden="true" />
+                                    <span>{deletingBrief ? "Deleting..." : "Confirm Delete"}</span>
+                                  </PillButton>
+                                </div>
+                              ) : (
+                                <button
+                                  id={`btn-delete-folio-brief-${briefId}`}
+                                  type="button"
+                                  aria-label={`Delete cue deck from ${formatShortTimestamp(mtg.scheduled_at ?? mtg.created_at)}`}
+                                  onClick={() => setConfirmDeleteBriefId(briefId)}
+                                  className="cursor-pointer text-xs font-semibold text-brew-secondary transition hover:text-[#9E3426]"
+                                >
+                                  Delete
+                                </button>
+                              )
+                            )}
                           </div>
-                          {isLinkedGcal ? (
-                            <span className="brew-badge-peach">from GCal</span>
-                          ) : (
-                            <span className="text-xs text-brew-secondary">
-                              {formatShortTimestamp(mtg.updated_at)}
-                            </span>
-                          )}
-                        </button>
+                        </div>
                       );
                     })}
                   </div>

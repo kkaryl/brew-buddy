@@ -58,6 +58,7 @@ import {
   type CoachingStyleDefaults,
 } from "./state/coachingDefaultsStore";
 import {
+  clearStarredQuestionIds,
   loadStarredQuestionIds,
   saveStarredQuestionIds,
   toggleQuestionStar,
@@ -458,6 +459,72 @@ export function App(): JSX.Element {
       return created;
     },
     [apiClient],
+  );
+
+  const handleDeleteContact = useCallback(
+    async (contactId: string, expectedVersion?: number): Promise<void> => {
+      await apiClient.deleteContact(contactId, expectedVersion);
+
+      if (activeBrief?.contact_id === contactId) {
+        clearStarredQuestionIds(currentUserId, activeBrief.id);
+      }
+      const contactMeetingsList = meetingsByContact.get(contactId) ?? [];
+      for (const mtg of contactMeetingsList) {
+        if (mtg.latest_brief_id) {
+          clearStarredQuestionIds(currentUserId, mtg.latest_brief_id);
+        }
+      }
+
+      const remainingContacts = contacts.filter((c) => c.id !== contactId);
+      setContacts(remainingContacts);
+      setMeetingsByContact((prev) => {
+        const next = new Map(prev);
+        next.delete(contactId);
+        return next;
+      });
+      setPendingProposals((prev) => prev.filter((p) => p.contact_id !== contactId));
+      setMemories((prev) => prev.filter((m) => m.contact_id !== contactId));
+
+      if (activeContactId === contactId) {
+        const nextContact = remainingContacts[0] ?? null;
+        if (nextContact) {
+          setActiveContactId(nextContact.id);
+          await loadContactContext(nextContact.id);
+        } else {
+          setActiveContactId(null);
+          setMeetings([]);
+          setActiveBrief(null);
+          setBriefRevisions([]);
+          setStarredQuestionIds(new Set());
+        }
+      }
+    },
+    [
+      activeBrief,
+      activeContactId,
+      apiClient,
+      contacts,
+      currentUserId,
+      loadContactContext,
+      meetingsByContact,
+    ],
+  );
+
+  const handleDeleteBrief = useCallback(
+    async (briefId: string, expectedVersion?: number): Promise<void> => {
+      const targetContactId = activeBrief?.id === briefId ? activeBrief.contact_id : activeContactId;
+      await apiClient.deleteBrief(briefId, expectedVersion);
+      clearStarredQuestionIds(currentUserId, briefId);
+      if (activeBrief?.id === briefId) {
+        setActiveBrief(null);
+        setBriefRevisions([]);
+        setStarredQuestionIds(new Set());
+      }
+      if (targetContactId) {
+        await loadContactContext(targetContactId);
+      }
+    },
+    [activeBrief, activeContactId, apiClient, currentUserId, loadContactContext],
   );
 
   const handleGenerateBrief = useCallback(
@@ -899,6 +966,7 @@ export function App(): JSX.Element {
               }}
               onReviseBrief={handleReviseBrief}
               onReloadBrief={loadBriefWithRevisions}
+              onDeleteBrief={handleDeleteBrief}
             />
           )}
 
@@ -944,6 +1012,8 @@ export function App(): JSX.Element {
               }}
               onUpdateMemory={handleUpdateMemory}
               onDeleteMemory={handleDeleteMemory}
+              onDeleteContact={handleDeleteContact}
+              onDeleteBrief={handleDeleteBrief}
               onSaveStyleDefaults={handleSaveStyleDefaults}
               onUpdateDisplayName={handleUpdateDisplayName}
               onConnectGoogleCalendar={handleConnectGoogleCalendar}

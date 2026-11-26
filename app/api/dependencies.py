@@ -123,6 +123,10 @@ def get_contact_service(
         contact_repo=container.contact_repo,
         clock=container.clock,
         id_generator=container.id_generator,
+        meeting_repo=container.meeting_repo,
+        brief_repo=container.brief_repo,
+        memory_repo=container.memory_repo,
+        proposal_repo=container.proposal_repo,
     )
 
 

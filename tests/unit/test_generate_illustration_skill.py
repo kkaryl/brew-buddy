@@ -185,3 +185,24 @@ def test_from_raw_alpha_cutout_preserves_enclosed_interior_white(tmp_path: Path)
     ).stdout.split()
     assert float(center_rgba[0]) > 0.98
     assert float(center_rgba[1]) == 1.0
+
+
+def test_readme_header_banner_asset_is_transparent_and_linked_in_readme() -> None:
+    """Verify the README header banner has outer alpha transparency and is embedded in README.md."""
+    mod = _load_skill_module()
+    convert_bin, _ = mod.resolve_imagemagick_binaries()
+
+    banner_png = REPO_ROOT / "web" / "src" / "assets" / "illustrations" / "readme-header-banner.png"
+    assert banner_png.is_file()
+
+    corner_alpha = subprocess.run(
+        [convert_bin, f"{banner_png}[1x1+0+0]", "-format", "%[fx:a]", "info:"],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    ).stdout.strip()
+    assert float(corner_alpha) == 0.0
+
+    readme_text = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    assert "web/src/assets/illustrations/readme-header-banner.png" in readme_text

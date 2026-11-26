@@ -50,3 +50,24 @@ class InMemoryContactRepository:
                     )
             user_bucket[contact.id] = contact
             return contact
+
+    async def delete(
+        self,
+        owner_user_id: str,
+        contact_id: str,
+        *,
+        expected_version: int | None = None,
+    ) -> None:
+        async with self._lock:
+            user_bucket = self._by_owner.get(owner_user_id, {})
+            existing = user_bucket.get(contact_id)
+            if existing is None:
+                raise EntityNotFoundError(entity_name="Contact", entity_id=contact_id)
+            if expected_version is not None and existing.version != expected_version:
+                raise VersionConflictError(
+                    entity_name="Contact",
+                    entity_id=contact_id,
+                    expected_version=expected_version,
+                    actual_version=existing.version,
+                )
+            del user_bucket[contact_id]

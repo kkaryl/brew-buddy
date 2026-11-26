@@ -22,6 +22,15 @@ class ContactRepository(Protocol):
     async def save(self, contact: Contact, *, expected_version: int | None = None) -> Contact:
         """Persist a new or updated contact enforcing optimistic version checks."""
 
+    async def delete(
+        self,
+        owner_user_id: str,
+        contact_id: str,
+        *,
+        expected_version: int | None = None,
+    ) -> None:
+        """Delete ``contact_id`` under ``owner_user_id`` enforcing optional version checks."""
+
 
 class ContactReaderPort(Protocol):
     """Least-privilege read-only port exposing only caller-owned contact lookups."""

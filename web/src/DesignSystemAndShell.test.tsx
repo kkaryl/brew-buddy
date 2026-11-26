@@ -726,4 +726,223 @@ describe("Brew v2 Design System, 3-Space Shell, Illustrations, Accessibility, an
       screen.getByRole("heading", { name: /My Coaching Style \(Kary Long\)/i }),
     ).toBeInTheDocument();
   });
+
+  it("deletes a cue deck in Cue Studio and cascades contact, brief, and keepsake deletion in Relationship Journal with zero axe violations", async () => {
+    const mayaContact: ContactResponse = {
+      id: "cnt_maya",
+      name: "Maya Lin",
+      title: "Principal SRE",
+      role: "Engineering Peer",
+      organization: "CloudScale",
+      context_notes: "Met at SREcon.",
+      version: 1,
+      created_at: "2026-11-25T01:00:00Z",
+      updated_at: "2026-11-25T01:00:00Z",
+    };
+    const jordanContact: ContactResponse = {
+      id: "cnt_jordan",
+      name: "Jordan Kim",
+      title: "Staff Engineer",
+      role: "Peer",
+      organization: "Northstar",
+      context_notes: null,
+      version: 1,
+      created_at: "2026-11-25T02:00:00Z",
+      updated_at: "2026-11-25T02:00:00Z",
+    };
+
+    let contactsState = [mayaContact, jordanContact];
+    let mayaBrief: PreparationBriefResponse | null = makeSampleBrief(mayaContact.id);
+    let memoriesState = [
+      {
+        id: "mem_maya_1",
+        owner_user_id: "usr_mock_alice",
+        scope: "contact" as const,
+        contact_id: mayaContact.id,
+        memory_type: "counterpart_background" as const,
+        text: "Maya leads regional failover game days.",
+        source: {
+          source_type: "meeting_notes" as const,
+          meeting_id: "mtg_design_1",
+          brief_id: "brf_design_1",
+          proposal_id: "prop_1",
+          excerpt: "Leads regional failover game days.",
+          recorded_at: "2026-11-25T02:00:00Z",
+        },
+        consent_status: "approved" as const,
+        lifecycle_state: "approved" as const,
+        epistemic_status: "user_reported_observation" as const,
+        supersedes_memory_id: null,
+        superseded_by_memory_id: null,
+        superseded_at: null,
+        created_at: "2026-11-25T02:00:00Z",
+        updated_at: "2026-11-25T02:00:00Z",
+        version: 1,
+      },
+      {
+        id: "mem_personal_1",
+        owner_user_id: "usr_mock_alice",
+        scope: "user_preference" as const,
+        contact_id: null,
+        memory_type: "communication_preference" as const,
+        text: "Prefers story-driven openers.",
+        source: {
+          source_type: "meeting_notes" as const,
+          meeting_id: "mtg_design_1",
+          brief_id: "brf_design_1",
+          proposal_id: "prop_2",
+          excerpt: "I prefer story-driven openers.",
+          recorded_at: "2026-11-25T02:00:00Z",
+        },
+        consent_status: "approved" as const,
+        lifecycle_state: "approved" as const,
+        epistemic_status: "user_stated_preference" as const,
+        supersedes_memory_id: null,
+        superseded_by_memory_id: null,
+        superseded_at: null,
+        created_at: "2026-11-25T02:00:00Z",
+        updated_at: "2026-11-25T02:00:00Z",
+        version: 1,
+      },
+    ];
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const rawUrl =
+        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const parsed = new URL(rawUrl, "http://localhost");
+      const path = parsed.pathname;
+      const method = (init?.method ?? "GET").toUpperCase();
+
+      if (path === "/api/health") return jsonResponse(HEALTH_OK);
+      if (path === "/api/auth/config") return jsonResponse(LOCAL_AUTH_CONFIG);
+      if (path === "/api/auth/mock-session" && method === "POST") {
+        return jsonResponse(
+          {
+            access_token: "mses_del_tok",
+            token_type: "Bearer",
+            expires_at: new Date(Date.now() + 3600_000).toISOString(),
+            principal: {
+              user_id: "usr_mock_alice",
+              display_name: "Alice Chen",
+              auth_provider: "local_mock",
+            },
+          },
+          201,
+        );
+      }
+      if (path === "/api/v1/auth/me") {
+        return jsonResponse({
+          user_id: "usr_mock_alice",
+          display_name: "Alice Chen",
+          auth_provider: "local_mock",
+        });
+      }
+      if (path === "/api/v1/contacts" && method === "GET") {
+        return jsonResponse({ items: contactsState, total: contactsState.length });
+      }
+      if (path === `/api/v1/contacts/${mayaContact.id}` && method === "DELETE") {
+        contactsState = contactsState.filter((c) => c.id !== mayaContact.id);
+        mayaBrief = null;
+        memoriesState = memoriesState.filter((m) => m.contact_id !== mayaContact.id);
+        return new Response(null, { status: 204 });
+      }
+      if (path === "/api/v1/meetings" && method === "GET") {
+        const cid = parsed.searchParams.get("contact_id");
+        if (cid === mayaContact.id && mayaBrief) {
+          return jsonResponse({
+            items: [
+              {
+                id: mayaBrief.meeting_id,
+                contact_id: mayaContact.id,
+                purpose: "coffee_chat",
+                tone: "warm_casual",
+                objective: mayaBrief.meeting_objective,
+                duration_minutes: 30,
+                scheduled_at: null,
+                notes: null,
+                status: "preparing",
+                latest_brief_id: mayaBrief.id,
+                version: 1,
+                created_at: "2026-11-25T01:05:00Z",
+                updated_at: "2026-11-25T01:05:00Z",
+              },
+            ],
+            total: 1,
+          });
+        }
+        return jsonResponse({ items: [], total: 0 });
+      }
+      if (mayaBrief && path === `/api/v1/briefs/${mayaBrief.id}/revisions` && method === "GET") {
+        return jsonResponse({ items: [mayaBrief], total: 1 });
+      }
+      if (mayaBrief && path === `/api/v1/briefs/${mayaBrief.id}` && method === "GET") {
+        return jsonResponse(mayaBrief);
+      }
+      if (mayaBrief && path === `/api/v1/briefs/${mayaBrief.id}` && method === "DELETE") {
+        mayaBrief = null;
+        return new Response(null, { status: 204 });
+      }
+      if (path === "/api/v1/memories/proposals") {
+        return jsonResponse({
+          proposals: [],
+          total: 0,
+          skipped_duplicates: 0,
+          filtered_sensitive_count: 0,
+        });
+      }
+      if (path === "/api/v1/memories") {
+        return jsonResponse({ items: memoriesState, total: memoriesState.length });
+      }
+      return jsonResponse({}, 404);
+    });
+
+    const { container } = render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /Continue as Alice Chen/i }));
+
+    // 1. Open Cue Studio -> verify inline Delete Deck confirmation & WCAG accessibility
+    const primaryNav = await screen.findByRole("navigation", { name: /^Primary navigation$/i });
+    fireEvent.click(within(primaryNav).getByRole("button", { name: /^Cue Studio$/i }));
+    await screen.findByRole("heading", { level: 1, name: "Maya Lin" });
+
+    fireEvent.click(screen.getByRole("button", { name: /Delete Deck/i }));
+    expect(
+      await screen.findByText(/Delete this cue deck for Maya Lin\?/i),
+    ).toBeInTheDocument();
+    await assertNoSeriousAxeViolations(container);
+
+    fireEvent.click(screen.getByRole("button", { name: /^Cancel$/i }));
+    expect(screen.queryByText(/Delete this cue deck for Maya Lin\?/i)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /Delete Deck/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /Confirm Delete/i }));
+    expect(
+      await screen.findByText(/No cue deck synthesized for Maya Lin yet/i),
+    ).toBeInTheDocument();
+
+    // 2. Open Relationship Journal -> cascade delete Maya Lin + keepsakes while keeping personal preferences
+    fireEvent.click(within(primaryNav).getByRole("button", { name: /Relationship Journal/i }));
+    await screen.findByRole("heading", { level: 2, name: "Maya Lin" });
+    expect(screen.getByText(/Maya leads regional failover game days/i)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /^Delete Maya Lin$/i }));
+    const confirmRegion = await screen.findByRole("region", {
+      name: /Confirm deletion of Maya Lin/i,
+    });
+    expect(
+      within(confirmRegion).getByText(/Delete Maya Lin from your journal\?/i),
+    ).toBeInTheDocument();
+    expect(within(confirmRegion).getByText(/1 keepsake/i)).toBeInTheDocument();
+    await assertNoSeriousAxeViolations(container);
+
+    fireEvent.click(screen.getByRole("button", { name: /Confirm Delete/i }));
+    expect(
+      await screen.findByText(/Removed Maya Lin along with their briefs and keepsakes/i),
+    ).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 2, name: "Jordan Kim" })).toBeInTheDocument();
+    expect(screen.queryByText(/Maya leads regional failover game days/i)).not.toBeInTheDocument();
+
+    // Personal coaching preference keepsake remains intact
+    fireEvent.click(screen.getByRole("button", { name: /My Coaching Style/i }));
+    expect(await screen.findByText(/Prefers story-driven openers/i)).toBeInTheDocument();
+  });
 });

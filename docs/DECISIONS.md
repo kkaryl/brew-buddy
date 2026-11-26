@@ -392,3 +392,18 @@ This document records significant architectural and technical decisions for **Br
 - **Consequences:**
   - *Positive:* Custom display names persist across sessions and devices in Firestore without introducing a new collection, preserve full backwards compatibility with existing `UserPreferences` documents, and allow one-click reversion to the Google account name.
   - *Trade-off:* `GET /api/v1/auth/me` performs one bounded per-user preference lookup (`users/{uid}/preferences/default`) to resolve any custom override.
+
+---
+
+## ADR-027: Cascading Counterpart Deletion and Individual Brief Deletion
+
+- **Date:** 2026-11-25
+- **Status:** Accepted
+- **Context:** Users previously could delete individual approved memories (`DELETE /api/v1/memories/{id}`) but could not delete a counterpart folio or preparation brief. Deleting a counterpart record alone would leave orphaned meetings, preparation briefs, immutable brief revision subcollections, pending memory proposals, and counterpart-scoped memories.
+- **Decision:**
+  1. Add `DELETE /api/v1/contacts/{id}` (`ContactService.delete_contact`) enforcing owner authorization and optional `expected_version` concurrency checks, cascading deletion across all caller-owned briefs (including `revisions/v*` snapshots), meetings, staged proposals, and contact-scoped memories (`scope="contact"`, archiving `DELETED` tombstones in `deletedMemories`) while leaving global `user_preference` memories untouched.
+  2. Add `DELETE /api/v1/briefs/{id}` (`BriefService.delete_brief`) to delete an individual preparation brief and its revision snapshots, deleting its parent meeting when no notes or sibling briefs remain (or unlinking `latest_brief_id` when post-meeting notes exist).
+  3. Surface inline warm-blush confirmation banners (`#FFF5F3` surface, `#F2C2BA` hairline border, `#9E3426` WCAG AA danger pill, `Fraunces` heading, zero browser `window.confirm` dialogs or em-dashes) in `RelationshipJournalScreen` and `CueStudioScreen`.
+- **Consequences:**
+  - *Positive:* Users have complete control to remove a person along with every associated brief and memory (or remove an individual brief or memory) without leaving orphaned subcollection documents or breaking cross-session personal preferences.
+  - *Trade-off:* Cascading contact deletion executes sequential per-collection owner-scoped reads and deletes rather than a single cross-collection transaction, ordered children-first (`briefs` -> `meetings` -> `memoryProposals` -> `memories` -> `contact`) so retries remain safe if an intermediate step fails.
